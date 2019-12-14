@@ -1,7 +1,8 @@
-<h1 align="center">🌸Ena</h1><p align="center">A next-generation 4chan archiver.</p><br>
-<p align="center"><img src="https://vignette.wikia.nocookie.net/yotsubaand/images/9/95/000000.jpg/revision/latest?cb=20101012214007" alt="Ena" width="500"/><br></p>
+<h1 align="center">🌸Ena</h1><p align="center">A next-generation 4chan archiver.<br><br>
+<img src="https://vignette.wikia.nocookie.net/yotsubaand/images/9/95/000000.jpg/revision/latest?cb=20101012214007" alt="Ena" width="500"/><br></p>
 	
 [![Latest][latest-badge]][latest-link] [![Slack][matrix-badge]][matrix-link]
+
 
 
 <!--
