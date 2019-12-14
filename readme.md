@@ -35,6 +35,7 @@ This pre-release is for developers who want to try it out. Though, there are som
 * some config settings aren't implemented yet
 * media folder is currently in "./archive/media" from your current working directory
 * proxies are not yet implemented
+* media downloading is turned off (Oops. It'll be turned back on the next release)
 * `retryAttempts` is `3`
 * `refreshDelay` is `10`
 * `throttleMillisec` is `1000`
