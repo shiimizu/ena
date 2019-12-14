@@ -44,7 +44,7 @@ This pre-release is for developers who want to try it out. Though, there are som
   DELETE FROM metadata WHERE board='a';
   ```
 ## Changes from Asagi
-* Schema changes albeit a worthy change. Only 1 table for `metadata` (for caches). 1 table for each board. The schema inside each board is straight from [4chan's thread endpoint](https://github.com/4chan/4chan-API/blob/master/pages/Threads.md).
+* Schema changes, albeit a reasonable change. Only 1 table for `metadata` (for caches). 1 table for each board. The schema inside each board is straight from [4chan's thread endpoint](https://github.com/4chan/4chan-API/blob/master/pages/Threads.md).
 * config changes
 * media downloading uses sha256 as it's filename and it's directory structure is the same as yuki.la's
 
