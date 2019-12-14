@@ -1,0 +1,37 @@
+[package]
+name = "ena"
+version = "0.1.0"
+authors = ["shiimizu <shiimizu@protonmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+lto = true
+opt-level = 'z'  # Optimize for size.
+codegen-units = 1
+panic = 'abort'
+
+[dependencies.async-std]
+version = "*"
+features = ["attributes", "unstable"]
+
+[dependencies.serde_json]
+version = "*"
+features = ["preserve_order"]
+
+[dependencies.postgres]
+version = "*"
+features = ["with-serde_json"]
+
+[dependencies]
+serde = "*"
+serde_derive = "*"
+reqwest = "*"
+chrono = "*"
+futures = { git = "https://github.com/rust-lang/futures-rs" }
+futures-util = "0.3.1"
+rand = "*"
+pretty_env_logger = "*"
+log = "*"
+if_chain = "*"
+sha2 =  { version = "*", features=["std"] }

@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+a_src
+cache
+test
+*.sql
+*.txt
+*.jpg
+archive
+*.json
+!ena_config.json
+*.zip
+*.7z
