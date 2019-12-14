@@ -47,6 +47,7 @@ This pre-release is for developers who want to try it out. Though, there are som
 * Schema changes, albeit a reasonable change. Only 1 table for `metadata` (for caches). 1 table for each board. The schema inside each board is straight from [4chan's thread endpoint](https://github.com/4chan/4chan-API/blob/master/pages/Threads.md).
 * config changes
 * media downloading uses sha256 as it's filename and it's directory structure is the same as yuki.la's
+* PostgreSQL 12 is the database engine that was used and tested with
 
 ## Installation
 1. Download the pre-compiled [binaries][latest-link] **or** build from source for the latest builds.  
