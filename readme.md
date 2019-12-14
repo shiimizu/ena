@@ -1,4 +1,4 @@
-<h1 align="center">🌸Ena</h1><p align="center">A next-generation 4chan archiver.<br><br>
+<h1 align="center">Ena</h1><p align="center">A next-generation 4chan archiver.<br><br>
 <img src="https://vignette.wikia.nocookie.net/yotsubaand/images/9/95/000000.jpg/revision/latest?cb=20101012214007" alt="Ena" width="500"/><br></p>
 	
 [![Latest][latest-badge]][latest-link] [![Slack][matrix-badge]][matrix-link]
@@ -9,7 +9,7 @@
 A continuation from [Fuuka](https://github.com/eksopl/fuuka) → [Asagi](https://github.com/eksopl/asagi) → [Ena](https://github.com/shiimizu/ena) -->
 
 
-Ena aims to be a high performance imageboard agnostic archiver that mainly focuses on 4chan.
+Ena aims to be a low resource, high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
 
 ## Features:
 * Much more memory efficient than [Asagi](https://github.com/eksopl/asagi)
@@ -88,15 +88,15 @@ Special thanks to the [bbepis](https://github.com/bbepis) of [Hayden](https://gi
 
 ## FAQ
 ### Why?
-Much of my personal time and research went into 4ch for educational purposes and self development. I cherish the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board.. The current avaliable solutions are not practical nor production ready. I couldn't just take without giving back. So here is my contribution.
+Much of my personal time and research went into 4ch for educational purposes and self development. I cherish the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board.. The current avaliable solutions are not practical nor production ready. I couldn't just take without giving back.
 
 ### Why Rust?
-Before you 👉8️⃣☎️, I'd just like to interject for a moment. What you call *Rust* is actually a safe systems programming language that focuses upon speed, safety, and reliability. I wanted something production and enterprise worthy so I chose Rust.
+Before you 👉8️⃣☎️, I'd just like to interject for a moment. What you call *Rust* is actually a safe systems programming language that focuses upon speed, safety, and reliability. I wanted something fast, safe, and ideally able to withstand long-term usage.
 
 ### What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?
 
-Ena is the youngest of the Ayase sisters.
+Ena is the youngest of the Ayase sisters. I was thinking if a new archiver was born, why not be a continuation from the Ayase family?
 
 [latest-badge]: https://img.shields.io/badge/latest-v0.1.0-ca7f85.svg?style=flat-square
 [latest-link]: https://github.com/shiimizu/ena/releases/latest
