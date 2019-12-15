@@ -449,9 +449,42 @@ impl YotsubaArchiver {
 
     fn cget(&self, url: &str, last_modified: &str) -> (Option<String>, reqwest::StatusCode, Result<String, reqwest::Error>) {
         let mut res = if last_modified == "" {
-            self.client.get(url).send().expect("err cget!")
+            match self.client.get(url).send() {
+                Ok(expr) => expr,
+                Err(e) => {
+                    eprintln!("{} -> {:?}", url, e);
+                    thread::sleep(Duration::from_secs(1));
+                    let a = loop {
+                        match self.client.get(url).send() {
+                            Ok(resp) => break resp,
+                            Err(e) => {
+                                eprintln!("{} -> {:?}",url, e);
+                                thread::sleep(Duration::from_secs(1));
+                            },
+                        }
+                    };
+                    a
+                },
+            }
+            // self.client.get(url).send().expect("err cget!")
         } else {
-            self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send().expect("err cget")
+            match self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() {
+                Ok(expr) => expr,
+                Err(e) => {
+                    eprintln!("{} -> {:?}", url, e);
+                    thread::sleep(Duration::from_secs(1));
+                    let a = loop {
+                        match self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() {
+                            Ok(resp) => break resp,
+                            Err(e) => {
+                                eprintln!("{} -> {:?}",url, e);
+                                thread::sleep(Duration::from_secs(1));
+                            },
+                        }
+                    };
+                    a
+                },
+            }
         };
         let mut last_modified_ : Option<String> = None;
         if_chain! {
@@ -514,7 +547,7 @@ impl YotsubaArchiver {
                         ON CONFLICT (no) 
                         DO
                             UPDATE 
-                            SET 
+                            SET no = excluded.no,
                                 sticky = excluded.sticky,
                                 closed = excluded.closed,
                                 now = excluded.now,
