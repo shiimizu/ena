@@ -16,24 +16,6 @@ Ena aims to be a low resource, high performance archiver to dump and archive pos
 * massive threads consisting of thousands of posts
   -->
 
-## Pre-release
-This pre-release is for developers who want to try it out. Though, there are some **caveats**:
-* only 1 board at the moment (the first one in `ena_config.json`)
-* only `threads.json` at the moment. no `archive.json`
-* doesn't check md5 for initial downloading of media, but does check the sha256 hashsums on subsequent thread updates
-* no logs
-* if an `unwrap` or `expect` sets off, it'll panic the program and exit (has to be handled but it rarely sets off)
-* some config settings aren't implemented yet
-* media folder is currently in "./archive/media" from your current working directory
-* proxies are not yet implemented
-* media downloading is turned off (Oops. It'll be turned back on the next release)
-* `retryAttempts` is `3`
-* `refreshDelay` is `10`
-* `throttleMillisec` is `1000`
-* cache is stored in-db in the metadata table. The archiver assumes all threads have been downloaded as per whats in the cache, but that may not be the case (maybe you stopped the program). To trigger a full re-update of all available threads online, just remove the entry and restart the archiver:  
-  ```sql
-  DELETE FROM metadata WHERE board='a';
-  ```
 ## Changes from Asagi
 * Schema changes, albeit a reasonable change. Only 1 table for `metadata` (for caches). 1 table for each board. The schema inside each board is straight from [4chan's thread endpoint](https://github.com/4chan/4chan-API/blob/master/pages/Threads.md).
 * config changes
@@ -68,8 +50,8 @@ Windows:
 nightly-x86_64-pc-windows-msvc
 rustc 1.41.0-nightly (412f43ac5 2019-11-24)
 
-Linux (WSL):
-nightly-x86_64-unknown-linux-gnu (default)
+Linux:
+nightly-x86_64-unknown-linux-gnu
 rustc 1.41.0-nightly (c8ea4ace9 2019-12-14)
 ```
 
