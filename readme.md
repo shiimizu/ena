@@ -1,17 +1,8 @@
-<h1 align="center">Ena</h1><p align="center">A next-generation 4chan archiver.<br><br>
-<img src="https://vignette.wikia.nocookie.net/yotsubaand/images/9/95/000000.jpg/revision/latest?cb=20101012214007" alt="Ena" width="500"/><br></p>
-	
-[![Latest][latest-badge]][latest-link] [![Slack][matrix-badge]][matrix-link]
-
-
-
-<!--
-A continuation from [Fuuka](https://github.com/eksopl/fuuka) → [Asagi](https://github.com/eksopl/asagi) → [Ena](https://github.com/shiimizu/ena) -->
-
+# Ena
 
 Ena aims to be a low resource, high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
 
-## Features:
+## Features
 * Much more memory efficient than [Asagi](https://github.com/eksopl/asagi)
   * Less than ~4mb on my machine
 * Less bandwith
@@ -67,32 +58,27 @@ The schema is practically straight from 4chan's API. You can run this command to
 select * from a where no = 196659047 or resto = 196659047 order by no;
 ```
 ## Build info
+```
 Windows 10 Pro 1909  
 Intel Core i5-6500 @ 3.20GHz  
 16GB RAM  
 NVIDIA GeForce GTX 1060 3GB
 
 Windows:
-```
 nightly-x86_64-pc-windows-msvc
 rustc 1.41.0-nightly (412f43ac5 2019-11-24)
-```
 
 Linux (WSL):
-```
 nightly-x86_64-unknown-linux-gnu (default)
-rustc 1.40.0-nightly (1423bec54 2019-11-05)
+rustc 1.41.0-nightly (c8ea4ace9 2019-12-14)
 ```
-
-## Mentions
-Special thanks to the [bbepis](https://github.com/bbepis) of [Hayden](https://github.com/bbepis/Hayden), [AGSPhoenix](https://github.com/AGSPhoenix) of [Eve](https://github.com/bibanon/eve), and [bibanon](https://github.com/bibanon) of [basc-archiver](https://github.com/bibanon/basc-archiver). I learned a lot from them.
 
 ## FAQ
 ### Why?
 Much of my personal time and research went into 4ch for educational purposes and self development. I cherish the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board.. The current avaliable solutions are not practical nor production ready. I couldn't just take without giving back.
 
 ### Why Rust?
-Before you 👉8️⃣☎️, I'd just like to interject for a moment. What you call *Rust* is actually a safe systems programming language that focuses upon speed, safety, and reliability. I wanted something fast, safe, and ideally able to withstand long-term usage.
+I wanted something fast, safe, and ideally able to withstand long-term usage.
 
 ### What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?
