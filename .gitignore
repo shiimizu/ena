@@ -12,3 +12,5 @@ archive
 *.zip
 *.7z
 *m*.rs
+txt
+unknown_thread

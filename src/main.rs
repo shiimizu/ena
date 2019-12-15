@@ -146,7 +146,7 @@ impl YotsubaArchiver {
                         tag character varying,
                         since4pass character varying,
                         PRIMARY KEY (no),
-                        CONSTRAINT unique_no UNIQUE (no)
+                        CONSTRAINT unique_no_{board_name} UNIQUE (no)
                     )", board_name=board);
         if let Ok(_) = self.conn.execute(&sql, &[]) {}
         if let Ok(_) = self.conn.execute(&format!("create index {board_name}_no_resto_idx on {board_name}(no, resto)", board_name=board), &[]) {}
@@ -166,10 +166,11 @@ impl YotsubaArchiver {
         let boards = self.get_boards_raw();
         for board in boards.iter() {
             if !self.queue.contains_key(board) {
-                self.init_board(board);
+                //self.init_board(board);
                 self.queue.insert(board.to_owned(), VecDeque::new());
             }
         }
+        self.init_board(&boards[0]);
         self.assign_to_board(&boards[0]);
     }
 
