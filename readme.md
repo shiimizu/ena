@@ -22,7 +22,7 @@ Ena aims to be a low resource, high performance archiver to dump and archive pos
 * PostgreSQL 12 is the database engine that was used and tested with
 
 ## Installation
-1. Download the pre-compiled [binaries][latest-link] **or** build from source for the latest builds.  
+1. Download the [pre-compiled binaries][latest-link] _**or**_ build from source for the latest builds.  
 You'll need Rust installed. After that, clone the repo and build.
 	```console
 	$ git clone https://github.com/shiimizu/ena.git
@@ -41,7 +41,7 @@ select * from a where no = 196659047 or resto = 196659047 order by no;
 
 ## FAQ
 ### Why?
-Much of my personal time and research went into 4ch for educational purposes and self development. I cherish the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board.. The current avaliable solutions are not practical nor production ready. I couldn't just take without giving back.
+Much of my personal time and research went into 4ch for educational purposes and self development. I cherish the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board.. The current avaliable solutions are not practical nor production ready. So I decided to help out.
 
 ### Why Rust?
 I wanted something fast, safe, and ideally able to withstand long-term usage.
@@ -49,7 +49,7 @@ I wanted something fast, safe, and ideally able to withstand long-term usage.
 ### What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?
 
-Ena is the youngest of the Ayase sisters. I was thinking if a new archiver was born, why not be a continuation from the Ayase family?
+It just so happens that Ena is the youngest of the Ayase sisters. I liked the name so I stuck with it.
 
 [latest-badge]: https://img.shields.io/badge/latest-v0.1.0-ca7f85.svg?style=flat-square
 [latest-link]: https://github.com/shiimizu/ena/releases/latest
