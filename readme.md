@@ -3,11 +3,8 @@
 Ena aims to be a low resource, high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
 
 ## Features
-* Much more memory efficient than [Asagi](https://github.com/eksopl/asagi)
-  * Less than ~4mb on my machine
-* Less bandwith
-  * By using `threads.json` and `archive.json`, API requests stay efficient without sacrificing any posts, instead of continously polling every thread for updates.
-* More to come
+* **Memory efficient:** Only taking about less than 4mb on my machine
+* **Bandwith efficient:** By using only `threads.json` and `archive.json`, API requests stay efficient without sacrificing any posts, instead of continously polling every thread for updates.
 
 <!--
 # Edge cases covered
@@ -38,21 +35,6 @@ You'll need Rust installed. After that, clone the repo and build.
 The schema is practically straight from 4chan's API. You can run this command to view the relational version of it (where `a` is the board and `no` and `resto` is the OP num):
 ```sql
 select * from a where no = 196659047 or resto = 196659047 order by no;
-```
-## Build info
-```
-Windows 10 Pro 1909  
-Intel Core i5-6500 @ 3.20GHz  
-16GB RAM  
-NVIDIA GeForce GTX 1060 3GB
-
-Windows:
-nightly-x86_64-pc-windows-msvc
-rustc 1.41.0-nightly (412f43ac5 2019-11-24)
-
-Linux:
-nightly-x86_64-unknown-linux-gnu
-rustc 1.41.0-nightly (c8ea4ace9 2019-12-14)
 ```
 
 ## FAQ
