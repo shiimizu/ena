@@ -1,10 +1,10 @@
 # Ena
 
-Ena aims to be a low resource, high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
+Ena is a low resource, high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
 
 ## Features
 * **Memory efficient:** Using less than 4mb
-* **Bandwith efficient:** API requests stay low without sacrificing any posts by using only `threads.json` and `archive.json`, instead of continously polling every thread for updates.
+* **Bandwidth efficient:** API requests stay low without sacrificing any posts by using only `threads.json` and `archive.json`, instead of continously polling every thread for updates.
 
 <!--
 # Edge cases covered
