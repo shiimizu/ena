@@ -149,7 +149,7 @@ impl YotsubaArchiver {
                         CONSTRAINT unique_no UNIQUE (no)
                     )", board_name=board);
         if let Ok(_) = self.conn.execute(&sql, &[]) {}
-        if let Ok(_) = self.conn.execute(&format!("create index on {board_name}(no, resto)", board_name=board), &[]) {}
+        if let Ok(_) = self.conn.execute(&format!("create index {board_name}_no_resto_idx on {board_name}(no, resto)", board_name=board), &[]) {}
         self.conn.execute("set enable_seqscan to off;", &[]).expect("Err executing sql: set enable_seqscan to off");
     }
 
