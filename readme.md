@@ -33,13 +33,9 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 
 3. You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks. Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
 
-## Querying the data
-The schema is practically straight from 4chan's API. You can run this command to view the relational version of it (where `a` is the board and `no` and `resto` is the OP num):
-```sql
-select * from a where no = 196659047 or resto = 196659047 order by no;
-```
-
 ## FAQ
+Check with [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
+
 ### Why?
 Much of my personal time and research went into 4ch for educational purposes and self development. I value the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. The current avaliable solutions are not practical nor production ready. So I decided to help out.
 
