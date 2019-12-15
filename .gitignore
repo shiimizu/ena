@@ -11,3 +11,4 @@ archive
 !ena_config.json
 *.zip
 *.7z
+*m*.rs
