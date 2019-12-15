@@ -294,6 +294,7 @@ impl YotsubaArchiver {
                 match serde_json::from_str::<serde_json::Value>(&jb) {
                     Ok(ret) => {
                         println!("/{}/{}", board, thread);
+
                         self.upsert_thread2(board, &ret);
                         self.upsert_deleteds(board, thread, &ret);
                         
@@ -545,6 +546,7 @@ impl YotsubaArchiver {
                         
                         insert into {board_name}
                             select * from jsonb_populate_recordset(null::{board_name}, $1::jsonb->'posts')
+                            where no is not null
                         ON CONFLICT (no) 
                         DO
                             UPDATE 
@@ -584,7 +586,8 @@ impl YotsubaArchiver {
                                 images = excluded.images,
                                 unique_ips = excluded.unique_ips,
                                 tag = excluded.tag,
-                                since4pass = excluded.since4pass;", board_name=board);
+                                since4pass = excluded.since4pass
+                            where excluded.no is not null", board_name=board);
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_thread2");
     }
     fn get_threads_list(&self, json_item: &serde_json::Value) -> Option<VecDeque<u32>> {
