@@ -3,8 +3,8 @@
 Ena aims to be a low resource, high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
 
 ## Features
-* **Memory efficient:** Only taking about less than 4mb on my machine
-* **Bandwith efficient:** By using only `threads.json` and `archive.json`, API requests stay efficient without sacrificing any posts, instead of continously polling every thread for updates.
+* **Memory efficient:** Using less than 4mb
+* **Bandwith efficient:** API requests stay low without sacrificing any posts by using only `threads.json` and `archive.json`, instead of continously polling every thread for updates.
 
 <!--
 # Edge cases covered
@@ -12,6 +12,8 @@ Ena aims to be a low resource, high performance archiver to dump and archive pos
 * thread/post/file deletions
 * massive threads consisting of thousands of posts
   -->
+## Runtime dependencies
+* [PostgreSQL](https://www.postgresql.org/download/)
 
 ## Changes from Asagi
 * Schema changes, albeit a reasonable change. Only 1 table for `metadata` (for caches). 1 table for each board. The schema inside each board is straight from [4chan's thread endpoint](https://github.com/4chan/4chan-API/blob/master/pages/Threads.md).
