@@ -587,7 +587,7 @@ impl YotsubaArchiver {
                                 semantic_url = excluded.semantic_url,
                                 replies = excluded.replies,
                                 images = excluded.images,
-                                unique_ips = excluded.unique_ips,
+                                unique_ips = CASE WHEN excluded.unique_ips is not null THEN excluded.unique_ips ELSE {board_name}.unique_ips END,
                                 tag = excluded.tag,
                                 since4pass = excluded.since4pass
                             where excluded.no is not null
