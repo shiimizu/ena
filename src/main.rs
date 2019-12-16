@@ -542,8 +542,11 @@ impl YotsubaArchiver {
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_deleteds");
     }
     fn upsert_thread2(&self, board: &str, json_item: &serde_json::Value) {
+        // This method inserts a post or updates an existing one.
+        // It only updates rows where there's a column change. A majority of posts in a thread don't change. This saves IO writes. 
+        // (It doesn't modify/update sha256, sha25t, or deleted. Those are manually done)
+        // https://stackoverflow.com/a/36406023
         let sql = format!("
-                        
                         insert into {board_name}
                             select * from jsonb_populate_recordset(null::{board_name}, $1::jsonb->'posts')
                             where no is not null
@@ -587,7 +590,87 @@ impl YotsubaArchiver {
                                 unique_ips = excluded.unique_ips,
                                 tag = excluded.tag,
                                 since4pass = excluded.since4pass
-                            where excluded.no is not null", board_name=board);
+                            where excluded.no is not null
+                              and exists 
+                                (
+                                select {board_name}.no,
+                                        {board_name}.sticky,
+                                        {board_name}.closed,
+                                        {board_name}.now,
+                                        {board_name}.name,
+                                        {board_name}.sub,
+                                        {board_name}.com,
+                                        {board_name}.filedeleted,
+                                        {board_name}.spoiler,
+                                        {board_name}.custom_spoiler,
+                                        {board_name}.filename,
+                                        {board_name}.ext,
+                                        {board_name}.w,
+                                        {board_name}.h,
+                                        {board_name}.tn_w,
+                                        {board_name}.tn_h,
+                                        {board_name}.tim,
+                                        {board_name}.time,
+                                        {board_name}.md5,
+                                        {board_name}.fsize,
+                                        {board_name}.m_img,
+                                        {board_name}.resto,
+                                        {board_name}.trip,
+                                        {board_name}.id,
+                                        {board_name}.capcode,
+                                        {board_name}.country,
+                                        {board_name}.country_name,
+                                        {board_name}.archived,
+                                        {board_name}.bumplimit,
+                                        {board_name}.archived_on,
+                                        {board_name}.imagelimit,
+                                        {board_name}.semantic_url,
+                                        {board_name}.replies,
+                                        {board_name}.images,
+                                        {board_name}.unique_ips,
+                                        {board_name}.tag,
+                                        {board_name}.since4pass
+                                    where {board_name}.no is not null
+                                except
+                                select excluded.no,
+                                        excluded.sticky,
+                                        excluded.closed,
+                                        excluded.now,
+                                        excluded.name,
+                                        excluded.sub,
+                                        excluded.com,
+                                        excluded.filedeleted,
+                                        excluded.spoiler,
+                                        excluded.custom_spoiler,
+                                        excluded.filename,
+                                        excluded.ext,
+                                        excluded.w,
+                                        excluded.h,
+                                        excluded.tn_w,
+                                        excluded.tn_h,
+                                        excluded.tim,
+                                        excluded.time,
+                                        excluded.md5,
+                                        excluded.fsize,
+                                        excluded.m_img,
+                                        excluded.resto,
+                                        excluded.trip,
+                                        excluded.id,
+                                        excluded.capcode,
+                                        excluded.country,
+                                        excluded.country_name,
+                                        excluded.archived,
+                                        excluded.bumplimit,
+                                        excluded.archived_on,
+                                        excluded.imagelimit,
+                                        excluded.semantic_url,
+                                        excluded.replies,
+                                        excluded.images,
+                                        excluded.unique_ips,
+                                        excluded.tag,
+                                        excluded.since4pass
+                                where excluded.no is not null and excluded.no = {board_name}.no
+                                )", board_name=board);
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_thread2");
     }
     fn get_threads_list(&self, json_item: &serde_json::Value) -> Option<VecDeque<u32>> {
