@@ -22,12 +22,16 @@ use reqwest::header::{HeaderMap, HeaderValue, LAST_MODIFIED, USER_AGENT, IF_MODI
 use std::collections::{BTreeMap, VecDeque};
 use chrono::Local;
 use sha2::{Sha256, Digest};
-//use async_std::prelude::*;
-use async_std::task;
+use async_std::prelude::*;
+use async_std::task::{self, spawn};
 use std::io::BufReader;
 use std::fs::File;
 use std::thread;
 use std::path::Path;
+
+extern crate ctrlc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 const RATELIMIT: u16 = 1000;
 const REFRESH_DELAY: u8 = 10;
@@ -36,7 +40,7 @@ fn main() {
     let start_time = Instant::now();
     println!("{}", yotsuba_time());
     start_background_thread();
-    println!("Program finished in {} ms", start_time.elapsed().as_millis());
+    println!("\nProgram finished in {} ms", start_time.elapsed().as_millis());
 }
 
 fn start_background_thread() {
@@ -46,6 +50,7 @@ fn start_background_thread() {
         // By using async tasks we can process an enormous amount of tasks concurrently
         // without the overhead of multiple native threads. 
         let mut archiver = YotsubaArchiver::new();
+        archiver.listen_to_exit();
         archiver.init_metadata();
         archiver.poll_boards();
     }).join().unwrap();
@@ -57,6 +62,7 @@ pub struct YotsubaArchiver {
     settings : serde_json::Value,
     client: reqwest::Client,
     queue: Queue,
+    finished: async_std::sync::Arc<async_std::sync::Mutex::<bool>>,
     //proxies: ProxyStream,
 }
 
@@ -68,11 +74,13 @@ impl YotsubaArchiver {
         //default_headers.insert(IF_MODIFIED_SINCE, HeaderValue::from_str(&yotsuba_time()).unwrap());
         std::fs::create_dir_all("./archive/tmp").expect("Err create dir tmp");
         let settingss = read_json("ena_config.json").expect("Err get config");
-        let defs = settingss.get("sites").expect("Err get sites")
+        
+        let defs = settingss.get("settings").expect("Err get settings");
+        /*let defs = settingss.get("sites").expect("Err get sites")
                             .as_array().expect("Err get sites array")[0]
                             .get("settings").expect("Err get settings")
                             .get("boardSettings").expect("Err get boardSettings")
-                            .get("default").expect("Err get default").to_owned();
+                            .get("default").expect("Err get default").to_owned();*/
         let conn_url = format!("postgresql://{username}:{password}@{host}:{port}/{database}",
                                     username=defs.get("username").expect("Err get username").as_str().expect("Err convert username to str"),
                                     password=defs.get("password").expect("Err get password").as_str().expect("Err convert password to str"),
@@ -84,6 +92,7 @@ impl YotsubaArchiver {
                 settings: settingss,
                 client: reqwest::ClientBuilder::new().default_headers(default_headers).build().unwrap(),
                 queue: Queue::new(),
+                finished: async_std::sync::Arc::new(async_std::sync::Mutex::new(false)),
                 //proxies: Self::get_proxy("cache/proxylist.json"),
             };
         println!("Finished Initializing");
@@ -159,6 +168,20 @@ impl YotsubaArchiver {
         self.conn.execute("set enable_seqscan to off;", &[]).expect("Err executing sql: set enable_seqscan to off");
     }
 
+    fn listen_to_exit(&self) {
+        //let f = async_std::sync::Arc::new(async_std::sync::Mutex::new(self.finished));
+        let finished_clone = async_std::sync::Arc::clone(&self.finished);
+        ctrlc::set_handler( move || {
+                if let Some(mut finished) = finished_clone.try_lock() {
+                    *finished = true;
+                } else {
+                    eprintln!("Lock occurred trying to get finished in ctrlc::set_handler");
+                }
+        }).expect("Error setting Ctrl-C handler");
+
+    }
+
+
     fn upsert_metadata(&self, board: &str, col: &str, json_item: &serde_json::Value) {
         let sql = format!("INSERT INTO metadata(board, {column})
                             VALUES ($1, $2::jsonb)
@@ -187,6 +210,14 @@ impl YotsubaArchiver {
         let one_millis = Duration::from_millis(1);
         // let mut count:u32 = 0;
         loop {
+            // Listen to CTRL-C
+            if let Some(finished) = self.finished.try_lock() {
+                if *finished {
+                    break;
+                }
+            } else {
+                eprintln!("Lock occurred trying to get finished");
+            }
             //et mut queue = self.queue.get_mut(&current_board).expect("err getting queue for board"); 
             let now = Instant::now();
 
@@ -292,6 +323,15 @@ impl YotsubaArchiver {
 
         let mut _canb=false;
         'outer: loop {
+            // Listen to CTRL-C
+            if let Some(finished) = self.finished.try_lock() {
+                if *finished {
+                    break;
+                }
+            } else {
+                eprintln!("Lock occurred trying to get finished");
+            }
+
             let (_last_modified_, status, body) =
                 self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain="http://a.4cdn.org", bo=board, th=thread ), "");
             _status_resp = status;

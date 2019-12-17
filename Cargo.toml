@@ -30,4 +30,5 @@ pretty_env_logger = "*"
 log = "*"
 if_chain = "*"
 sha2 = { version = "*", features=["std"] }
-async-std = { git = 'https://github.com/stjepang/async-std', branch = 'new-scheduler', features = ["attributes", "unstable"] }
+async-std = { git = 'https://github.com/stjepang/async-std', branch = 'new-scheduler' }
+ctrlc = { version = "*", features = ["termination"] }

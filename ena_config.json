@@ -1,5 +1,5 @@
 {
-	"defaultSettings": {
+	"settings": {
 		"engine": "postgresql",
 		"database": "archive",
 		"host": "localhost",
@@ -7,31 +7,28 @@
 		"username": "postgres",
 		"password": "zxc",
 		"charset": "utf8",
-		"path": "/home/mizu/ena",
-		"useProxy": true,
-		"retryAttempts": 3,
-		"refreshDelay": 10,
-		"throttleURL": "http://a.4cdn.org",
-		"throttleMillisec": 1100
+		"path": "/home/mizu/ena"
 	},
 	"sites": [{
 		"name": "4chan",
-		"settings": {
-			"boards": [{
-					"board": "pol",
-					"refreshDelay": 30
-				},
-				{
-					"board": "g",
-					"refreshDelay": 10
-				},
-				{
-					"board": "jp",
-					"refreshDelay": 20
-				}
-
-			]
-		}
-
+		"boardSettings": {
+			"retryAttempts": 3,
+			"refreshDelay": 10,
+			"throttleURL": "http://a.4cdn.org",
+			"throttleMillisec": 1100
+		},
+		"boards": [{
+				"board": "pol",
+				"refreshDelay": 30
+			},
+			{
+				"board": "g",
+				"refreshDelay": 10
+			},
+			{
+				"board": "jp",
+				"refreshDelay": 20
+			}
+		]
 	}]
 }
