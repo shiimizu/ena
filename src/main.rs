@@ -103,6 +103,12 @@ impl YotsubaArchiver {
     }
 
     fn init_board(&self, board: &str) {
+        // Check if board is a number
+        let b = if let Ok(_) = board.parse::<u32>() {
+            format!("_{}", board)
+        } else {
+            board.to_string()
+        };
         let sql = format!("CREATE TABLE IF NOT EXISTS {board_name}
                     (
                         no bigint NOT NULL,
@@ -147,7 +153,7 @@ impl YotsubaArchiver {
                         since4pass character varying,
                         PRIMARY KEY (no),
                         CONSTRAINT unique_no_{board_name} UNIQUE (no)
-                    )", board_name=board);
+                    )", board_name=b);
         if let Ok(_) = self.conn.execute(&sql, &[]) {}
         if let Ok(_) = self.conn.execute(&format!("create index {board_name}_no_resto_idx on {board_name}(no, resto)", board_name=board), &[]) {}
         self.conn.execute("set enable_seqscan to off;", &[]).expect("Err executing sql: set enable_seqscan to off");
@@ -525,9 +531,9 @@ impl YotsubaArchiver {
                         SET deleted = 1", board_name=board, no_id=no);
         self.conn.execute(&sql, &[]).expect("Err executing sql: upsert_deleted");
     }
+    
     fn upsert_deleteds(&self, board: &str, thread:u32, json_item: &serde_json::Value) {
         let sql = format!("
-                        
                         insert into {board_name}
                             SELECT x.* from
                             (select * FROM {board_name} where no={op} or resto={op} order by no) x
@@ -541,6 +547,7 @@ impl YotsubaArchiver {
                             SET deleted = 1;", board_name=board, op=thread);
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_deleteds");
     }
+    
     fn upsert_thread2(&self, board: &str, json_item: &serde_json::Value) {
         // This method inserts a post or updates an existing one.
         // It only updates rows where there's a column change. A majority of posts in a thread don't change. This saves IO writes. 
@@ -674,6 +681,7 @@ impl YotsubaArchiver {
                                 )", board_name=board);
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_thread2");
     }
+    
     fn get_threads_list(&self, json_item: &serde_json::Value) -> Option<VecDeque<u32>> {
         let sql = "SELECT jsonb_agg(newv->'no') from
                     (select jsonb_path_query($1::jsonb, '$[*].threads[*]') as newv)z";
