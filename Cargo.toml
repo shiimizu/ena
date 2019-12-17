@@ -11,10 +11,6 @@ opt-level = 'z'  # Optimize for size.
 codegen-units = 1
 panic = 'abort'
 
-[dependencies.async-std]
-version = "*"
-features = ["attributes", "unstable"]
-
 [dependencies.serde_json]
 version = "*"
 features = ["preserve_order"]
@@ -35,3 +31,4 @@ pretty_env_logger = "*"
 log = "*"
 if_chain = "*"
 sha2 =  { version = "*", features=["std"] }
+async-std = { git = 'https://github.com/stjepang/async-std', branch = 'new-scheduler', features = ["attributes", "unstable"] }

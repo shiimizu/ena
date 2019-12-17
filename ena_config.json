@@ -19,7 +19,7 @@
 					"throttleMillisec": 1100
 				},
 				"boards": [{
-						"board": "a",
+						"board": "pol",
 						"engine": "Pgsql",
 						"refreshDelay": 30
 					},

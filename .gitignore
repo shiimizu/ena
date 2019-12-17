@@ -14,3 +14,4 @@ archive
 *m*.rs
 txt
 unknown_thread
+Cargo.lock

@@ -546,6 +546,7 @@ impl YotsubaArchiver {
         // It only updates rows where there's a column change. A majority of posts in a thread don't change. This saves IO writes. 
         // (It doesn't modify/update sha256, sha25t, or deleted. Those are manually done)
         // https://stackoverflow.com/a/36406023
+        // https://dba.stackexchange.com/a/39821
         let sql = format!("
                         insert into {board_name}
                             select * from jsonb_populate_recordset(null::{board_name}, $1::jsonb->'posts')
