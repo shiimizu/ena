@@ -565,7 +565,7 @@ impl YotsubaArchiver {
                             self.upsert_deleted(board, thread);
                             break;
                         }
-                        eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}",board, thread, status, e,jb);
+                        eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}", board, thread, status, e,jb);
                         let delay:u128 = bs.throttle_millisec.into();
                         while now.elapsed().as_millis() <= delay {
                             task::sleep(one_millis).await;
@@ -583,11 +583,9 @@ impl YotsubaArchiver {
             }
         }
 
-        let download_media = false;
-        let download_thumbs = false;
         // DL MEDIA
         // Need to check against other md5 so we don't redownload if we have it
-        if download_media || download_thumbs {
+        if bs.download_media || bs.download_thumbnails {
             let media_list = self.conn.query(&format!("select * FROM {board_name} where (no={op} or resto={op}) and (md5 is not null) and (sha256 is null or sha256t is null) order by no", board_name=board, op=thread), &[]).expect("Err getting missing media");
             let mut fut = FuturesUnordered::new();
             let client = &self.client;
@@ -603,32 +601,30 @@ impl YotsubaArchiver {
                 if let Some(_) = sha256 {
                 } else {
                     // No media, proceed to dl
-                    if download_media {
-                        fut.push(Self::dl_media_post(&bs.media_url, board, thread, tim, ext, no as u64, true, false, client));
+                    if bs.download_media {
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client));
                     }
                 }
                 if let Some(_) = sha256t {
                 } else {
                     // No thumbs, proceed to dl
-                    if download_thumbs {
-                        fut.push(Self::dl_media_post(&bs.media_url, board, thread, tim, ext2, no as u64, false, true, client));
+                    if bs.download_thumbnails {
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client));
                     }
                 }
             }
             if has_media {
                 let s = &self;
-                // task::block_on(async move {
-                    while let Some(hh) = fut.next().await {
-                        if let Some((no, hashsum, thumb_hash)) = hh {
-                            if let Some(hsum) = hashsum {
-                                s.upsert_hash2(board, no, "sha256", &hsum);
-                            }
-                            if let Some(hsumt) = thumb_hash {
-                                s.upsert_hash2(board, no, "sha256t", &hsumt);
-                            }
+                while let Some(hh) = fut.next().await {
+                    if let Some((no, hashsum, thumb_hash)) = hh {
+                        if let Some(hsum) = hashsum {
+                            s.upsert_hash2(board, no, "sha256", &hsum);
+                        }
+                        if let Some(hsumt) = thumb_hash {
+                            s.upsert_hash2(board, no, "sha256t", &hsumt);
                         }
                     }
-                // });
+                }
             }
         }
 
@@ -639,7 +635,8 @@ impl YotsubaArchiver {
     }
 
     // this downloads any missing media and/or thumbs
-    async fn dl_media_post(domain:&str, board: &str, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client)  -> Option<(u64, Option<String>, Option<String>)> {
+    async fn dl_media_post(domain:&str, bs: &BoardSettings2, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client)  -> Option<(u64, Option<String>, Option<String>)> {
+        let board = "";
         let dl = |thumb| -> Result<String, reqwest::Error> {
             let url = format!("{}/{}/{}{}{}", domain, board, tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext} );
             println!("/{}/{}#{} -> {}{}{}",  board, thread, no,tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext});
@@ -654,8 +651,11 @@ impl YotsubaArchiver {
             match status {
                 reqwest::StatusCode::OK => {
                     let temp_path = format!("./archive/tmp/{}_{}{}", no,tim,ext);
-                    let mut dest = std::fs::File::create(&temp_path).expect("err file temp path");
-                    std::io::copy(&mut resp, &mut dest).expect("err file temp path copy");
+                    if let Ok(mut dest) = std::fs::File::create(&temp_path) {
+                        if let Ok(_) = std::io::copy(&mut resp, &mut dest) {}
+                        else { eprintln!("err file temp path copy"); }
+                    }
+                    else { eprintln!("err file temp path"); }
 
                     // Open the file we just downloaded, and hash it
                     let mut file = std::fs::File::open(&temp_path).expect("err opening temp file temp path");
@@ -675,8 +675,13 @@ impl YotsubaArchiver {
                     let final_path = format!("{}/{:x}{}", final_dir_path, hash, ext);
 
                     // discarding errors...
-                    if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
-                    if let Ok(_) = std::fs::rename(&temp_path, final_path){}
+                    if bs.keep_media && !thumb {
+                        if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
+                        if let Ok(_) = std::fs::rename(&temp_path, final_path){}
+                    } else if bs.keep_thumbnails && thumb {
+                        if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
+                        if let Ok(_) = std::fs::rename(&temp_path, final_path){}
+                    }
                 },
                 reqwest::StatusCode::NOT_FOUND => eprintln!("/{}/{} <{}> {}", board, no, status, url),
                 _ => eprintln!("/{}/{} <{}> {}", board, no, status, url),
@@ -1117,8 +1122,8 @@ struct BoardSettings2 {
     throttle_millisec: u32,
     download_media: bool,
     download_thumbnails: bool,
-    hash_media: bool,
-    hash_thumbnails: bool,
+    keep_media: bool,
+    keep_thumbnails: bool,
 }
 
 /// A cycle stream that can append new values
