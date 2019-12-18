@@ -844,8 +844,14 @@ select  no as doc_id,
 
                     // discarding errors...
                     if (bs.keep_media && !thumb) || (bs.keep_thumbnails && thumb) || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb)) {
-                        if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
-                        if let Ok(_) = std::fs::rename(&temp_path, final_path){}
+                        
+                        let path_final = Path::new(&final_path);
+                        if !path_final.exists() {
+                            if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
+                            if let Ok(_) = std::fs::rename(&temp_path, &final_path){}
+                        } else {
+                            eprintln!("Already exists: {}", final_path);
+                        }
                     } else {
                         if let Ok(_) = std::fs::remove_file(&temp_path){}
                     }
