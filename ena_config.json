@@ -18,8 +18,8 @@
 		"mediaUrl": "http://i.4cdn.org",
 		"downloadMedia": false,
 		"downloadThumbnails": false,
-		"hashMedia": false,
-		"hashThumbnails": false
+		"keepMedia": false,
+		"keepThumbnails": false
 	},
 	"boards": [{
 			"board": "pol",

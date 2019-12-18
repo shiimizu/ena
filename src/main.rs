@@ -104,18 +104,11 @@ fn start_background_thread() {
             let a = &archiver;
             let mut fut = FuturesUnordered::new();
 
+            // Push each board to queue to be run concurrently
             let mut config = read_json("ena_config.json").expect("Err get config");
-    let bb = config.to_owned();
-    let boards = bb.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");
-
-/*
-            let mut default : BoardSettingsJson = serde_json::from_value(
-                config.get_mut("boardSettings").expect("Err getting boardSettings").to_owned()
-                ).expect("Err serializing boardSettings");
-            let boards = config.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");*/
-            // let current_board = "a";
+            let bb = config.to_owned();
+            let boards = bb.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");
             for board in boards {
-                // let b : BoardSettingsJson = serde_json::from_value(board.to_owned()).expect("Err serializing board");
                 let default = config.get_mut("boardSettings").expect("Err getting boardSettings").as_object_mut().expect("Err boardSettings as_object_mut");
                 let board_map = board.as_object().expect("Err serializing board");
                 for (k,v) in board_map.iter() {
@@ -133,18 +126,12 @@ fn start_background_thread() {
                 }
                 let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
                     
-                println!("{:#?}", &bs);
+                //println!("{:#?}", &bs);
                 fut.push(a.assign_to_board(bs));
             }
 
-
-            // let boards = archiver.get_boards_raw();
-            // for board in boards.iter() {
-                // fut.push(a.assign_to_board(board));
-            // }
+            // Run each board concurrently
             while let Some(_) = fut.next().await {}
-
-            
         });
         
 }
@@ -939,14 +926,14 @@ impl YotsubaArchiver {
                     (select jsonb_path_query($1::jsonb, '$[*].threads[*]') as newv)z";
         let resp = self.conn.query(&sql, &[&json_item]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
-        loop {
+        'outer: loop {
             for row in resp.iter() {
                 let jsonb : Option<serde_json::Value> = row.get(0);
                 match jsonb {
                     Some(val) => {
                         let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_threads_list");
                         _result = Some(q);
-                        break;
+                        break 'outer;
                     },
                     None => {
                         eprintln!("Error getting get_threads_list at column 0: NULL @ {}", Local::now().to_rfc2822());
@@ -990,14 +977,14 @@ impl YotsubaArchiver {
                 "#, board_name=board);
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
-        loop {
+        'outer: loop {
             for row in resp.iter() {
                 let jsonb : Option<serde_json::Value> = row.get(0);
                 match jsonb {
                     Some(val) => {
                         let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_combined_threads");
                         _result = Some(q);
-                        break;
+                        break 'outer;
                     },
                     None => {
                         eprintln!("Error getting get_combined_threads at column 0: NULL @ {}", Local::now().to_rfc2822());
@@ -1027,14 +1014,14 @@ impl YotsubaArchiver {
                 "#;
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
-        loop {
+        'outer: loop {
             for row in resp.iter() {
                 let jsonb : Option<serde_json::Value> = row.get(0);
                 match jsonb {
                     Some(val) => {
                         let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_deleted_and_modified_threads2");
                         _result = Some(q);
-                        break;
+                        break 'outer;
                     },
                     None => {
                         eprintln!("Error getting get_deleted_and_modified_threads2 at column 0: NULL @ {}", Local::now().to_rfc2822());
