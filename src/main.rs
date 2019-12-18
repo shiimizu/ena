@@ -460,7 +460,7 @@ select  no as doc_id,
                                             if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board_raw, &ft, true).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
-                                                println!("/{}/ [threads] Seems like there was no threads?.. This should be unreachable!", current_board);
+                                                println!("/{}/ [threads] Seems like there was no modified threads at startup..", current_board);
                                             }
 
                                             // update base at the end
@@ -549,7 +549,7 @@ select  no as doc_id,
                                                     if let Some(mut list) = self.get_combined_threads(&current_board_raw, &ft, false).await {
                                                         local_threads_list.append(&mut list);
                                                     } else {
-                                                        println!("/{}/ [archive] Seems like there was no threads?.. This should be unreachable!", current_board);
+                                                        println!("/{}/ [archive] Seems like there was no modified threads from startup..", current_board);
                                                     }
 
                                                     // update base at the end
@@ -1097,7 +1097,7 @@ select  no as doc_id,
                     (select jsonb_path_query($1::jsonb, '$[*].threads[*]') as newv)z";
         let resp = self.conn.query(&sql, &[&json_item]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
-        'outer: loop {
+        'outer: for _ri in 0..4 {
             for row in resp.iter() {
                 let jsonb : Option<serde_json::Value> = row.get(0);
                 match jsonb {
@@ -1112,7 +1112,6 @@ select  no as doc_id,
                     },
                 }
             }
-
         }
         _result
     }
@@ -1177,7 +1176,7 @@ select  no as doc_id,
                 };
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
-        'outer: loop {
+        'outer: for _ri in 0..4 {
             for row in resp.iter() {
                 let jsonb : Option<serde_json::Value> = row.get(0);
                 match jsonb {
@@ -1187,12 +1186,12 @@ select  no as doc_id,
                         break 'outer;
                     },
                     None => {
-                        eprintln!("Error getting get_combined_threads at column 0: NULL @ {}", Local::now().to_rfc2822());
+                        // Null from query -> no new threads
+                        //eprintln!("Error getting get_combined_threads at column 0: NULL @ {}", Local::now().to_rfc2822());
                         task::sleep(Duration::from_secs(1)).await;
                     },
                 }
             }
-
         }
         _result
     }
@@ -1225,7 +1224,7 @@ select  no as doc_id,
             };
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
-        'outer: loop {
+        'outer: for _ri in 0..4 {
             for row in resp.iter() {
                 let jsonb : Option<serde_json::Value> = row.get(0);
                 match jsonb {
@@ -1240,7 +1239,6 @@ select  no as doc_id,
                     },
                 }
             }
-
         }
         _result
     }
