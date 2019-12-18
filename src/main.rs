@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 #![allow(unreachable_code)]
 #![allow(non_snake_case)]
+#![allow(dead_code)]
 
 extern crate reqwest;
 extern crate pretty_env_logger;
@@ -22,76 +23,120 @@ use reqwest::header::{HeaderMap, HeaderValue, LAST_MODIFIED, USER_AGENT, IF_MODI
 use std::collections::{BTreeMap, VecDeque};
 use chrono::Local;
 use sha2::{Sha256, Digest};
-use async_std::prelude::*;
-use async_std::task::{self, spawn};
+//use async_std::prelude::*;
+use async_std::task;
 use std::io::BufReader;
 use std::fs::File;
-use std::thread;
+
 use std::path::Path;
 
 extern crate ctrlc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
-const RATELIMIT: u16 = 1000;
-const REFRESH_DELAY: u8 = 10;
 
 fn main() {
     let start_time = Instant::now();
     println!("{}", yotsuba_time());
     start_background_thread();
+    //other();
     println!("\nProgram finished in {} ms", start_time.elapsed().as_millis());
 }
 
+fn other() {
+    let mut config = read_json("ena_config.json").expect("Err get config");
+    /*
+    let mut default : BoardSettingsJson = serde_json::from_value(
+        config.get_mut("boardSettings").expect("Err getting boardSettings").to_owned()
+        ).expect("Err serializing boardSettings");*/
+    let bb = config.to_owned();
+    let boards = bb.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");
+    let default = config.get_mut("boardSettings").expect("Err getting boardSettings").as_object_mut().expect("Err boardSettings as_object_mut");
+    
+    let _current_board = "a";
+    
+    for board in boards {
+        let board_map = board.as_object().expect("Err serializing board");
+        for (k,v) in board_map.iter() {
+            default.insert(k.to_string(), v.to_owned());
+        }
+        /*if let Some(bo) = b.board {
+            if bo == current_board {
+                if let Some(item) = b.retryAttempts {
+                    default.retryAttempts = Some(item);
+                }
+                if let Some(item) = b.refreshDelay {
+                    default.refreshDelay = Some(item);
+                }
+                if let Some(item) = b.apiURL {
+                    default.apiURL = Some(item);
+                }
+                if let Some(item) = b.mediaURL {
+                    default.mediaURL = Some(item);
+                }
+                if let Some(item) = b.throttleMillisec {
+                    default.throttleMillisec = Some(item);
+                }
+                break;
+            }
+        }*/
+    }
+
+    let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
+
+    /*
+    let bs = BoardSettings {
+        board: current_board.to_string(),
+        retry_attempts: default.retryAttempts.unwrap(),
+        refresh_delay: default.refreshDelay.unwrap(),
+        api_url: default.apiURL.unwrap(),
+        media_url: default.mediaURL.unwrap(),
+        throttle_millisec: default.throttleMillisec.unwrap(),
+    };*/
+    
+    println!("{:#?}", &bs);
+}
+
 fn start_background_thread() {
-    // Do all work in a background thread to keep the main ui thread running smoothly
-    // This essentially keeps CPU and power usage extremely low 
-    // thread::spawn(move || {
-        // By using async tasks we can process an enormous amount of tasks concurrently
-        // without the overhead of multiple native threads. 
         task::block_on(async{
             let archiver = YotsubaArchiver::new();
             archiver.listen_to_exit();
             archiver.init_metadata();
-            // archiver.init_boards();
-            /*let fut = FuturesUnordered::new();
-            let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(archiver));
-            for _ in 0..3 {
-                let a_clone = async_std::sync::Arc::clone(&a);
-                let mut aq= a_clone.lock().await;
-                fut.push(aq.poll_boards());//.await;
-            }*/
 
-            let boards = archiver.get_boards_raw();
             let a = &archiver;
             let mut fut = FuturesUnordered::new();
-            for board in boards.iter() {
-                fut.push(a.assign_to_board(board));
+
+            let mut config = read_json("ena_config.json").expect("Err get config");
+    let bb = config.to_owned();
+    let boards = bb.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");
+
+/*
+            let mut default : BoardSettingsJson = serde_json::from_value(
+                config.get_mut("boardSettings").expect("Err getting boardSettings").to_owned()
+                ).expect("Err serializing boardSettings");
+            let boards = config.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");*/
+            // let current_board = "a";
+            for board in boards {
+                // let b : BoardSettingsJson = serde_json::from_value(board.to_owned()).expect("Err serializing board");
+                let default = config.get_mut("boardSettings").expect("Err getting boardSettings").as_object_mut().expect("Err boardSettings as_object_mut");
+                let board_map = board.as_object().expect("Err serializing board");
+                for (k,v) in board_map.iter() {
+                    default.insert(k.to_string(), v.to_owned());
+                }
+                let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
+                    
+                println!("{:#?}", &bs);
+                fut.push(a.assign_to_board(bs));
             }
-            while let Some(_) = fut.next().await {
-            }
-            /*
-            let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(archiver));
-            let a_clone = async_std::sync::Arc::clone(&a);
-            for _ in 0..3 {
-                futures::join!(a_clone.lock().await.assign_to_board(""),a_clone.lock().await.assign_to_board(""));
-            }*/
-        /*let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(archiver));
-            for _ in 0..3 {
-                let a_clone = async_std::sync::Arc::clone(&a);
-                task::spawn(async move {
-                    a_clone.lock().await.assign_to_board("").await;
-                });
-            }*/
+
+
+            // let boards = archiver.get_boards_raw();
+            // for board in boards.iter() {
+                // fut.push(a.assign_to_board(board));
+            // }
+            while let Some(_) = fut.next().await {}
+
+            
         });
-        /*
-        futures::stream::iter(0..3).for_each_concurrent(
-            /* limit */ None,
-            |_| async move {
-                archiver.poll_board().await;
-            });
-        });*/
-    // }).join().unwrap();
+        
 }
 
 // Have a struct to store our variables without using global statics
@@ -219,7 +264,6 @@ impl YotsubaArchiver {
 
     }
 
-
     fn upsert_metadata(&self, board: &str, col: &str, json_item: &serde_json::Value) {
         let sql = format!("INSERT INTO metadata(board, {column})
                             VALUES ($1, $2::jsonb)
@@ -229,15 +273,6 @@ impl YotsubaArchiver {
 
     }
 
-    async fn tt(&mut self , board: &str) {
-        // println!("inside tt");
-            // task::sleep(Duration::from_secs(1)).await;
-            self.assign_to_board(board).await;
-    } 
-    async fn poll_board(&mut self) {
-        self.assign_to_board("").await;
-
-    }
     fn init_boards(&mut self) {
         let boards = self.get_boards_raw();
         // let mut fut = FuturesUnordered::new();
@@ -318,10 +353,11 @@ impl YotsubaArchiver {
         // self.assign_to_board(&boards[0]).await;
     }*/
 
-    async fn assign_to_board<'b>(&self, board: &'b str) ->Option<()>{
-        let current_time = yotsuba_time();
-        let current_board = String::from(board);
-        let mut threads_last_modified = String::from(&current_time);
+    async fn assign_to_board<'b>(&self, bs: BoardSettings2) ->Option<()>{
+        // let current_time = yotsuba_time();
+        self.init_board(&bs.board);
+        let current_board = &bs.board;
+        let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
         let one_millis = Duration::from_millis(1);
         let mut local_threads_list : VecDeque<u32> = VecDeque::new();
         // let mut count:u32 = 0;
@@ -340,7 +376,7 @@ impl YotsubaArchiver {
             // Download threads.json
             // Scope to drop values when done
             {
-                let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/threads.json", url="http://a.4cdn.org", bo=board), &threads_last_modified).await;
+                let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/threads.json", url=bs.api_url, bo=current_board), &threads_last_modified).await;
                 match status {
                     reqwest::StatusCode::OK => {
                         match last_modified_ {
@@ -392,7 +428,7 @@ impl YotsubaArchiver {
                     },
                 }
 
-                task::sleep(Duration::from_millis(RATELIMIT.into())).await; // Ratelimit
+                task::sleep(Duration::from_millis(bs.throttle_millisec.into())).await; // Ratelimit
             }
 
             {
@@ -404,12 +440,13 @@ impl YotsubaArchiver {
                     // while let Some(_) = self.drain_list(board).await {
                     // }
                     while let Some(thread) = local_threads_list.pop_front() {
-                        self.assign_to_thread(board, thread).await;
+                        self.assign_to_thread(&bs, thread).await;
                     }
                 } // No need to report if no new threads cause when it's not modified it'll tell us
             }
             // Ratelimit after fetching threads
-            while now.elapsed().as_secs() <= REFRESH_DELAY.into() {
+            let delay:u64 = bs.refresh_delay.into();
+            while now.elapsed().as_secs() <= delay {
                 task::sleep(one_millis).await;
             }
         }
@@ -417,23 +454,24 @@ impl YotsubaArchiver {
     }
 
     // BRUH LET ME JUST SHARE MUTABLE REFERENCES AHHHHHHHHHHHHHHH
-    async fn drain_list(&mut self, board: &str) -> Option<u32> {
+    /*async fn drain_list(&mut self, board: &str) -> Option<u32> {
         // Repeatedly getting the list probably isn't the most efficient...
         if let Some(a) = self.queue.get_mut(board) {
             let aa = a.pop_front();
             if let Some(thread) = aa {
                 // println!("{:?}/{:?} assignde",board ,newt);
-                self.assign_to_thread(board, thread).await;
+                self.assign_to_thread(&bs, thread).await;
             }
             return aa;
         }
         None
-    }
+    }*/
 
     // There's a lot of object creation here but they should all get dropped so it shouldn't matter
-    async fn assign_to_thread(&self, board: &str, thread: u32) {
+    async fn assign_to_thread(&self, bs: &BoardSettings2, thread: u32) {
         // TODO check if thread is empty or its posts are empty
         // If DB has an incomplete thread, archived, closed, or sticky
+        let board = &bs.board;
         let mut _retry = 0;
         let mut _status_resp = reqwest::StatusCode::OK;
     
@@ -453,7 +491,7 @@ impl YotsubaArchiver {
             }
 
             let (_last_modified_, status, body) =
-                self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain="http://a.4cdn.org", bo=board, th=thread ), "").await;
+                self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain=bs.api_url, bo=board, th=thread ), "").await;
             _status_resp = status;
 
             if let Ok(jb) = body {
@@ -478,11 +516,12 @@ impl YotsubaArchiver {
                             break;
                         }
                         eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}",board, thread, status, e,jb);
-                        while now.elapsed().as_millis() <= RATELIMIT.into() {
+                        let delay:u128 = bs.throttle_millisec.into();
+                        while now.elapsed().as_millis() <= delay {
                             task::sleep(one_millis).await;
                         }
                         _retry += 1;
-                        if _retry <=3 {
+                        if _retry <=(bs.retry_attempts+1) {
                             continue 'outer;
                         } else {
                             // TODO handle what to do with invalid thread
@@ -518,14 +557,14 @@ impl YotsubaArchiver {
                 } else {
                     // No media, proceed to dl
                     if download_media {
-                        fut.push(Self::dl_media_post("http://i.4cdn.org", board, thread, tim, ext, no as u64, true, false, client));
+                        fut.push(Self::dl_media_post(&bs.media_url, board, thread, tim, ext, no as u64, true, false, client));
                     }
                 }
                 if let Some(_) = sha256t {
                 } else {
                     // No thumbs, proceed to dl
                     if download_thumbs {
-                        fut.push(Self::dl_media_post("http://i.4cdn.org", board, thread, tim, ext2, no as u64, false, true, client));
+                        fut.push(Self::dl_media_post(&bs.media_url, board, thread, tim, ext2, no as u64, false, true, client));
                     }
                 }
             }
@@ -546,7 +585,8 @@ impl YotsubaArchiver {
             }
         }
 
-        while now.elapsed().as_millis() <= RATELIMIT.into() {
+        let delay:u128 = bs.throttle_millisec.into();
+        while now.elapsed().as_millis() <= delay {
             task::sleep(one_millis).await;
         }
     }
@@ -937,34 +977,49 @@ impl YotsubaArchiver {
 type Queue = BTreeMap<String, VecDeque<u32>>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct BoardSettings {
+struct BoardSettingsJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     board: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    engine: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    database: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    host: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    password: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    charset: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    useProxy: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     retryAttempts: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     refreshDelay: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    throttleURL: Option<String>,
+    #[serde(default)]
+    apiURL: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    mediaURL: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     throttleMillisec: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct BoardSettings {
+    board: String,
+    retry_attempts: u16,
+    refresh_delay: u16,
+    api_url: String,
+    media_url: String,
+    throttle_millisec: u32,
+}
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BoardSettings2 {
+    board: String,
+    retry_attempts: u16,
+    refresh_delay: u16,
+    api_url: String,
+    media_url: String,
+    throttle_millisec: u32,
+    download_media: bool,
+    download_thumbnails: bool,
+    hash_media: bool,
+    hash_thumbnails: bool,
 }
 
 /// A cycle stream that can append new values
