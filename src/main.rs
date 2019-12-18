@@ -35,10 +35,19 @@ extern crate ctrlc;
 
 fn main() {
     let start_time = Instant::now();
-    println!("{}", yotsuba_time());
+    let start_time_str = Local::now().to_rfc2822();
+    println!(r#"
+     ____                        
+    /\  _`\                      
+    \ \ \L\_\    ___      __     
+     \ \  _\L  /' _ `\  /'__`\   
+      \ \ \L\ \/\ \/\ \/\ \L\.\_ 
+       \ \____/\ \_\ \_\ \__/.\_\
+        \/___/  \/_/\/_/\/__/\/_/   An ultra lightweight 4chan archiver (¬ ‿ ¬ )
+"#);
     start_background_thread();
     //other();
-    println!("\nProgram finished in {} ms", start_time.elapsed().as_millis());
+    println!("\nStarted on:\t{}\nFinished on:\t{}\nElapsed time:\t{}ms", start_time_str, Local::now().to_rfc2822(), start_time.elapsed().as_millis());
 }
 
 fn other() {
@@ -364,7 +373,7 @@ impl YotsubaArchiver {
             // Listen to CTRL-C
             if let Some(finished) = self.finished.try_lock() {
                 if *finished {
-                    break;
+                    return Some(());
                 }
             } else {
                 eprintln!("Lock occurred trying to get finished");
@@ -468,6 +477,13 @@ impl YotsubaArchiver {
                     // }
 
                     while let Some(thread) = local_threads_list.pop_front() {
+                        if let Some(finished) = self.finished.try_lock() {
+                            if *finished {
+                                return Some(());
+                            }
+                        } else {
+                            eprintln!("Lock occurred trying to get finished");
+                        }
                         self.assign_to_thread(&bs, thread).await;
                     }
 
@@ -519,13 +535,6 @@ impl YotsubaArchiver {
         let mut _canb=false;
         'outer: loop {
             // Listen to CTRL-C
-            if let Some(finished) = self.finished.try_lock() {
-                if *finished {
-                    break;
-                }
-            } else {
-                eprintln!("Lock occurred trying to get finished");
-            }
 
             let (_last_modified_, status, body) =
                 self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain=bs.api_url, bo=board, th=thread ), "").await;
@@ -534,10 +543,9 @@ impl YotsubaArchiver {
             if let Ok(jb) = body {
                 match serde_json::from_str::<serde_json::Value>(&jb) {
                     Ok(ret) => {
-                        println!("/{}/{}", board, thread);
-
                         self.upsert_thread2(board, &ret);
                         self.upsert_deleteds(board, thread, &ret);
+                        println!("/{}/{}", board, thread);
                         
                         /*match self.upsert_thread(board, thread, ret) {
                             Ok(q) => println!("/{}/{} <{}> Success upserting the thread! {:?}",board, thread, status, q),
@@ -604,6 +612,15 @@ impl YotsubaArchiver {
                 let s = &self;
                 while let Some(hh) = fut.next().await {
                     if let Some((no, hashsum, thumb_hash)) = hh {
+                        // Listen to CTRL-C
+                        if let Some(finished) = self.finished.try_lock() {
+                            if *finished {
+                                return;
+                            }
+                        } else {
+                            eprintln!("Lock occurred trying to get finished");
+                        }
+
                         if let Some(hsum) = hashsum {
                             s.upsert_hash2(board, no, "sha256", &hsum);
                         }
