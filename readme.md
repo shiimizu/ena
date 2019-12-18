@@ -16,10 +16,12 @@ Low resource and high performance archiver to dump and archive posts, images and
 * [PostgreSQL](https://www.postgresql.org/download/)
 
 ## Changes from Asagi
-* Schema changes, albeit a reasonable one. Only 1 table for `metadata` (for caches). 1 table for each board. The [schema inside each board](https://github.com/shiimizu/ena/blob/master/img/schema1.png) is straight from [4chan's thread endpoint](https://github.com/4chan/4chan-API/blob/master/pages/Threads.md).
+* Schema changes<b>\*</b>, albeit a reasonable one. Only 1 table for `metadata` (for caches). 1 table for each board. The [schema inside each board](https://github.com/shiimizu/ena/blob/master/img/schema1.png) is straight from [4chan's thread endpoint](https://github.com/4chan/4chan-API/blob/master/pages/Threads.md).
 * config changes
 * media downloading uses sha256 as it's filename and it's directory structure is the same as yuki.la's
 * PostgreSQL 12 is the database engine that was used and tested with
+
+<superscrpt>\* There's an expermental Asagi schema (as a view) created alongside the existing one.<br>Query it like `select * from a_asagi`, where `a` is the board name</superscrpt>
 
 ## Installation
 1. Download the [pre-compiled binaries][latest-link] _**or**_ build from source for the latest builds.  
