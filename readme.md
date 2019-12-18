@@ -41,7 +41,7 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 4. You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks.<br>Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
 
 ## FAQ
-Check with [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
+Check the [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
 
 ### Why?
 Much of my personal time and research went into 4ch for educational purposes and self development. I value the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep [Asagi](https://github.com/eksopl/asagi) archiving every board. The current avaliable solutions are not practical nor production ready. So I decided to help out.
