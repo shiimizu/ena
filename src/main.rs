@@ -851,6 +851,7 @@ select  no as doc_id,
                             if let Ok(_) = std::fs::rename(&temp_path, &final_path){}
                         } else {
                             eprintln!("Already exists: {}", final_path);
+                            if let Ok(_) = std::fs::remove_file(&temp_path){}
                         }
                     } else {
                         if let Ok(_) = std::fs::remove_file(&temp_path){}
