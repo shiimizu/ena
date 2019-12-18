@@ -31,9 +31,12 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 	$ cd ena
 	$ cargo build --release
 	```
-2. Edit the config file and put in your DB connection info, media directory, what boards you want to archive, and tweak any of the other settings that look interesting. Don't go below 0.12 or so for the ratelimit or you'll get banned. Follow the API rules and keep it at or above 1 unless you really need to (If you're not sure whether you need to, you probably don't need to).
 
-3. You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks. Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
+2. Start your PostgreSQL server either through the command-line or through PgAdmin.
+
+3. Edit the config file and put in your DB connection info, media directory, what boards you want to archive, and tweak any of the other settings that look interesting. Don't go below 0.12 or so for the ratelimit or you'll get banned. Follow the API rules and keep it at or above 1 unless you really need to (If you're not sure whether you need to, you probably don't need to).
+
+4. You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks.<br>Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
 
 ## FAQ
 Check with [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
