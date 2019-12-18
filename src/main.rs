@@ -34,8 +34,6 @@ extern crate ctrlc;
 
 
 fn main() {
-    let start_time = Instant::now();
-    let start_time_str = Local::now().to_rfc2822();
     println!(r#"
      ____                        
     /\  _`\                      
@@ -45,6 +43,9 @@ fn main() {
        \ \____/\ \_\ \_\ \__/.\_\
         \/___/  \/_/\/_/\/__/\/_/   An ultra lightweight 4chan archiver (¬ ‿ ¬ )
 "#);
+    std::thread::sleep(Duration::from_millis(1500));
+    let start_time = Instant::now();
+    let start_time_str = Local::now().to_rfc2822();
     start_background_thread();
     //other();
     println!("\nStarted on:\t{}\nFinished on:\t{}\nElapsed time:\t{}ms", start_time_str, Local::now().to_rfc2822(), start_time.elapsed().as_millis());
@@ -184,7 +185,7 @@ impl YotsubaArchiver {
                 finished: async_std::sync::Arc::new(async_std::sync::Mutex::new(false)),
                 //proxies: Self::get_proxy("cache/proxylist.json"),
             };
-        println!("Finished Initializing");
+        //println!("Finished Initializing");
         y
     }
 
@@ -363,11 +364,15 @@ impl YotsubaArchiver {
         // let current_time = yotsuba_time();
         self.init_board(&bs.board);
         let current_board = &bs.board;
-        let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
         let one_millis = Duration::from_millis(1);
+        let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
+        let mut archives_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
         let mut local_threads_list : VecDeque<u32> = VecDeque::new();
         let mut update_metadata = false;
+        let mut update_metadata_archive = false;
         let mut init = true;
+        let mut init_archive = true;
+        let mut has_archives = true;
         // let mut count:u32 = 0;
         loop {
             // Listen to CTRL-C
@@ -402,15 +407,15 @@ impl YotsubaArchiver {
                                 if !new_threads.is_empty() {
                                     println!("/{}/ Received new threads on {}", current_board, Local::now().to_rfc2822());
                                     fetched_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
-                                    let ft = fetched_threads.clone().unwrap(); // BRUH... this should get dropped so we're fine
+                                    let ft = fetched_threads.to_owned().unwrap();
 
-                                    if let Some(_) = self.get_board_from_metadata(&current_board) {
+                                    if self.check_metadata_col(&current_board, "threads") {
                                         // if there's cache
                                         // if this is a first startup
                                         if init {
                                             // going here means the program was restarted
                                             // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
-                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft).await {
+                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft, true).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
                                                 println!("/{}/ Seems like there was no threads?.. This should be unreachable!", current_board);
@@ -423,7 +428,7 @@ impl YotsubaArchiver {
                                             // here is when we have cache and the program in continously running
                                             // only get new/modified/deleted threads
                                             // compare time modified and get the new threads
-                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft).await {
+                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft, true).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
                                                 println!("/{}/ Seems like there was no modified threads..", current_board);
@@ -467,6 +472,107 @@ impl YotsubaArchiver {
                 task::sleep(Duration::from_millis(bs.throttle_millisec.into())).await; // Ratelimit
             }
 
+            // Download archive.json
+            // Scope to drop values when done
+            // Am I really copy pasting the code above....
+            let mut fetched_archive_threads : Option<serde_json::Value> = None;
+            {
+                if has_archives {
+                    for rti in 0..=bs.retry_attempts {
+                        let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/archive.json", url=bs.api_url, bo=current_board), &archives_last_modified).await;
+                        match status {
+                            reqwest::StatusCode::OK => {
+                                match last_modified_ {
+                                    Some(last_modified) => {
+                                        if archives_last_modified != last_modified {
+                                            archives_last_modified.clear();
+                                            archives_last_modified.push_str(&last_modified);
+                                        }
+                                    },
+                                    None => eprintln!("/{}/ <{}> [archive] An error has occurred getting the last_modified date", current_board, status),
+                                }
+                                match body {
+                                    Ok(new_threads) => {
+                                        if !new_threads.is_empty() {
+                                            println!("/{}/ [archive] Received new threads on {}", current_board, Local::now().to_rfc2822());
+                                            fetched_archive_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
+                                            let ft = fetched_archive_threads.to_owned().unwrap();
+
+                                            if self.check_metadata_col(&current_board, "archive") {
+                                                // if there's cache
+                                                // if this is a first startup
+                                                if init_archive {
+                                                    // going here means the program was restarted
+                                                    // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
+                                                    if let Some(mut list) = self.get_combined_threads(&current_board, &ft, false).await {
+                                                        local_threads_list.append(&mut list);
+                                                    } else {
+                                                        println!("/{}/ [archive] Seems like there was no threads?.. This should be unreachable!", current_board);
+                                                    }
+
+                                                    // update base at the end
+                                                    update_metadata_archive = true;
+                                                    init_archive = false;
+                                                } else {
+                                                    // here is when we have cache and the program in continously running
+                                                    // only get new/modified/deleted threads
+                                                    // compare time modified and get the new threads
+                                                    if let Some(mut list) = self.get_deleted_and_modified_threads2(&current_board, &ft, false).await {
+                                                        local_threads_list.append(&mut list);
+                                                    } else {
+                                                        println!("/{}/ [archive] Seems like there was no modified threads..", current_board);
+                                                    }
+
+                                                    // update base at the end
+                                                    update_metadata_archive = true;
+                                                }
+
+                                            } else {
+                                                // No cache
+                                                // Use fetched_threads 
+                                                    self.upsert_metadata(&current_board, "archive", &ft);
+                                                    init_archive = false;
+                                                    update_metadata_archive = false;
+                                                if let Ok(mut list) = serde_json::from_value::<VecDeque<u32>>(ft) {
+                                                    // self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
+                                                    local_threads_list.append(&mut list);
+                                                } else {
+                                                    println!("/{}/ [archive] Seems like there was no modified threads in the beginning?..", current_board);
+                                                }
+                                            }
+                                            
+
+                                            
+                                        } else {
+                                            eprintln!("/{}/ [archive] <{}> Fetched threads was found to be empty!", current_board, status)
+                                        }
+                                    },
+                                    Err(e) => eprintln!("/{}/ [archive] <{}> an error has occurred getting the body\n{}", current_board, status, e),
+                                }
+                            },
+                            reqwest::StatusCode::NOT_MODIFIED => {
+                                eprintln!("/{}/ [archive] <{}>", current_board, status);
+                            },
+                            reqwest::StatusCode::NOT_FOUND => {
+                                eprintln!("/{}/ <{}> No archives found! Retry attempt: #{}", current_board, status, rti);
+                                task::sleep(Duration::from_millis(bs.throttle_millisec.into())).await;
+                                has_archives = false;
+                                continue;
+                            },
+                            _ => {
+                                eprintln!("/{}/ [archive] <{}> an error has occurred!", current_board, status);
+                            },
+                        }
+
+                        has_archives = true;
+                        task::sleep(Duration::from_millis(bs.throttle_millisec.into())).await; // Ratelimit
+                        break;
+                    }
+                }
+
+            }
+
+            // Process the threads
             {
                 // let queue = self.queue.get(&current_board).expect("err getting queue for board3");
                 if local_threads_list.len() > 0 {
@@ -493,6 +599,12 @@ impl YotsubaArchiver {
                         if let Some(ft) = &fetched_threads {
                             self.upsert_metadata(&current_board, "threads", &ft);
                             update_metadata = false;
+                        }
+                    }
+                    if update_metadata_archive {
+                        if let Some(ft) = &fetched_archive_threads {
+                            self.upsert_metadata(&current_board, "archive", &ft);
+                            update_metadata_archive = false;
                         }
                     }
                 } // No need to report if no new threads cause when it's not modified it'll tell us
@@ -963,6 +1075,19 @@ impl YotsubaArchiver {
         _result
     }
 
+    fn check_metadata_col(&self, board: &str, col:&str) -> bool {
+        let resp = self.conn.query(&format!("select CASE WHEN {col_name} is not null THEN true ELSE false END from metadata where board = $1",
+                                    col_name=col), &[&board]).expect("err query check_metadata_col");
+        let mut res = false;
+        for row in resp.iter() {
+            let ret : Option<bool> = row.get(0);
+            if let Some(r) = ret {
+                res = r;
+            } // else it's null, meaning false
+        }
+        res
+    }
+
     // Use this and not the one below so no deserialization happens and no overhead
     fn get_board_from_metadata(&self, board: &str) -> Option<String> {
         let resp = self.conn.query("select * from metadata where board = $1", &[&board]).expect("Err getting threads from metadata");
@@ -973,25 +1098,41 @@ impl YotsubaArchiver {
         board_
     }
 
-    async fn get_combined_threads(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
+    async fn get_combined_threads(&self, board: &str, new_threads: &serde_json::Value, threads: bool) -> Option<VecDeque<u32>> {
         // This query is only run ONCE at every startup
         // Running a JOIN to compare against the entire DB on every INSERT/UPDATE would not be that great. 
         // This gets all the threads from cache, compares it to the new json to get new + modified threads
         // The compares that result to the database where a thread is deleted or archived, and takes only the threads where's it's not
         // deleted or archived
-        let sql = format!(r#"
-                select jsonb_agg(c) from (
-                SELECT coalesce (prev->'no', newv->'no')::bigint as c from
-                (select jsonb_path_query(threads, '$[*].threads[*]') as prev from metadata where board = $1)x
-                full JOIN
-                (select jsonb_path_query($2::jsonb, '$[*].threads[*]') as newv)z
-                ON prev->'no' = (newv -> 'no') 
-                )q
-                left join
-                (select no as nno from {board_name} where resto=0 and (archived=1 or deleted=1))w
-                ON c = nno
-                where nno is null
-                "#, board_name=board);
+        let sql = if threads {
+                    format!(r#"
+                        select jsonb_agg(c) from (
+                        SELECT coalesce (prev->'no', newv->'no')::bigint as c from
+                        (select jsonb_path_query(threads, '$[*].threads[*]') as prev from metadata where board = $1)x
+                        full JOIN
+                        (select jsonb_path_query($2::jsonb, '$[*].threads[*]') as newv)z
+                        ON prev->'no' = (newv -> 'no') 
+                        )q
+                        left join
+                        (select no as nno from {board_name} where resto=0 and (archived=1 or deleted=1))w
+                        ON c = nno
+                        where nno is null
+                        "#, board_name=board)
+                } else {
+                    format!(r#"
+                    select jsonb_agg(c) from (
+                    SELECT coalesce (newv, prev)::bigint as c from
+                    (select jsonb_array_elements(archive) as prev from metadata where board = $1)x
+                    full JOIN
+                    (select jsonb_array_elements($2::jsonb) as newv)z
+                    ON prev = newv
+                    )q
+                    left join
+                    (select no as nno from {board_name} where resto=0 and (archived=1 or deleted=1))w
+                    ON c = nno
+                    where nno is null
+                    "#, board_name=board)
+                };
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
         'outer: loop {
@@ -1015,20 +1156,31 @@ impl YotsubaArchiver {
     }
 
 
-    async fn get_deleted_and_modified_threads2(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
+    async fn get_deleted_and_modified_threads2(&self, board: &str, new_threads: &serde_json::Value, threads: bool) -> Option<VecDeque<u32>> {
         // Combine new and prev threads.json into one. This retains the prev threads (which the new json doesn't contain, meaning they're either pruned or archived).
         //  That's especially useful for boards without archives.
         // Use the WHERE clause to select only modified threads. Now we basically have a list of deleted and modified threads.
         // Return back this list to be processed.
         // Use the new threads.json as the base now.
-        let sql = r#"
-                SELECT jsonb_agg(COALESCE(newv,prev)->'no') from
+        let sql = if threads {
+                r#"
+                SELECT jsonb_agg(COALESCE(newv->'no',prev->'no')) from
                 (select jsonb_path_query(threads, '$[*].threads[*]') as prev from metadata where board = $1)x
                 full JOIN
                 (select jsonb_path_query($2::jsonb, '$[*].threads[*]') as newv)z
                 ON prev->'no' = (newv -> 'no') 
                 where newv is null or not prev->'last_modified' <@ (newv -> 'last_modified')
-                "#;
+                "#
+            } else {
+                r#"
+                SELECT coalesce(newv,prev) from
+                (select jsonb_array_elements(archive) as prev from metadata where board = $1)x
+                full JOIN
+                (select jsonb_array_elements($2::jsonb) as newv)z
+                ON prev = newv
+                where prev is null or newv is null
+                "#
+            };
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
         'outer: loop {

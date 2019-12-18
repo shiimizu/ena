@@ -22,16 +22,8 @@
 		"keepThumbnails": false
 	},
 	"boards": [{
-			"board": "pol",
-			"refreshDelay": 10
-		},
-		{
 			"board": "g",
 			"refreshDelay": 30
-		},
-		{
-			"board": "a",
-			"refreshDelay": 10
 		}
 	]
 }
