@@ -128,7 +128,13 @@ fn start_background_thread() {
                         if let Ok(_) = bv.parse::<u32>() {
                             default.insert(k.to_string(), serde_json::json!(format!("_{}", bv.as_str())));
                         } else {
-                            default.insert(k.to_string(), v.to_owned());
+                            if bv == "int" {
+                                default.insert(k.to_string(), serde_json::json!("int_"));
+                            } else if bv == "out" {
+                                default.insert(k.to_string(), serde_json::json!("out_"));
+                            } else {
+                                default.insert(k.to_string(), v.to_owned());
+                            }
                         };
                     } else {
                         default.insert(k.to_string(), v.to_owned());
@@ -202,12 +208,6 @@ impl YotsubaArchiver {
     }
 
     fn init_board(&self, board: &str) {
-        // Check if board is a number
-        let b = if let Ok(_) = board.parse::<u32>() {
-            format!("_{}", board)
-        } else {
-            board.to_string()
-        };
         let sql = format!("CREATE TABLE IF NOT EXISTS {board_name}
                     (
                         no bigint NOT NULL,
@@ -252,7 +252,7 @@ impl YotsubaArchiver {
                         since4pass character varying,
                         PRIMARY KEY (no),
                         CONSTRAINT unique_no_{board_name} UNIQUE (no)
-                    )", board_name=b);
+                    )", board_name=board);
         if let Ok(_) = self.conn.execute(&sql, &[]) {}
         if let Ok(_) = self.conn.execute(&format!("create index {board_name}_no_resto_idx on {board_name}(no, resto)", board_name=board), &[]) {}
         self.conn.execute("set enable_seqscan to off;", &[]).expect("Err executing sql: set enable_seqscan to off");
@@ -400,11 +400,12 @@ select  no as doc_id,
         // self.assign_to_board(&boards[0]).await;
     }*/
 
-    async fn assign_to_board<'b>(&self, bs: BoardSettings2) ->Option<()>{
+    async fn assign_to_board<'b>(&self, bs: BoardSettings2) -> Option<()> {
         self.init_board(&bs.board);
         self.create_board_view(&bs.board);
 
-        let current_board = &bs.board;
+        let current_board = &bs.board.replace("_","");
+        let current_board_raw = &bs.board;
         let one_millis = Duration::from_millis(1);
         let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
         let mut archives_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
@@ -450,13 +451,13 @@ select  no as doc_id,
                                     fetched_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
                                     let ft = fetched_threads.to_owned().unwrap();
 
-                                    if self.check_metadata_col(&current_board, "threads") {
+                                    if self.check_metadata_col(&current_board_raw, "threads") {
                                         // if there's cache
                                         // if this is a first startup
                                         if init {
                                             // going here means the program was restarted
                                             // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
-                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft, true).await {
+                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board_raw, &ft, true).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
                                                 println!("/{}/ [threads] Seems like there was no threads?.. This should be unreachable!", current_board);
@@ -469,7 +470,7 @@ select  no as doc_id,
                                             // here is when we have cache and the program in continously running
                                             // only get new/modified/deleted threads
                                             // compare time modified and get the new threads
-                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft, true).await {
+                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board_raw, &ft, true).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
                                                 println!("/{}/ [threads] Seems like there was no modified threads..", current_board);
@@ -485,7 +486,7 @@ select  no as doc_id,
                                         if let Some(mut fetched_threads_list) = self.get_threads_list(&ft).await {
                                             // self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
                                             local_threads_list.append(&mut fetched_threads_list);
-                                            self.upsert_metadata(&current_board, "threads", &ft);
+                                            self.upsert_metadata(&current_board_raw, "threads", &ft);
                                             init = false;
                                             update_metadata = false;
                                         } else {
@@ -539,13 +540,13 @@ select  no as doc_id,
                                             fetched_archive_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
                                             let ft = fetched_archive_threads.to_owned().unwrap();
 
-                                            if self.check_metadata_col(&current_board, "archive") {
+                                            if self.check_metadata_col(&current_board_raw, "archive") {
                                                 // if there's cache
                                                 // if this is a first startup
                                                 if init_archive {
                                                     // going here means the program was restarted
                                                     // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
-                                                    if let Some(mut list) = self.get_combined_threads(&current_board, &ft, false).await {
+                                                    if let Some(mut list) = self.get_combined_threads(&current_board_raw, &ft, false).await {
                                                         local_threads_list.append(&mut list);
                                                     } else {
                                                         println!("/{}/ [archive] Seems like there was no threads?.. This should be unreachable!", current_board);
@@ -558,7 +559,7 @@ select  no as doc_id,
                                                     // here is when we have cache and the program in continously running
                                                     // only get new/modified/deleted threads
                                                     // compare time modified and get the new threads
-                                                    if let Some(mut list) = self.get_deleted_and_modified_threads2(&current_board, &ft, false).await {
+                                                    if let Some(mut list) = self.get_deleted_and_modified_threads2(&current_board_raw, &ft, false).await {
                                                         local_threads_list.append(&mut list);
                                                     } else {
                                                         println!("/{}/ [archive] Seems like there was no modified threads..", current_board);
@@ -571,7 +572,7 @@ select  no as doc_id,
                                             } else {
                                                 // No cache
                                                 // Use fetched_threads 
-                                                    self.upsert_metadata(&current_board, "archive", &ft);
+                                                    self.upsert_metadata(&current_board_raw, "archive", &ft);
                                                     init_archive = false;
                                                     update_metadata_archive = false;
                                                 if let Ok(mut list) = serde_json::from_value::<VecDeque<u32>>(ft) {
@@ -638,13 +639,13 @@ select  no as doc_id,
                     // list of threads it was processing before + new ones.
                     if update_metadata {
                         if let Some(ft) = &fetched_threads {
-                            self.upsert_metadata(&current_board, "threads", &ft);
+                            self.upsert_metadata(&current_board_raw, "threads", &ft);
                             update_metadata = false;
                         }
                     }
                     if update_metadata_archive {
                         if let Some(ft) = &fetched_archive_threads {
-                            self.upsert_metadata(&current_board, "archive", &ft);
+                            self.upsert_metadata(&current_board_raw, "archive", &ft);
                             update_metadata_archive = false;
                         }
                     }
