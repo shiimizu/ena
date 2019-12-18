@@ -735,6 +735,8 @@ select  no as doc_id,
         // DL MEDIA
         // Need to check against other md5 so we don't redownload if we have it
         if bs.download_media || bs.download_thumbnails {
+            let ps = self.settings.get("settings").expect("Err get settings").get("path").expect("err getting path").as_str().expect("err converting path to str");
+            let p = ps.trim_end_matches('/').trim_end_matches('\\');
             let media_list = self.conn.query(&format!("select * FROM {board_name} where (no={op} or resto={op}) and (md5 is not null) and (sha256 is null or sha256t is null) order by no", board_name=board, op=thread), &[]).expect("Err getting missing media");
             let mut fut = FuturesUnordered::new();
             let client = &self.client;
@@ -747,18 +749,26 @@ select  no as doc_id,
                 let ext : String = row.get("ext");
                 let ext2 : String = row.get("ext");
                 let tim : i64 = row.get("tim");
-                if let Some(_) = sha256 {
+                if let Some(h) = sha256 {
+                    // Improper sha, re-dl
+                    if h.len() < 65 && bs.download_media {
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, p));
+                    }
                 } else {
                     // No media, proceed to dl
                     if bs.download_media {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, p));
                     }
                 }
-                if let Some(_) = sha256t {
+                if let Some(h) = sha256t {
+                    // Improper sha, re-dl
+                    if h.len() < 65 && bs.download_thumbnails {
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, p));
+                    }
                 } else {
                     // No thumbs, proceed to dl
                     if bs.download_thumbnails {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, p));
                     }
                 }
             }
@@ -793,8 +803,8 @@ select  no as doc_id,
     }
 
     // this downloads any missing media and/or thumbs
-    async fn dl_media_post(domain:&str, bs: &BoardSettings2, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client)  -> Option<(u64, Option<String>, Option<String>)> {
-        let board = "";
+    async fn dl_media_post(domain:&str, bs: &BoardSettings2, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client, path:&str)  -> Option<(u64, Option<String>, Option<String>)> {
+        let board = &bs.board;
         let dl = |thumb| -> Result<String, reqwest::Error> {
             let url = format!("{}/{}/{}{}{}", domain, board, tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext} );
             println!("/{}/{}#{} -> {}{}{}",  board, thread, no,tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext});
@@ -808,7 +818,7 @@ select  no as doc_id,
             let mut hash_str = String::new();
             match status {
                 reqwest::StatusCode::OK => {
-                    let temp_path = format!("./archive/tmp/{}_{}{}", no,tim,ext);
+                    let temp_path = format!("{}/tmp/{}_{}{}",path, no,tim,ext);
                     if let Ok(mut dest) = std::fs::File::create(&temp_path) {
                         if let Ok(_) = std::io::copy(&mut resp, &mut dest) {}
                         else { eprintln!("err file temp path copy"); }
@@ -829,16 +839,15 @@ select  no as doc_id,
                     let basename = path_hash.file_stem().expect("err get basename").to_str().expect("err get basename end");
                     let second = &basename[&basename.len()-3..&basename.len()-1];
                     let first = &basename[&basename.len()-1..];
-                    let final_dir_path = format!("./archive/media/{}/{}",first, second);
+                    let final_dir_path = format!("{}/media/{}/{}",path, first, second);
                     let final_path = format!("{}/{:x}{}", final_dir_path, hash, ext);
 
                     // discarding errors...
-                    if bs.keep_media && !thumb {
+                    if (bs.keep_media && !thumb) || (bs.keep_thumbnails && thumb) || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb)) {
                         if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
                         if let Ok(_) = std::fs::rename(&temp_path, final_path){}
-                    } else if bs.keep_thumbnails && thumb {
-                        if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
-                        if let Ok(_) = std::fs::rename(&temp_path, final_path){}
+                    } else {
+                        if let Ok(_) = std::fs::remove_file(&temp_path){}
                     }
                 },
                 reqwest::StatusCode::NOT_FOUND => eprintln!("/{}/{} <{}> {}", board, no, status, url),
