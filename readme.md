@@ -1,6 +1,6 @@
 # Ena
 
-Ena is a low resource, high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
+Low resource and high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
 
 ## Features
 * **Memory efficient:** Using less than 4mb for a single board.
@@ -40,7 +40,7 @@ Check with [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and inform
 Much of my personal time and research went into 4ch for educational purposes and self development. I value the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. The current avaliable solutions are not practical nor production ready. So I decided to help out.
 
 ### Why Rust?
-I wanted something fast, safe, and ideally able to withstand long-term usage.
+I wanted something fast, safe, and ideally be able to withstand long-term usage.
 
 ### What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?
