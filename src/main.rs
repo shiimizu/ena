@@ -46,14 +46,52 @@ fn main() {
 fn start_background_thread() {
     // Do all work in a background thread to keep the main ui thread running smoothly
     // This essentially keeps CPU and power usage extremely low 
-    thread::spawn(move || {
+    // thread::spawn(move || {
         // By using async tasks we can process an enormous amount of tasks concurrently
         // without the overhead of multiple native threads. 
-        let mut archiver = YotsubaArchiver::new();
-        archiver.listen_to_exit();
-        archiver.init_metadata();
-        archiver.poll_boards();
-    }).join().unwrap();
+        task::block_on(async{
+            let archiver = YotsubaArchiver::new();
+            archiver.listen_to_exit();
+            archiver.init_metadata();
+            // archiver.init_boards();
+            /*let fut = FuturesUnordered::new();
+            let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(archiver));
+            for _ in 0..3 {
+                let a_clone = async_std::sync::Arc::clone(&a);
+                let mut aq= a_clone.lock().await;
+                fut.push(aq.poll_boards());//.await;
+            }*/
+
+            let boards = archiver.get_boards_raw();
+            let a = &archiver;
+            let mut fut = FuturesUnordered::new();
+            for board in boards.iter() {
+                fut.push(a.assign_to_board(board));
+            }
+            while let Some(_) = fut.next().await {
+            }
+            /*
+            let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(archiver));
+            let a_clone = async_std::sync::Arc::clone(&a);
+            for _ in 0..3 {
+                futures::join!(a_clone.lock().await.assign_to_board(""),a_clone.lock().await.assign_to_board(""));
+            }*/
+        /*let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(archiver));
+            for _ in 0..3 {
+                let a_clone = async_std::sync::Arc::clone(&a);
+                task::spawn(async move {
+                    a_clone.lock().await.assign_to_board("").await;
+                });
+            }*/
+        });
+        /*
+        futures::stream::iter(0..3).for_each_concurrent(
+            /* limit */ None,
+            |_| async move {
+                archiver.poll_board().await;
+            });
+        });*/
+    // }).join().unwrap();
 }
 
 // Have a struct to store our variables without using global statics
@@ -191,23 +229,101 @@ impl YotsubaArchiver {
 
     }
 
-    fn poll_boards(&mut self) {
+    async fn tt(&mut self , board: &str) {
+        // println!("inside tt");
+            // task::sleep(Duration::from_secs(1)).await;
+            self.assign_to_board(board).await;
+    } 
+    async fn poll_board(&mut self) {
+        self.assign_to_board("").await;
+
+    }
+    fn init_boards(&mut self) {
         let boards = self.get_boards_raw();
+        // let mut fut = FuturesUnordered::new();
         for board in boards.iter() {
             if !self.queue.contains_key(board) {
-                //self.init_board(board);
+                self.init_board(board);
                 self.queue.insert(board.to_owned(), VecDeque::new());
             }
         }
-        self.init_board(&boards[0]);
-        self.assign_to_board(&boards[0]);
     }
+    /*async fn poll_boards(&mut self) {
+        let boards = self.get_boards_raw();
+        // let mut fut = FuturesUnordered::new();
+        for board in boards.iter() {
+            if !self.queue.contains_key(board) {
+                self.init_board(board);
+                self.queue.insert(board.to_owned(), VecDeque::new());
+            }
+        }
 
-    fn assign_to_board<'b>(&mut self, board: &'b str) ->Option<()>{
+        let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(self));
+        let a_clone = async_std::sync::Arc::clone(&a);
+
+        let b = async_std::sync::Arc::new(async_std::sync::Mutex::new(&boards));
+        let b_clone = async_std::sync::Arc::clone(&b);
+
+        let c = async_std::sync::Arc::new(async_std::sync::Mutex::new(0));
+        let c_clone = async_std::sync::Arc::clone(&c);
+
+        futures::stream::iter(0..boards.len()).for_each_concurrent(
+            /* limit */ None,
+            |_| async  {
+                if let Some(mut se) = a_clone.try_lock() {
+                    if let Some(boards_list) = b_clone.try_lock() {
+                        if let Some(mut idx) = c_clone.try_lock() {
+                            // println!("Assign to board {}", boards_list[*idx]);
+                            // task::spawn(async { 
+                                // se.assign_to_board(&boards_list[*idx]).await;
+                            // });
+                            self.tt(&boards_list[*idx]);
+                            // Self::tt().await;
+                            *idx += 1;
+                        } else {
+                            eprintln!("Err trying get num lock");
+                        }
+                    } else {
+                        eprintln!("Err trying get boards_list lock");
+                    }
+                } else {
+                    eprintln!("Err trying get self lock");
+                }
+            }
+        ).await;
+        loop {
+            // println!("Sleep {}", i);
+            if let Some(se) = a_clone.try_lock() {
+                if let Some(finished) = se.finished.try_lock() {
+                    if *finished {
+                        break;
+                    }
+                } else {
+                    eprintln!("Lock occurred trying to get finished");
+                }
+            } else {
+                eprintln!("Lock occurred trying to get self");
+            }
+            task::sleep(Duration::from_millis(250)).await;
+        }
+        /*let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(self));
+        for i in 0..boards.len() {
+            let a_clone = async_std::sync::Arc::clone(&a);
+            let mut va=a_clone.lock().await;
+                fut.push(va.assign_to_board(&boards[i]));
+        }
+        while let Some(_) = fut.next().await {
+        }*/
+        // self.init_board(&boards[0]);
+        // self.assign_to_board(&boards[0]).await;
+    }*/
+
+    async fn assign_to_board<'b>(&self, board: &'b str) ->Option<()>{
         let current_time = yotsuba_time();
         let current_board = String::from(board);
         let mut threads_last_modified = String::from(&current_time);
         let one_millis = Duration::from_millis(1);
+        let mut local_threads_list : VecDeque<u32> = VecDeque::new();
         // let mut count:u32 = 0;
         loop {
             // Listen to CTRL-C
@@ -224,7 +340,7 @@ impl YotsubaArchiver {
             // Download threads.json
             // Scope to drop values when done
             {
-                let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/threads.json", url="http://a.4cdn.org", bo=board), &threads_last_modified);
+                let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/threads.json", url="http://a.4cdn.org", bo=board), &threads_last_modified).await;
                 match status {
                     reqwest::StatusCode::OK => {
                         match last_modified_ {
@@ -245,15 +361,16 @@ impl YotsubaArchiver {
                                     if let Some(_) = self.get_board_from_metadata(&current_board) {
                                         // compare time modified and get the new threads
                                         if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &fetched_threads) {
-                                            self.queue.get_mut(&current_board).expect("err getting queue for board1").append(&mut fetched_threads_list);
+                                            // self.queue.get_mut(&current_board).expect("err getting queue for board1").append(&mut fetched_threads_list);
+                                            local_threads_list.append(&mut fetched_threads_list);
                                         } else {
                                             println!("/{}/ Seems like there was no modified threads..", current_board);
                                         }
                                     } else {
                                         // Use fetched_threads 
                                         if let Some(mut fetched_threads_list) = self.get_threads_list(&fetched_threads) {
-                                            self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
-
+                                            // self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
+                                            local_threads_list.append(&mut fetched_threads_list);
                                         } else {
                                             println!("/{}/ Seems like there was no modified threads in the beginning?..", current_board);
                                         }
@@ -275,35 +392,38 @@ impl YotsubaArchiver {
                     },
                 }
 
-                thread::sleep(Duration::from_millis(RATELIMIT.into())); // Ratelimit
+                task::sleep(Duration::from_millis(RATELIMIT.into())).await; // Ratelimit
             }
 
             {
-                let queue = self.queue.get(&current_board).expect("err getting queue for board3");
-                if queue.len() > 0 {
-                    println!("/{}/ Total New threads: {}", current_board, queue.len());
+                // let queue = self.queue.get(&current_board).expect("err getting queue for board3");
+                if local_threads_list.len() > 0 {
+                    println!("/{}/ Total New threads: {}", current_board, local_threads_list.len());
                     // BRUH I JUST WANT TO SHARE MUTABLE DATA
                     // This will loop until it recieves none
-                    while let Some(_) = self.drain_list(board) {
+                    // while let Some(_) = self.drain_list(board).await {
+                    // }
+                    while let Some(thread) = local_threads_list.pop_front() {
+                        self.assign_to_thread(board, thread).await;
                     }
                 } // No need to report if no new threads cause when it's not modified it'll tell us
             }
             // Ratelimit after fetching threads
             while now.elapsed().as_secs() <= REFRESH_DELAY.into() {
-                thread::sleep(one_millis);
+                task::sleep(one_millis).await;
             }
         }
         Some(())
     }
 
     // BRUH LET ME JUST SHARE MUTABLE REFERENCES AHHHHHHHHHHHHHHH
-    fn drain_list(&mut self, board: &str) -> Option<u32> {
+    async fn drain_list(&mut self, board: &str) -> Option<u32> {
         // Repeatedly getting the list probably isn't the most efficient...
         if let Some(a) = self.queue.get_mut(board) {
             let aa = a.pop_front();
             if let Some(thread) = aa {
                 // println!("{:?}/{:?} assignde",board ,newt);
-                self.assign_to_thread(board, thread);
+                self.assign_to_thread(board, thread).await;
             }
             return aa;
         }
@@ -311,7 +431,7 @@ impl YotsubaArchiver {
     }
 
     // There's a lot of object creation here but they should all get dropped so it shouldn't matter
-    fn assign_to_thread(&mut self, board: &str, thread: u32) {
+    async fn assign_to_thread(&self, board: &str, thread: u32) {
         // TODO check if thread is empty or its posts are empty
         // If DB has an incomplete thread, archived, closed, or sticky
         let mut _retry = 0;
@@ -333,7 +453,7 @@ impl YotsubaArchiver {
             }
 
             let (_last_modified_, status, body) =
-                self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain="http://a.4cdn.org", bo=board, th=thread ), "");
+                self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain="http://a.4cdn.org", bo=board, th=thread ), "").await;
             _status_resp = status;
 
             if let Ok(jb) = body {
@@ -359,7 +479,7 @@ impl YotsubaArchiver {
                         }
                         eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}",board, thread, status, e,jb);
                         while now.elapsed().as_millis() <= RATELIMIT.into() {
-                            thread::sleep(one_millis);
+                            task::sleep(one_millis).await;
                         }
                         _retry += 1;
                         if _retry <=3 {
@@ -411,7 +531,7 @@ impl YotsubaArchiver {
             }
             if has_media {
                 let s = &self;
-                task::block_on(async move {
+                // task::block_on(async move {
                     while let Some(hh) = fut.next().await {
                         if let Some((no, hashsum, thumb_hash)) = hh {
                             if let Some(hsum) = hashsum {
@@ -422,12 +542,12 @@ impl YotsubaArchiver {
                             }
                         }
                     }
-                });
+                // });
             }
         }
 
         while now.elapsed().as_millis() <= RATELIMIT.into() {
-            thread::sleep(one_millis);
+            task::sleep(one_millis).await;
         }
     }
 
@@ -495,19 +615,19 @@ impl YotsubaArchiver {
 
     }
 
-    fn cget(&self, url: &str, last_modified: &str) -> (Option<String>, reqwest::StatusCode, Result<String, reqwest::Error>) {
+    async fn cget(&self, url: &str, last_modified: &str) -> (Option<String>, reqwest::StatusCode, Result<String, reqwest::Error>) {
         let mut res = if last_modified == "" {
             match self.client.get(url).send() {
                 Ok(expr) => expr,
                 Err(e) => {
                     eprintln!("{} -> {:?}", url, e);
-                    thread::sleep(Duration::from_secs(1));
+                    task::sleep(Duration::from_secs(1)).await;
                     let a = loop {
                         match self.client.get(url).send() {
                             Ok(resp) => break resp,
                             Err(e) => {
                                 eprintln!("{} -> {:?}",url, e);
-                                thread::sleep(Duration::from_secs(1));
+                                task::sleep(Duration::from_secs(1)).await;
                             },
                         }
                     };
@@ -520,13 +640,13 @@ impl YotsubaArchiver {
                 Ok(expr) => expr,
                 Err(e) => {
                     eprintln!("{} -> {:?}", url, e);
-                    thread::sleep(Duration::from_secs(1));
+                    task::sleep(Duration::from_secs(1)).await;
                     let a = loop {
                         match self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() {
                             Ok(resp) => break resp,
                             Err(e) => {
                                 eprintln!("{} -> {:?}",url, e);
-                                thread::sleep(Duration::from_secs(1));
+                                task::sleep(Duration::from_secs(1)).await;
                             },
                         }
                     };
@@ -784,11 +904,7 @@ impl YotsubaArchiver {
 
 
     fn get_boards_raw(&self) -> Vec<String> {
-        self.settings.get("sites").unwrap()
-        .as_array().unwrap()[0]
-        .get("settings").unwrap()
-        .get("boardSettings").unwrap()
-        .get("boards").unwrap()
+        self.settings.get("boards").unwrap()
         .as_array().unwrap()
         .iter().to_owned()
         .map(|x| x.as_object().unwrap()
