@@ -414,7 +414,7 @@ impl YotsubaArchiver {
                                         if init {
                                             // going here means the program was restarted
                                             // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
-                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft) {
+                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
                                                 println!("/{}/ Seems like there was no threads?.. This should be unreachable!", current_board);
@@ -427,7 +427,7 @@ impl YotsubaArchiver {
                                             // here is when we have cache and the program in continously running
                                             // only get new/modified/deleted threads
                                             // compare time modified and get the new threads
-                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft) {
+                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
                                                 println!("/{}/ Seems like there was no modified threads..", current_board);
@@ -440,7 +440,7 @@ impl YotsubaArchiver {
                                     } else {
                                         // No cache
                                         // Use fetched_threads 
-                                        if let Some(mut fetched_threads_list) = self.get_threads_list(&ft) {
+                                        if let Some(mut fetched_threads_list) = self.get_threads_list(&ft).await {
                                             // self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
                                             local_threads_list.append(&mut fetched_threads_list);
                                             self.upsert_metadata(&current_board, "threads", &ft);
@@ -600,9 +600,6 @@ impl YotsubaArchiver {
                 let ext : String = row.get("ext");
                 let ext2 : String = row.get("ext");
                 let tim : i64 = row.get("tim");
-                //let j: serde_json::Value = row.get(0);
-                //println!("{:?}", j.get("posts").unwrap().as_array().unwrap().len()); 
-                // println!("{} {:?} {:?}", no, sha256, sha256t);
                 if let Some(_) = sha256 {
                 } else {
                     // No media, proceed to dl
@@ -932,16 +929,29 @@ impl YotsubaArchiver {
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_thread2");
     }
     
-    fn get_threads_list(&self, json_item: &serde_json::Value) -> Option<VecDeque<u32>> {
+    async fn get_threads_list(&self, json_item: &serde_json::Value) -> Option<VecDeque<u32>> {
         let sql = "SELECT jsonb_agg(newv->'no') from
                     (select jsonb_path_query($1::jsonb, '$[*].threads[*]') as newv)z";
         let resp = self.conn.query(&sql, &[&json_item]).expect("Error getting modified and deleted threads from new threads.json");
-        let mut result : Option<VecDeque<u32>> = None;
-        for row in resp.iter() {
-            let q :VecDeque<u32> = serde_json::from_value(row.get(0)).expect("Err deserializing get_threads_list");
-            result = Some(q);
+        let mut _result : Option<VecDeque<u32>> = None;
+        loop {
+            for row in resp.iter() {
+                let jsonb : Option<serde_json::Value> = row.get(0);
+                match jsonb {
+                    Some(val) => {
+                        let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_threads_list");
+                        _result = Some(q);
+                        break;
+                    },
+                    None => {
+                        eprintln!("Error getting get_threads_list at column 0: NULL @ {}", Local::now().to_rfc2822());
+                        task::sleep(Duration::from_secs(1)).await;
+                    },
+                }
+            }
+
         }
-        result
+        _result
     }
 
     // Use this and not the one below so no deserialization happens and no overhead
@@ -950,26 +960,11 @@ impl YotsubaArchiver {
         let mut board_ : Option<String> = None;
         for row in resp.iter() {
             board_ = row.get("board");
-            //let j: serde_json::Value = row.get(0);
-            //println!("{:?}", j.get("posts").unwrap().as_array().unwrap().len()); 
-            // println!("{} {:?} {:?}", no, sha256, sha256t);
         }
         board_
     }
 
-    /*fn get_threads_from_metadata(&self, board: &str) -> Option<serde_json::Value> {
-        let resp = self.conn.query("select * from metadata where board = $1", &[&board]).expect("Err getting threads from metadata");
-        let mut threads : Option<serde_json::Value> = None;
-        for row in resp.iter() {
-            threads = row.get("threads");
-            //let j: serde_json::Value = row.get(0);
-            //println!("{:?}", j.get("posts").unwrap().as_array().unwrap().len()); 
-            // println!("{} {:?} {:?}", no, sha256, sha256t);
-        }
-        threads
-    }*/
-
-    fn get_combined_threads(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
+    async fn get_combined_threads(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
         // This query is only run ONCE at every startup
         // Running a JOIN to compare against the entire DB on every INSERT/UPDATE would not be that great. 
         // This gets all the threads from cache, compares it to the new json to get new + modified threads
@@ -989,16 +984,29 @@ impl YotsubaArchiver {
                 where nno is null
                 "#, board_name=board);
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
-        let mut result : Option<VecDeque<u32>> = None;
-        for row in resp.iter() {
-            let q :VecDeque<u32> = serde_json::from_value(row.get(0)).expect("Err deserializing get_deleted_and_modified_threads2");
-            result = Some(q);
+        let mut _result : Option<VecDeque<u32>> = None;
+        loop {
+            for row in resp.iter() {
+                let jsonb : Option<serde_json::Value> = row.get(0);
+                match jsonb {
+                    Some(val) => {
+                        let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_combined_threads");
+                        _result = Some(q);
+                        break;
+                    },
+                    None => {
+                        eprintln!("Error getting get_combined_threads at column 0: NULL @ {}", Local::now().to_rfc2822());
+                        task::sleep(Duration::from_secs(1)).await;
+                    },
+                }
+            }
+
         }
-        result
+        _result
     }
 
 
-    fn get_deleted_and_modified_threads2(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
+    async fn get_deleted_and_modified_threads2(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
         // Combine new and prev threads.json into one. This retains the prev threads (which the new json doesn't contain, meaning they're either pruned or archived).
         //  That's especially useful for boards without archives.
         // Use the WHERE clause to select only modified threads. Now we basically have a list of deleted and modified threads.
@@ -1013,12 +1021,25 @@ impl YotsubaArchiver {
                 where newv is null or not prev->'last_modified' <@ (newv -> 'last_modified')
                 "#;
         let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
-        let mut result : Option<VecDeque<u32>> = None;
-        for row in resp.iter() {
-            let q :VecDeque<u32> = serde_json::from_value(row.get(0)).expect("Err deserializing get_deleted_and_modified_threads2");
-            result = Some(q);
+        let mut _result : Option<VecDeque<u32>> = None;
+        loop {
+            for row in resp.iter() {
+                let jsonb : Option<serde_json::Value> = row.get(0);
+                match jsonb {
+                    Some(val) => {
+                        let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_deleted_and_modified_threads2");
+                        _result = Some(q);
+                        break;
+                    },
+                    None => {
+                        eprintln!("Error getting get_deleted_and_modified_threads2 at column 0: NULL @ {}", Local::now().to_rfc2822());
+                        task::sleep(Duration::from_secs(1)).await;
+                    },
+                }
+            }
+
         }
-        result
+        _result
     }
 
     fn get_boards_raw(&self) -> Vec<String> {
