@@ -21,7 +21,7 @@ Low resource and high performance archiver to dump and archive posts, images and
 * media downloading uses sha256 as it's filename and it's directory structure is the same as yuki.la's
 * PostgreSQL 12 is the database engine that was used and tested with
 
-<superscrpt>\*There's an expermental [Asagi schema](https://github.com/eksopl/asagi/blob/master/src/main/resources/net/easymodo/asagi/sql/Pgsql/boards.sql) (as a `view`) created alongside the existing one.<br>Query it like `select * from a_asagi`, where `a` is the board name</superscrpt>
+<superscrpt>\*There's an expermental [Asagi schema](https://github.com/eksopl/asagi/blob/master/src/main/resources/net/easymodo/asagi/sql/Pgsql/boards.sql) (as a [`view`](http://www.postgresqltutorial.com/managing-postgresql-views/)) created alongside the existing one.<br>Query it like `select * from a_asagi`, where `a` is the board name</superscrpt>
 
 ## Installation
 1. Download the [pre-compiled binaries][latest-link] _**or**_ build from source for the latest builds.  
