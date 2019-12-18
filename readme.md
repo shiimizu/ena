@@ -1,3 +1,5 @@
+[![Latest][latest-badge]][latest-link]
+
 # Ena
 
 Low resource and high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store.
@@ -52,7 +54,7 @@ I wanted something fast, safe, and ideally be able to withstand long-term usage.
 
 It just so happens that Ena is the youngest of the Ayase sisters. I liked the name so I stuck with it.
 
-[latest-badge]: https://img.shields.io/badge/latest-v0.1.0-ca7f85.svg?style=flat-square
+[latest-badge]: https://img.shields.io/github/v/release/shiimizu/ena?color=ca7f85&style=flat-square
 [latest-link]: https://github.com/shiimizu/ena/releases/latest
 [matrix-link]: https://matrix.to/#/#bibanon-chat:matrix.org
 [matrix-badge]: https://img.shields.io/badge/matrix-join-ca7f85.svg?style=flat-square
