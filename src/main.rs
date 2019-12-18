@@ -258,6 +258,46 @@ impl YotsubaArchiver {
         self.conn.execute("set enable_seqscan to off;", &[]).expect("Err executing sql: set enable_seqscan to off");
     }
 
+    fn create_board_view(&self, board: &str) {
+        let sql = format!(r#"
+CREATE OR REPLACE VIEW {board_name}_asagi AS
+select  no as doc_id,
+        no as media_id,
+        0::smallint as poster_ip,
+        no as num,
+        0::smallint as sub_num,
+        no as thread_num,
+        (CASE WHEN resto=0 THEN true ELSE false END) as op,
+        time as "timestamp",
+        0 as "timestamp_expired",
+        (tim::text || '.jpg') as preview_orig,
+        (CASE WHEN tn_w is null THEN 0 ELSE tn_w END) as preview_w,
+        (CASE WHEN tn_h is null THEN 0 ELSE tn_h END) as preview_h,
+        (filename::text || ext) as media_filename,
+        (CASE WHEN w is null THEN 0 ELSE w END) as media_w,
+        (CASE WHEN h is null THEN 0 ELSE h END) as media_h,
+        (CASE WHEN fsize is null THEN 0 ELSE fsize END) as media_size,
+        md5 as media_hash,
+        (tim::text || ext) as media_orig,
+        (CASE WHEN spoiler is null or spoiler=0 THEN false ELSE true END) as spoiler,
+        (CASE WHEN deleted is null or deleted=0 THEN false ELSE true END) as deleted,
+        (CASE WHEN capcode is null THEN 'N' ELSE capcode END) as capcode,
+        null as email,
+        name,
+        trip,
+        sub as title,
+        com as comment,
+        null as delpass,
+        (CASE WHEN sticky is null or sticky=0 THEN false ELSE true END) as sticky,
+        (CASE WHEN closed is null or closed=0 THEN false ELSE true END) as locked,
+        md5 as poster_hash,
+        country as poster_country,
+        country_name as poster_country_name,
+        null as exif
+        from {board_name}"#, board_name=board);
+        if let Ok(_) = self.conn.execute(&sql, &[]) {}
+    }
+
     fn listen_to_exit(&self) {
         //let f = async_std::sync::Arc::new(async_std::sync::Mutex::new(self.finished));
         let finished_clone = async_std::sync::Arc::clone(&self.finished);
@@ -361,8 +401,9 @@ impl YotsubaArchiver {
     }*/
 
     async fn assign_to_board<'b>(&self, bs: BoardSettings2) ->Option<()>{
-        // let current_time = yotsuba_time();
         self.init_board(&bs.board);
+        self.create_board_view(&bs.board);
+
         let current_board = &bs.board;
         let one_millis = Duration::from_millis(1);
         let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
@@ -400,12 +441,12 @@ impl YotsubaArchiver {
                                     threads_last_modified.push_str(&last_modified);
                                 }
                             },
-                            None => eprintln!("/{}/ <{}> an error has occurred getting the last_modified date", current_board, status),
+                            None => eprintln!("/{}/ <{}> [threads] An error has occurred getting the last_modified date", current_board, status),
                         }
                         match body {
                             Ok(new_threads) => {
                                 if !new_threads.is_empty() {
-                                    println!("/{}/ Received new threads on {}", current_board, Local::now().to_rfc2822());
+                                    println!("/{}/ [threads] Received new threads on {}", current_board, Local::now().to_rfc2822());
                                     fetched_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
                                     let ft = fetched_threads.to_owned().unwrap();
 
@@ -418,7 +459,7 @@ impl YotsubaArchiver {
                                             if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft, true).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
-                                                println!("/{}/ Seems like there was no threads?.. This should be unreachable!", current_board);
+                                                println!("/{}/ [threads] Seems like there was no threads?.. This should be unreachable!", current_board);
                                             }
 
                                             // update base at the end
@@ -431,7 +472,7 @@ impl YotsubaArchiver {
                                             if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft, true).await {
                                                 local_threads_list.append(&mut fetched_threads_list);
                                             } else {
-                                                println!("/{}/ Seems like there was no modified threads..", current_board);
+                                                println!("/{}/ [threads] Seems like there was no modified threads..", current_board);
                                             }
 
                                             // update base at the end
@@ -448,24 +489,24 @@ impl YotsubaArchiver {
                                             init = false;
                                             update_metadata = false;
                                         } else {
-                                            println!("/{}/ Seems like there was no modified threads in the beginning?..", current_board);
+                                            println!("/{}/ [threads] Seems like there was no modified threads in the beginning?..", current_board);
                                         }
                                     }
                                     
 
                                     
                                 } else {
-                                    eprintln!("/{}/ <{}> Fetched threads was found to be empty!", current_board, status)
+                                    eprintln!("/{}/ <{}> [threads] Fetched threads was found to be empty!", current_board, status)
                                 }
                             },
-                            Err(e) => eprintln!("/{}/ <{}> an error has occurred getting the body\n{}", current_board, status, e),
+                            Err(e) => eprintln!("/{}/ <{}> [threads] An error has occurred getting the body\n{}", current_board, status, e),
                         }
                     },
                     reqwest::StatusCode::NOT_MODIFIED => {
-                        eprintln!("/{}/ [threads] <{}>", current_board, status);
+                        eprintln!("/{}/ <{}> [threads]", current_board, status);
                     },
                     _ => {
-                        eprintln!("/{}/ <{}> an error has occurred!", current_board, status);
+                        eprintln!("/{}/ <{}> [threads] An error has occurred!", current_board, status);
                     },
                 }
 
@@ -544,14 +585,14 @@ impl YotsubaArchiver {
 
                                             
                                         } else {
-                                            eprintln!("/{}/ [archive] <{}> Fetched threads was found to be empty!", current_board, status)
+                                            eprintln!("/{}/ <{}> [archive] Fetched threads was found to be empty!", current_board, status)
                                         }
                                     },
-                                    Err(e) => eprintln!("/{}/ [archive] <{}> an error has occurred getting the body\n{}", current_board, status, e),
+                                    Err(e) => eprintln!("/{}/ <{}> [archive] An error has occurred getting the body\n{}", current_board, status, e),
                                 }
                             },
                             reqwest::StatusCode::NOT_MODIFIED => {
-                                eprintln!("/{}/ [archive] <{}>", current_board, status);
+                                eprintln!("/{}/ <{}> [archive]", current_board, status);
                             },
                             reqwest::StatusCode::NOT_FOUND => {
                                 eprintln!("/{}/ <{}> No archives found! Retry attempt: #{}", current_board, status, rti);
@@ -560,7 +601,7 @@ impl YotsubaArchiver {
                                 continue;
                             },
                             _ => {
-                                eprintln!("/{}/ [archive] <{}> an error has occurred!", current_board, status);
+                                eprintln!("/{}/ <{}> [archive] An error has occurred!", current_board, status);
                             },
                         }
 

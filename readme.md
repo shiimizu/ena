@@ -37,7 +37,7 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 Check with [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
 
 ### Why?
-Much of my personal time and research went into 4ch for educational purposes and self development. I value the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. The current avaliable solutions are not practical nor production ready. So I decided to help out.
+Much of my personal time and research went into 4ch for educational purposes and self development. I value the things I've learned there and have a plethora of archived threads. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep [Asagi](https://github.com/eksopl/asagi) archiving every board. The current avaliable solutions are not practical nor production ready. So I decided to help out.
 
 ### Why Rust?
 I wanted something fast, safe, and ideally be able to withstand long-term usage.
