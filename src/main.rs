@@ -119,7 +119,17 @@ fn start_background_thread() {
                 let default = config.get_mut("boardSettings").expect("Err getting boardSettings").as_object_mut().expect("Err boardSettings as_object_mut");
                 let board_map = board.as_object().expect("Err serializing board");
                 for (k,v) in board_map.iter() {
-                    default.insert(k.to_string(), v.to_owned());
+                    if k == "board" {
+                        let bv = v.to_owned().as_str().unwrap().to_string();
+                        // Check if board is a number
+                        if let Ok(_) = bv.parse::<u32>() {
+                            default.insert(k.to_string(), serde_json::json!(format!("_{}", bv.as_str())));
+                        } else {
+                            default.insert(k.to_string(), v.to_owned());
+                        };
+                    } else {
+                        default.insert(k.to_string(), v.to_owned());
+                    }
                 }
                 let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
                     
@@ -360,6 +370,8 @@ impl YotsubaArchiver {
         let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
         let one_millis = Duration::from_millis(1);
         let mut local_threads_list : VecDeque<u32> = VecDeque::new();
+        let mut update_metadata = false;
+        let mut init = true;
         // let mut count:u32 = 0;
         loop {
             // Listen to CTRL-C
@@ -375,6 +387,7 @@ impl YotsubaArchiver {
 
             // Download threads.json
             // Scope to drop values when done
+            let mut fetched_threads : Option<serde_json::Value> = None;
             {
                 let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/threads.json", url=bs.api_url, bo=current_board), &threads_last_modified).await;
                 match status {
@@ -392,27 +405,54 @@ impl YotsubaArchiver {
                             Ok(new_threads) => {
                                 if !new_threads.is_empty() {
                                     println!("/{}/ Received new threads on {}", current_board, Local::now().to_rfc2822());
-                                    let fetched_threads : serde_json::Value = serde_json::from_str(&new_threads).expect("Err deserializing new threads");
+                                    fetched_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
+                                    let ft = fetched_threads.clone().unwrap(); // BRUH... this should get dropped so we're fine
 
                                     if let Some(_) = self.get_board_from_metadata(&current_board) {
-                                        // compare time modified and get the new threads
-                                        if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &fetched_threads) {
-                                            // self.queue.get_mut(&current_board).expect("err getting queue for board1").append(&mut fetched_threads_list);
-                                            local_threads_list.append(&mut fetched_threads_list);
+                                        // if there's cache
+                                        // if this is a first startup
+                                        if init {
+                                            // going here means the program was restarted
+                                            // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
+                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft) {
+                                                local_threads_list.append(&mut fetched_threads_list);
+                                            } else {
+                                                println!("/{}/ Seems like there was no threads?.. This should be unreachable!", current_board);
+                                            }
+
+                                            // update base at the end
+                                            update_metadata = true;
+                                            init = false;
                                         } else {
-                                            println!("/{}/ Seems like there was no modified threads..", current_board);
+                                            // here is when we have cache and the program in continously running
+                                            // only get new/modified/deleted threads
+                                            // compare time modified and get the new threads
+                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft) {
+                                                local_threads_list.append(&mut fetched_threads_list);
+                                            } else {
+                                                println!("/{}/ Seems like there was no modified threads..", current_board);
+                                            }
+
+                                            // update base at the end
+                                            update_metadata = true;
                                         }
+
                                     } else {
+                                        // No cache
                                         // Use fetched_threads 
-                                        if let Some(mut fetched_threads_list) = self.get_threads_list(&fetched_threads) {
+                                        if let Some(mut fetched_threads_list) = self.get_threads_list(&ft) {
                                             // self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
                                             local_threads_list.append(&mut fetched_threads_list);
+                                            self.upsert_metadata(&current_board, "threads", &ft);
+                                            init = false;
+                                            update_metadata = false;
                                         } else {
                                             println!("/{}/ Seems like there was no modified threads in the beginning?..", current_board);
                                         }
                                     }
-                                    // Use the new fetched threads as a base
-                                    self.upsert_metadata(&current_board, "threads", &fetched_threads);
+                                    
+
+                                    
                                 } else {
                                     eprintln!("/{}/ <{}> Fetched threads was found to be empty!", current_board, status)
                                 }
@@ -439,8 +479,18 @@ impl YotsubaArchiver {
                     // This will loop until it recieves none
                     // while let Some(_) = self.drain_list(board).await {
                     // }
+
                     while let Some(thread) = local_threads_list.pop_front() {
                         self.assign_to_thread(&bs, thread).await;
+                    }
+
+                    // Update the cache at the end so that if the program was stopped while processing threads, when it restarts it'll use the same
+                    // list of threads it was processing before + new ones.
+                    if update_metadata {
+                        if let Some(ft) = &fetched_threads {
+                            self.upsert_metadata(&current_board, "threads", &ft);
+                            update_metadata = false;
+                        }
                     }
                 } // No need to report if no new threads cause when it's not modified it'll tell us
             }
@@ -919,6 +969,35 @@ impl YotsubaArchiver {
         threads
     }*/
 
+    fn get_combined_threads(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
+        // This query is only run ONCE at every startup
+        // Running a JOIN to compare against the entire DB on every INSERT/UPDATE would not be that great. 
+        // This gets all the threads from cache, compares it to the new json to get new + modified threads
+        // The compares that result to the database where a thread is deleted or archived, and takes only the threads where's it's not
+        // deleted or archived
+        let sql = format!(r#"
+                select jsonb_agg(c) from (
+                SELECT coalesce (prev->'no', newv->'no')::bigint as c from
+                (select jsonb_path_query(threads, '$[*].threads[*]') as prev from metadata where board = $1)x
+                full JOIN
+                (select jsonb_path_query($2::jsonb, '$[*].threads[*]') as newv)z
+                ON prev->'no' = (newv -> 'no') 
+                )q
+                left join
+                (select no as nno from {board_name} where resto=0 and (archived=1 or deleted=1))w
+                ON c = nno
+                where nno is null
+                "#, board_name=board);
+        let resp = self.conn.query(&sql, &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
+        let mut result : Option<VecDeque<u32>> = None;
+        for row in resp.iter() {
+            let q :VecDeque<u32> = serde_json::from_value(row.get(0)).expect("Err deserializing get_deleted_and_modified_threads2");
+            result = Some(q);
+        }
+        result
+    }
+
+
     fn get_deleted_and_modified_threads2(&self, board: &str, new_threads: &serde_json::Value) -> Option<VecDeque<u32>> {
         // Combine new and prev threads.json into one. This retains the prev threads (which the new json doesn't contain, meaning they're either pruned or archived).
         //  That's especially useful for boards without archives.
@@ -941,7 +1020,6 @@ impl YotsubaArchiver {
         }
         result
     }
-
 
     fn get_boards_raw(&self) -> Vec<String> {
         self.settings.get("boards").unwrap()
