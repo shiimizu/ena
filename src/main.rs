@@ -1,7 +1,6 @@
 #![deny(unsafe_code)]
 #![allow(unreachable_code)]
 #![allow(non_snake_case)]
-#![allow(dead_code)]
 
 extern crate reqwest;
 extern crate pretty_env_logger;
@@ -20,7 +19,7 @@ use std::time::{Duration, Instant};
 use postgres::{Connection, TlsMode};
 use reqwest::header::{HeaderMap, HeaderValue, LAST_MODIFIED, USER_AGENT, IF_MODIFIED_SINCE};
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use chrono::Local;
 use sha2::{Sha256, Digest};
 //use async_std::prelude::*;
@@ -47,62 +46,7 @@ fn main() {
     let start_time = Instant::now();
     let start_time_str = Local::now().to_rfc2822();
     start_background_thread();
-    //other();
     println!("\nStarted on:\t{}\nFinished on:\t{}\nElapsed time:\t{}ms", start_time_str, Local::now().to_rfc2822(), start_time.elapsed().as_millis());
-}
-
-fn other() {
-    let mut config = read_json("ena_config.json").expect("Err get config");
-    /*
-    let mut default : BoardSettingsJson = serde_json::from_value(
-        config.get_mut("boardSettings").expect("Err getting boardSettings").to_owned()
-        ).expect("Err serializing boardSettings");*/
-    let bb = config.to_owned();
-    let boards = bb.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");
-    let default = config.get_mut("boardSettings").expect("Err getting boardSettings").as_object_mut().expect("Err boardSettings as_object_mut");
-    
-    let _current_board = "a";
-    
-    for board in boards {
-        let board_map = board.as_object().expect("Err serializing board");
-        for (k,v) in board_map.iter() {
-            default.insert(k.to_string(), v.to_owned());
-        }
-        /*if let Some(bo) = b.board {
-            if bo == current_board {
-                if let Some(item) = b.retryAttempts {
-                    default.retryAttempts = Some(item);
-                }
-                if let Some(item) = b.refreshDelay {
-                    default.refreshDelay = Some(item);
-                }
-                if let Some(item) = b.apiURL {
-                    default.apiURL = Some(item);
-                }
-                if let Some(item) = b.mediaURL {
-                    default.mediaURL = Some(item);
-                }
-                if let Some(item) = b.throttleMillisec {
-                    default.throttleMillisec = Some(item);
-                }
-                break;
-            }
-        }*/
-    }
-
-    let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
-
-    /*
-    let bs = BoardSettings {
-        board: current_board.to_string(),
-        retry_attempts: default.retryAttempts.unwrap(),
-        refresh_delay: default.refreshDelay.unwrap(),
-        api_url: default.apiURL.unwrap(),
-        media_url: default.mediaURL.unwrap(),
-        throttle_millisec: default.throttleMillisec.unwrap(),
-    };*/
-    
-    println!("{:#?}", &bs);
 }
 
 fn start_background_thread() {
@@ -157,9 +101,7 @@ pub struct YotsubaArchiver {
     conn: Connection,
     settings : serde_json::Value,
     client: reqwest::Client,
-    queue: Queue,
     finished: async_std::sync::Arc<async_std::sync::Mutex::<bool>>,
-    //proxies: ProxyStream,
 }
 
 impl YotsubaArchiver {
@@ -167,16 +109,10 @@ impl YotsubaArchiver {
     fn new() -> YotsubaArchiver {
         let mut default_headers = HeaderMap::new();
         default_headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0"));
-        //default_headers.insert(IF_MODIFIED_SINCE, HeaderValue::from_str(&yotsuba_time()).unwrap());
         std::fs::create_dir_all("./archive/tmp").expect("Err create dir tmp");
         let settingss = read_json("ena_config.json").expect("Err get config");
         
         let defs = settingss.get("settings").expect("Err get settings");
-        /*let defs = settingss.get("sites").expect("Err get sites")
-                            .as_array().expect("Err get sites array")[0]
-                            .get("settings").expect("Err get settings")
-                            .get("boardSettings").expect("Err get boardSettings")
-                            .get("default").expect("Err get default").to_owned();*/
         let conn_url = format!("postgresql://{username}:{password}@{host}:{port}/{database}",
                                     username=defs.get("username").expect("Err get username").as_str().expect("Err convert username to str"),
                                     password=defs.get("password").expect("Err get password").as_str().expect("Err convert password to str"),
@@ -187,11 +123,8 @@ impl YotsubaArchiver {
                 conn: Connection::connect(conn_url, TlsMode::None).expect("Error connecting"),
                 settings: settingss,
                 client: reqwest::ClientBuilder::new().default_headers(default_headers).build().unwrap(),
-                queue: Queue::new(),
                 finished: async_std::sync::Arc::new(async_std::sync::Mutex::new(false)),
-                //proxies: Self::get_proxy("cache/proxylist.json"),
             };
-        //println!("Finished Initializing");
         y
     }
 
@@ -260,41 +193,41 @@ impl YotsubaArchiver {
 
     fn create_board_view(&self, board: &str) {
         let sql = format!(r#"
-CREATE OR REPLACE VIEW {board_name}_asagi AS
-select  no as doc_id,
-        no as media_id,
-        0::smallint as poster_ip,
-        no as num,
-        0::smallint as sub_num,
-        no as thread_num,
-        (CASE WHEN resto=0 THEN true ELSE false END) as op,
-        time as "timestamp",
-        0 as "timestamp_expired",
-        (tim::text || '.jpg') as preview_orig,
-        (CASE WHEN tn_w is null THEN 0 ELSE tn_w END) as preview_w,
-        (CASE WHEN tn_h is null THEN 0 ELSE tn_h END) as preview_h,
-        (filename::text || ext) as media_filename,
-        (CASE WHEN w is null THEN 0 ELSE w END) as media_w,
-        (CASE WHEN h is null THEN 0 ELSE h END) as media_h,
-        (CASE WHEN fsize is null THEN 0 ELSE fsize END) as media_size,
-        md5 as media_hash,
-        (tim::text || ext) as media_orig,
-        (CASE WHEN spoiler is null or spoiler=0 THEN false ELSE true END) as spoiler,
-        (CASE WHEN deleted is null or deleted=0 THEN false ELSE true END) as deleted,
-        (CASE WHEN capcode is null THEN 'N' ELSE capcode END) as capcode,
-        null as email,
-        name,
-        trip,
-        sub as title,
-        com as comment,
-        null as delpass,
-        (CASE WHEN sticky is null or sticky=0 THEN false ELSE true END) as sticky,
-        (CASE WHEN closed is null or closed=0 THEN false ELSE true END) as locked,
-        md5 as poster_hash,
-        country as poster_country,
-        country_name as poster_country_name,
-        null as exif
-        from {board_name}"#, board_name=board);
+                            CREATE OR REPLACE VIEW {board_name}_asagi AS
+                            select  no as doc_id,
+                                    no as media_id,
+                                    0::smallint as poster_ip,
+                                    no as num,
+                                    0::smallint as sub_num,
+                                    no as thread_num,
+                                    (CASE WHEN resto=0 THEN true ELSE false END) as op,
+                                    time as "timestamp",
+                                    0 as "timestamp_expired",
+                                    (tim::text || '.jpg') as preview_orig,
+                                    (CASE WHEN tn_w is null THEN 0 ELSE tn_w END) as preview_w,
+                                    (CASE WHEN tn_h is null THEN 0 ELSE tn_h END) as preview_h,
+                                    (filename::text || ext) as media_filename,
+                                    (CASE WHEN w is null THEN 0 ELSE w END) as media_w,
+                                    (CASE WHEN h is null THEN 0 ELSE h END) as media_h,
+                                    (CASE WHEN fsize is null THEN 0 ELSE fsize END) as media_size,
+                                    md5 as media_hash,
+                                    (tim::text || ext) as media_orig,
+                                    (CASE WHEN spoiler is null or spoiler=0 THEN false ELSE true END) as spoiler,
+                                    (CASE WHEN deleted is null or deleted=0 THEN false ELSE true END) as deleted,
+                                    (CASE WHEN capcode is null THEN 'N' ELSE capcode END) as capcode,
+                                    null as email,
+                                    name,
+                                    trip,
+                                    sub as title,
+                                    com as comment,
+                                    null as delpass,
+                                    (CASE WHEN sticky is null or sticky=0 THEN false ELSE true END) as sticky,
+                                    (CASE WHEN closed is null or closed=0 THEN false ELSE true END) as locked,
+                                    md5 as poster_hash,
+                                    country as poster_country,
+                                    country_name as poster_country_name,
+                                    null as exif
+                                    from {board_name}"#, board_name=board);
         if let Ok(_) = self.conn.execute(&sql, &[]) {}
     }
 
@@ -319,86 +252,6 @@ select  no as doc_id,
         self.conn.execute(&sql, &[&board, &json_item]).expect("Err executing sql: upsert_metadata");
 
     }
-
-    fn init_boards(&mut self) {
-        let boards = self.get_boards_raw();
-        // let mut fut = FuturesUnordered::new();
-        for board in boards.iter() {
-            if !self.queue.contains_key(board) {
-                self.init_board(board);
-                self.queue.insert(board.to_owned(), VecDeque::new());
-            }
-        }
-    }
-    /*async fn poll_boards(&mut self) {
-        let boards = self.get_boards_raw();
-        // let mut fut = FuturesUnordered::new();
-        for board in boards.iter() {
-            if !self.queue.contains_key(board) {
-                self.init_board(board);
-                self.queue.insert(board.to_owned(), VecDeque::new());
-            }
-        }
-
-        let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(self));
-        let a_clone = async_std::sync::Arc::clone(&a);
-
-        let b = async_std::sync::Arc::new(async_std::sync::Mutex::new(&boards));
-        let b_clone = async_std::sync::Arc::clone(&b);
-
-        let c = async_std::sync::Arc::new(async_std::sync::Mutex::new(0));
-        let c_clone = async_std::sync::Arc::clone(&c);
-
-        futures::stream::iter(0..boards.len()).for_each_concurrent(
-            /* limit */ None,
-            |_| async  {
-                if let Some(mut se) = a_clone.try_lock() {
-                    if let Some(boards_list) = b_clone.try_lock() {
-                        if let Some(mut idx) = c_clone.try_lock() {
-                            // println!("Assign to board {}", boards_list[*idx]);
-                            // task::spawn(async { 
-                                // se.assign_to_board(&boards_list[*idx]).await;
-                            // });
-                            self.tt(&boards_list[*idx]);
-                            // Self::tt().await;
-                            *idx += 1;
-                        } else {
-                            eprintln!("Err trying get num lock");
-                        }
-                    } else {
-                        eprintln!("Err trying get boards_list lock");
-                    }
-                } else {
-                    eprintln!("Err trying get self lock");
-                }
-            }
-        ).await;
-        loop {
-            // println!("Sleep {}", i);
-            if let Some(se) = a_clone.try_lock() {
-                if let Some(finished) = se.finished.try_lock() {
-                    if *finished {
-                        break;
-                    }
-                } else {
-                    eprintln!("Lock occurred trying to get finished");
-                }
-            } else {
-                eprintln!("Lock occurred trying to get self");
-            }
-            task::sleep(Duration::from_millis(250)).await;
-        }
-        /*let a = async_std::sync::Arc::new(async_std::sync::Mutex::new(self));
-        for i in 0..boards.len() {
-            let a_clone = async_std::sync::Arc::clone(&a);
-            let mut va=a_clone.lock().await;
-                fut.push(va.assign_to_board(&boards[i]));
-        }
-        while let Some(_) = fut.next().await {
-        }*/
-        // self.init_board(&boards[0]);
-        // self.assign_to_board(&boards[0]).await;
-    }*/
 
     async fn assign_to_board<'b>(&self, bs: BoardSettings2) -> Option<()> {
         self.init_board(&bs.board);
@@ -660,29 +513,11 @@ select  no as doc_id,
         Some(())
     }
 
-    // BRUH LET ME JUST SHARE MUTABLE REFERENCES AHHHHHHHHHHHHHHH
-    /*async fn drain_list(&mut self, board: &str) -> Option<u32> {
-        // Repeatedly getting the list probably isn't the most efficient...
-        if let Some(a) = self.queue.get_mut(board) {
-            let aa = a.pop_front();
-            if let Some(thread) = aa {
-                // println!("{:?}/{:?} assignde",board ,newt);
-                self.assign_to_thread(&bs, thread).await;
-            }
-            return aa;
-        }
-        None
-    }*/
-
-    // There's a lot of object creation here but they should all get dropped so it shouldn't matter
     async fn assign_to_thread(&self, bs: &BoardSettings2, thread: u32) {
-        // TODO check if thread is empty or its posts are empty
-        // If DB has an incomplete thread, archived, closed, or sticky
         let board = &bs.board;
         let mut _retry = 0;
         let mut _status_resp = reqwest::StatusCode::OK;
     
-        // dl and patch and push to db
         let now = Instant::now();
         let one_millis = Duration::from_millis(1);
 
@@ -700,11 +535,6 @@ select  no as doc_id,
                         self.upsert_thread2(board, &ret);
                         self.upsert_deleteds(board, thread, &ret);
                         println!("/{}/{}", board, thread);
-                        
-                        /*match self.upsert_thread(board, thread, ret) {
-                            Ok(q) => println!("/{}/{} <{}> Success upserting the thread! {:?}",board, thread, status, q),
-                            Err(e) => eprintln!("/{}/{} <{}> An error occured upserting the thread! {}",board, thread, status, e),
-                        } */
                         _canb=true;
                         _retry=0;
                         break;
@@ -733,7 +563,6 @@ select  no as doc_id,
         }
 
         // DL MEDIA
-        // Need to check against other md5 so we don't redownload if we have it
         if bs.download_media || bs.download_thumbnails {
             let ps = self.settings.get("settings").expect("Err get settings").get("path").expect("err getting path").as_str().expect("err converting path to str");
             let p = ps.trim_end_matches('/').trim_end_matches('\\');
@@ -802,14 +631,12 @@ select  no as doc_id,
         }
     }
 
-    // this downloads any missing media and/or thumbs
+    // This downloads any missing media and/or thumbs
     async fn dl_media_post(domain:&str, bs: &BoardSettings2, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client, path:&str)  -> Option<(u64, Option<String>, Option<String>)> {
         let board = &bs.board;
         let dl = |thumb| -> Result<String, reqwest::Error> {
             let url = format!("{}/{}/{}{}{}", domain, board, tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext} );
             println!("/{}/{}#{} -> {}{}{}",  board, thread, no,tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext});
-            // TODO Check MD5 & other hashes before DL
-            // TODO don't dl if exists, and exists in folder
             // TODO retry here
 
             // Download and save to file
@@ -842,7 +669,6 @@ select  no as doc_id,
                     let final_dir_path = format!("{}/media/{}/{}",path, first, second);
                     let final_path = format!("{}/{:x}{}", final_dir_path, hash, ext);
 
-                    // discarding errors...
                     if (bs.keep_media && !thumb) || (bs.keep_thumbnails && thumb) || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb)) {
                         
                         let path_final = Path::new(&final_path);
@@ -882,14 +708,14 @@ select  no as doc_id,
     }
 
     async fn cget(&self, url: &str, last_modified: &str) -> (Option<String>, reqwest::StatusCode, Result<String, reqwest::Error>) {
-        let mut res = if last_modified == "" {
-            match self.client.get(url).send() {
+        let mut res = 
+            match if last_modified == "" { self.client.get(url).send() } else {self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() }{
                 Ok(expr) => expr,
                 Err(e) => {
                     eprintln!("{} -> {:?}", url, e);
                     task::sleep(Duration::from_secs(1)).await;
                     let a = loop {
-                        match self.client.get(url).send() {
+                        match if last_modified == "" { self.client.get(url).send() } else { self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() } {
                             Ok(resp) => break resp,
                             Err(e) => {
                                 eprintln!("{} -> {:?}",url, e);
@@ -899,27 +725,7 @@ select  no as doc_id,
                     };
                     a
                 },
-            }
-            // self.client.get(url).send().expect("err cget!")
-        } else {
-            match self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() {
-                Ok(expr) => expr,
-                Err(e) => {
-                    eprintln!("{} -> {:?}", url, e);
-                    task::sleep(Duration::from_secs(1)).await;
-                    let a = loop {
-                        match self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() {
-                            Ok(resp) => break resp,
-                            Err(e) => {
-                                eprintln!("{} -> {:?}",url, e);
-                                task::sleep(Duration::from_secs(1)).await;
-                            },
-                        }
-                    };
-                    a
-                },
-            }
-        };
+            };
         let mut last_modified_ : Option<String> = None;
         if_chain! {
             if let Some(head) = res.headers().get(LAST_MODIFIED);
@@ -1145,16 +951,6 @@ select  no as doc_id,
         res
     }
 
-    // Use this and not the one below so no deserialization happens and no overhead
-    fn get_board_from_metadata(&self, board: &str) -> Option<String> {
-        let resp = self.conn.query("select * from metadata where board = $1", &[&board]).expect("Err getting threads from metadata");
-        let mut board_ : Option<String> = None;
-        for row in resp.iter() {
-            board_ = row.get("board");
-        }
-        board_
-    }
-
     async fn get_combined_threads(&self, board: &str, new_threads: &serde_json::Value, threads: bool) -> Option<VecDeque<u32>> {
         // This query is only run ONCE at every startup
         // Running a JOIN to compare against the entire DB on every INSERT/UPDATE would not be that great. 
@@ -1212,7 +1008,6 @@ select  no as doc_id,
         _result
     }
 
-
     async fn get_deleted_and_modified_threads2(&self, board: &str, new_threads: &serde_json::Value, threads: bool) -> Option<VecDeque<u32>> {
         // Combine new and prev threads.json into one. This retains the prev threads (which the new json doesn't contain, meaning they're either pruned or archived).
         //  That's especially useful for boards without archives.
@@ -1258,71 +1053,8 @@ select  no as doc_id,
         }
         _result
     }
-
-    fn get_boards_raw(&self) -> Vec<String> {
-        self.settings.get("boards").unwrap()
-        .as_array().unwrap()
-        .iter().to_owned()
-        .map(|x| x.as_object().unwrap()
-                    .get("board").unwrap()
-                    .as_str().unwrap().to_string()
-                    ).collect::<Vec<String>>()
-    }
-    fn get_defaults(&self) -> serde_json::Value {
-        self.settings.get("sites").unwrap()
-        .as_array().unwrap()[0]
-        .get("settings").unwrap()
-        .get("boardSettings").unwrap()
-        .get("default").unwrap().to_owned()
-    }
-
-    /*fn get_proxy(proxy_path: &str) -> ProxyStream {
-        if let Some(p) = read_json(proxy_path) {
-            let mut ps = ProxyStream::new();
-            ps.urls.append(
-            &mut serde_json::from_value::<VecDeque<String>>(p).unwrap());
-            ps
-        } else {
-            ProxyStream::new()
-        }
-    }*/
-
-
 }
 
-type Queue = BTreeMap<String, VecDeque<u32>>;
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct BoardSettingsJson {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    board: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    retryAttempts: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    refreshDelay: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    apiURL: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    mediaURL: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    throttleMillisec: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-struct BoardSettings {
-    board: String,
-    retry_attempts: u16,
-    refresh_delay: u16,
-    api_url: String,
-    media_url: String,
-    throttle_millisec: u32,
-}
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct BoardSettings2 {
@@ -1338,51 +1070,6 @@ struct BoardSettings2 {
     keep_thumbnails: bool,
 }
 
-/// A cycle stream that can append new values
-/*#[derive(Debug)]
-pub struct ProxyStream {
-    urls: VecDeque<String>,
-    count: i32,
-}
-
-impl ProxyStream {
-    fn new() -> ProxyStream {
-        ProxyStream { urls: VecDeque::new(), count: 0 }
-    }
-    fn push(&mut self, s: String) {
-        self.urls.push_front(s);
-    }
-    fn len(&self) -> usize {
-        self.urls.len()
-    }
-}
-
-impl futures::stream::Stream for ProxyStream {
-
-    type Item = String;
-
-    fn poll_next(mut self: async_std::pin::Pin<&mut Self>, _cx: &mut async_std::task::Context<'_>) -> async_std::task::Poll<Option<Self::Item>> {
-        self.count += 1;
-        
-        let max = self.urls.len();
-        let c = match self.count {
-            //0 => { c = 0 },
-            x if x >= 1 && x < self.urls.len() as i32 => x,
-            _ => {
-                self.count = 0;
-                0
-            }
-        };
-        if max != 0 {
-            async_std::task::Poll::Ready(Some(self.urls[c as usize].to_owned()))
-        } else {
-            async_std::task::Poll::Ready(None)
-        }
-
-        
-    }
-}*/
-
 fn read_json(path: &str) -> Option<serde_json::Value>{
     
     if let Ok(file) = File::open(path) {
@@ -1394,8 +1081,4 @@ fn read_json(path: &str) -> Option<serde_json::Value>{
     } else {
         None
     }
-}
-
-fn yotsuba_time() -> String {
-    chrono::Utc::now().to_rfc2822().replace("+0000", "GMT")
 }
