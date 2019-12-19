@@ -251,7 +251,7 @@ impl YotsubaArchiver {
 
     }
 
-    async fn assign_to_board<'b>(&self, bs: BoardSettings2) -> Option<()> {
+    async fn assign_to_board(&self, bs: BoardSettings2) -> Option<()> {
         self.init_board(&bs.board);
         self.create_board_view(&bs.board);
 
