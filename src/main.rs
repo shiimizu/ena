@@ -41,7 +41,7 @@ fn main() {
       \ \ \L\ \/\ \/\ \/\ \L\.\_ 
        \ \____/\ \_\ \_\ \__/.\_\
         \/___/  \/_/\/_/\/__/\/_/   An ultra lightweight 4chan archiver (¬ ‿ ¬ )
-"#);
+    "#);
     std::thread::sleep(Duration::from_millis(1500));
     let start_time = Instant::now();
     let start_time_str = Local::now().to_rfc2822();
@@ -59,7 +59,7 @@ fn start_background_thread() {
             let mut fut = FuturesUnordered::new();
 
             // Push each board to queue to be run concurrently
-            let mut config = read_json("ena_config.json").expect("Err get config");
+            let mut config = a.settings.to_owned();
             let bb = config.to_owned();
             let boards = bb.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");
             for board in boards {
@@ -85,8 +85,6 @@ fn start_background_thread() {
                     }
                 }
                 let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
-                    
-                //println!("{:#?}", &bs);
                 fut.push(a.assign_to_board(bs));
             }
 
@@ -640,7 +638,7 @@ impl YotsubaArchiver {
             // TODO retry here
 
             // Download and save to file
-            let mut resp =cl.get(&url).send()?;
+            let mut resp = cl.get(&url).send()?;
             let status = resp.status();
             let mut hash_str = String::new();
             match status {
@@ -1071,7 +1069,6 @@ struct BoardSettings2 {
 }
 
 fn read_json(path: &str) -> Option<serde_json::Value>{
-    
     if let Ok(file) = File::open(path) {
         let reader = BufReader::new(file);
         match serde_json::from_reader(reader) {
