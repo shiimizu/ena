@@ -1,13 +1,14 @@
 {
 	"settings": {
 		"engine": "postgresql",
-		"database": "archive2",
+		"database": "archive3",
 		"host": "localhost",
 		"port": 5432,
 		"username": "postgres",
 		"password": "zxc",
 		"charset": "utf8",
-		"path": "./archive"
+		"path": "./archive",
+		"asagiCompat": true
 	},
 	"boardSettings": {
 		"board": "",
@@ -22,8 +23,7 @@
 		"keepThumbnails": false
 	},
 	"boards": [{
-			"board": "g",
-			"refreshDelay": 30
+			"board": "a"
 		}
 	]
 }

@@ -57,6 +57,7 @@ fn start_background_thread() {
 
             let a = &archiver;
             let mut fut = FuturesUnordered::new();
+            let asagiCompat = a.settings.get("settings").expect("Err get settings").get("asagiCompat").expect("Err getting asagiCompat").as_bool().expect("err deserializing asagiCompat to bool");
 
             // Push each board to queue to be run concurrently
             let mut config = a.settings.to_owned();
@@ -66,23 +67,13 @@ fn start_background_thread() {
                 let default = config.get_mut("boardSettings").expect("Err getting boardSettings").as_object_mut().expect("Err boardSettings as_object_mut");
                 let board_map = board.as_object().expect("Err serializing board");
                 for (k,v) in board_map.iter() {
-                    if k == "board" {
-                        let bv = v.to_owned().as_str().unwrap().to_string();
-                        // Check if board is a number
-                        if let Ok(_) = bv.parse::<u32>() {
-                            default.insert(k.to_string(), serde_json::json!(format!("_{}", bv.as_str())));
-                        } else {
-                            if bv == "int" {
-                                default.insert(k.to_string(), serde_json::json!("int_"));
-                            } else if bv == "out" {
-                                default.insert(k.to_string(), serde_json::json!("out_"));
+                    default.insert(k.to_string(), 
+                            if asagiCompat && k == "board" {
+                                serde_json::json!(v.as_str().expect("Err deserializing v from k,v").to_string() + "_ena")
                             } else {
-                                default.insert(k.to_string(), v.to_owned());
+                                v.to_owned()
                             }
-                        };
-                    } else {
-                        default.insert(k.to_string(), v.to_owned());
-                    }
+                        );
                 }
                 let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
                 fut.push(a.assign_to_board(bs));
@@ -107,10 +98,13 @@ impl YotsubaArchiver {
     fn new() -> YotsubaArchiver {
         let mut default_headers = HeaderMap::new();
         default_headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0"));
-        std::fs::create_dir_all("./archive/tmp").expect("Err create dir tmp");
         let settingss = read_json("ena_config.json").expect("Err get config");
         
         let defs = settingss.get("settings").expect("Err get settings");
+        let ps = defs.get("path").expect("err getting path").as_str().expect("err converting path to str");
+        let p = ps.trim_end_matches('/').trim_end_matches('\\').to_string();
+        std::fs::create_dir_all(p + "/tmp").expect("Err create dir tmp");
+
         let conn_url = format!("postgresql://{username}:{password}@{host}:{port}/{database}",
                                     username=defs.get("username").expect("Err get username").as_str().expect("Err convert username to str"),
                                     password=defs.get("password").expect("Err get password").as_str().expect("Err convert password to str"),
@@ -129,104 +123,399 @@ impl YotsubaArchiver {
     fn init_metadata(&self) {
         let sql = "CREATE TABLE IF NOT EXISTS metadata
                     (
-                        board character varying NOT NULL,
+                        board text NOT NULL,
                         threads jsonb,
                         archive jsonb,
                         PRIMARY KEY (board),
                         CONSTRAINT board_unique UNIQUE (board)
                     );";
         if let Ok(_) = self.conn.execute(sql, &[]) {}
+        if let Ok(_) = self.conn.execute("create index metadata_board_idx on metadata(board)", &[]) {}
     }
 
     fn init_board(&self, board: &str) {
-        let sql = format!("CREATE TABLE IF NOT EXISTS {board_name}
+        let sql = format!(r#"CREATE TABLE IF NOT EXISTS "{board_name}"
                     (
                         no bigint NOT NULL,
                         sticky smallint,
                         closed smallint,
                         deleted smallint,
-                        now character varying NOT NULL,
-                        name character varying,
-                        sub character varying,
-                        com character varying,
+                        now text NOT NULL,
+                        name text,
+                        sub text,
+                        com text,
                         filedeleted smallint,
                         spoiler smallint,
                         custom_spoiler smallint,
-                        filename character varying,
-                        ext character varying,
+                        filename text,
+                        ext text,
                         w int,
                         h int,
                         tn_w int,
                         tn_h int,
                         tim bigint,
                         time bigint NOT NULL,
-                        md5 character varying(25),
-                        sha256 character varying,
-                        sha256t character varying,
+                        md5 text,
+                        sha256 bytea,
+                        sha256t bytea,
                         fsize bigint,
                         m_img smallint,
                         resto int NOT NULL DEFAULT 0,
-                        trip character varying,
-                        id character varying,
-                        capcode character varying,
-                        country character varying,
-                        country_name character varying,
+                        trip text,
+                        id text,
+                        capcode text,
+                        country text,
+                        country_name text,
                         archived smallint,
                         bumplimit smallint,
                         archived_on bigint,
                         imagelimit smallint,
-                        semantic_url character varying,
+                        semantic_url text,
                         replies int,
                         images int,
                         unique_ips bigint,
-                        tag character varying,
-                        since4pass character varying,
+                        tag text,
+                        since4pass text,
                         PRIMARY KEY (no),
-                        CONSTRAINT unique_no_{board_name} UNIQUE (no)
-                    )", board_name=board);
+                        CONSTRAINT "unique_no_{board_name}" UNIQUE (no)
+                    )"#, board_name=board);
         if let Ok(_) = self.conn.execute(&sql, &[]) {}
-        if let Ok(_) = self.conn.execute(&format!("create index {board_name}_no_resto_idx on {board_name}(no, resto)", board_name=board), &[]) {}
+        if let Ok(_) = self.conn.execute(&format!(r#"create index "no_resto_idx_{board_name}" on "{board_name}"(no, resto)"#, board_name=board), &[]) {}
         self.conn.execute("set enable_seqscan to off;", &[]).expect("Err executing sql: set enable_seqscan to off");
+        
     }
 
     fn create_board_view(&self, board: &str) {
+        let board_main = board.to_owned() + "_ena";
         let sql = format!(r#"
-                            CREATE OR REPLACE VIEW {board_name}_asagi AS
+                            CREATE OR REPLACE VIEW "{board_name}" AS
                             select  no as doc_id,
-                                    no as media_id,
-                                    0::smallint as poster_ip,
+                                    (CASE WHEN md5 is not null THEN no ELSE null END) as media_id,
+                                    0::smallint as poster_ip, --not used
                                     no as num,
-                                    0::smallint as sub_num,
-                                    no as thread_num,
+                                    0::smallint as subnum, --not used
+                                    (CASE WHEN not resto=0 THEN resto ELSE no END) as thread_num,
                                     (CASE WHEN resto=0 THEN true ELSE false END) as op,
                                     time as "timestamp",
-                                    0 as "timestamp_expired",
-                                    (tim::text || '.jpg') as preview_orig,
+                                    0 as "timestamp_expired", --not used
+                                    (CASE WHEN tim is not null THEN (tim::text || '.jpg') ELSE null END) as preview_orig,
                                     (CASE WHEN tn_w is null THEN 0 ELSE tn_w END) as preview_w,
                                     (CASE WHEN tn_h is null THEN 0 ELSE tn_h END) as preview_h,
-                                    (filename::text || ext) as media_filename,
+                                    (CASE WHEN filename is not null THEN (filename::text || ext) ELSE null END) as media_filename,
                                     (CASE WHEN w is null THEN 0 ELSE w END) as media_w,
                                     (CASE WHEN h is null THEN 0 ELSE h END) as media_h,
                                     (CASE WHEN fsize is null THEN 0 ELSE fsize END) as media_size,
                                     md5 as media_hash,
-                                    (tim::text || ext) as media_orig,
+                                    (CASE WHEN tim is not null and ext is not null THEN (tim::text || ext) ELSE null END) as media_orig,
                                     (CASE WHEN spoiler is null or spoiler=0 THEN false ELSE true END) as spoiler,
                                     (CASE WHEN deleted is null or deleted=0 THEN false ELSE true END) as deleted,
                                     (CASE WHEN capcode is null THEN 'N' ELSE capcode END) as capcode,
-                                    null as email,
+                                    null as email, --deprecated
                                     name,
                                     trip,
                                     sub as title,
                                     com as comment,
-                                    null as delpass,
+                                    null as delpass, --not used
                                     (CASE WHEN sticky is null or sticky=0 THEN false ELSE true END) as sticky,
                                     (CASE WHEN closed is null or closed=0 THEN false ELSE true END) as locked,
-                                    md5 as poster_hash,
+                                    (CASE WHEN id='Developer' THEN 'Dev' ELSE id END) as poster_hash, --not the same as media_hash
                                     country as poster_country,
                                     country_name as poster_country_name,
-                                    null as exif
-                                    from {board_name}"#, board_name=board);
-        if let Ok(_) = self.conn.execute(&sql, &[]) {}
+                                    null as exif --not used
+                                    from "{board_name}_ena""#, board_name=board);
+        self.conn.execute(&sql, &[]).expect("err create view");
+        self.conn.execute("CREATE TABLE IF NOT EXISTS index_counters (
+                          id character varying(50) NOT NULL,
+                          val integer NOT NULL,
+                          PRIMARY KEY (id)
+                        )", &[]).expect("err create index_counters");
+        self.conn.batch_execute(&format!(r#"
+                                        CREATE TABLE IF NOT EXISTS {board}_threads (
+                                          thread_num integer NOT NULL,
+                                          time_op integer NOT NULL,
+                                          time_last integer NOT NULL,
+                                          time_bump integer NOT NULL,
+                                          time_ghost integer DEFAULT NULL,
+                                          time_ghost_bump integer DEFAULT NULL,
+                                          time_last_modified integer NOT NULL,
+                                          nreplies integer NOT NULL DEFAULT '0',
+                                          nimages integer NOT NULL DEFAULT '0',
+                                          sticky boolean DEFAULT false NOT NULL,
+                                          locked boolean DEFAULT false NOT NULL,
+
+                                          PRIMARY KEY (thread_num)
+                                        );
+
+                                        CREATE INDEX {board}_threads_time_op_index on {board}_threads (time_op);
+                                        CREATE INDEX {board}_threads_time_bump_index on {board}_threads (time_bump);
+                                        CREATE INDEX {board}_threads_time_ghost_bump_index on {board}_threads (time_ghost_bump);
+                                        CREATE INDEX {board}_threads_time_last_modified_index on {board}_threads (time_last_modified);
+                                        CREATE INDEX {board}_threads_sticky_index on {board}_threads (sticky);
+                                        CREATE INDEX {board}_threads_locked_index on {board}_threads (locked);
+
+                                        CREATE TABLE IF NOT EXISTS {board}_users (
+                                          user_id SERIAL NOT NULL,
+                                          name character varying(100) NOT NULL DEFAULT '',
+                                          trip character varying(25) NOT NULL DEFAULT '',
+                                          firstseen integer NOT NULL,
+                                          postcount integer NOT NULL,
+
+                                          PRIMARY KEY (user_id),
+                                          UNIQUE (name, trip)
+                                        );
+
+                                        CREATE INDEX {board}_users_firstseen_index on {board}_users (firstseen);
+                                        CREATE INDEX {board}_users_postcount_index on {board}_users (postcount);
+
+                                        CREATE TABLE IF NOT EXISTS {board}_images (
+                                          media_id SERIAL NOT NULL,
+                                          media_hash character varying(25) NOT NULL,
+                                          media character varying(20),
+                                          preview_op character varying(20),
+                                          preview_reply character varying(20),
+                                          total integer NOT NULL DEFAULT '0',
+                                          banned smallint NOT NULL DEFAULT '0',
+
+                                          PRIMARY KEY (media_id),
+                                          UNIQUE (media_hash)
+                                        );
+
+                                        CREATE INDEX {board}_images_total_index on {board}_images (total);
+                                        CREATE INDEX {board}_images_banned_index ON {board}_images (banned);
+
+                                        CREATE TABLE IF NOT EXISTS {board}_daily (
+                                          day integer NOT NULL,
+                                          posts integer NOT NULL,
+                                          images integer NOT NULL,
+                                          sage integer NOT NULL,
+                                          anons integer NOT NULL,
+                                          trips integer NOT NULL,
+                                          names integer NOT NULL,
+
+                                          PRIMARY KEY (day)
+                                        );
+
+                                        CREATE TABLE IF NOT EXISTS {board}_deleted (
+                                          LIKE {board} INCLUDING ALL
+                                        );
+
+                                        "#, board=board)).expect("Err initializing trigger functions");
+        self.conn.batch_execute(&format!(r#"
+                CREATE OR REPLACE FUNCTION "{board_name}_update_thread"(n_row "{board_name_main}") RETURNS void AS $$
+                BEGIN
+                  UPDATE
+                    a_threads AS op
+                  SET
+                    time_last = (
+                      COALESCE(GREATEST(
+                        op.time_op,
+                        (SELECT MAX(timestamp) FROM "{board_name}" re WHERE
+                          re.thread_num = $1.no AND re.subnum = 0)
+                      ), op.time_op)
+                    ),
+                    time_bump = (
+                      COALESCE(GREATEST(
+                        op.time_op,
+                        (SELECT MAX(timestamp) FROM "{board_name}" re WHERE
+                          re.thread_num = $1.no AND (re.email <> 'sage' OR re.email IS NULL)
+                          AND re.subnum = 0)
+                      ), op.time_op)
+                    ),
+                    time_ghost = (
+                      SELECT MAX(timestamp) FROM "{board_name}" re WHERE
+                        re.thread_num = $1.no AND re.subnum <> 0
+                    ),
+                    time_ghost_bump = (
+                      SELECT MAX(timestamp) FROM "{board_name}" re WHERE
+                        re.thread_num = $1.no AND re.subnum <> 0 AND (re.email <> 'sage' OR
+                          re.email IS NULL)
+                    ),
+                    time_last_modified = (
+                      COALESCE(GREATEST(
+                        op.time_op,
+                        (SELECT GREATEST(MAX(timestamp), MAX(timestamp_expired)) FROM "{board_name}" re WHERE
+                          re.thread_num = $1.no)
+                      ), op.time_op)
+                    ),
+                    nreplies = (
+                      SELECT COUNT(*) FROM "{board_name}" re WHERE
+                        re.thread_num = $1.no
+                    ),
+                    nimages = (
+                      SELECT COUNT(media_hash) FROM "{board_name}" re WHERE
+                        re.thread_num = $1.no
+                    )
+                    WHERE op.thread_num = $1.no;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION "{board_name}_create_thread"(n_row "{board_name_main}") RETURNS void AS $$
+                BEGIN
+                  IF not n_row.resto = 0 THEN RETURN; END IF;
+                  INSERT INTO "{board_name}_threads" SELECT $1.no, $1.time,$1.time,
+                      $1.time, NULL, NULL, $1.time, 0, 0, false, false WHERE NOT EXISTS (SELECT 1 FROM "{board_name}_threads" WHERE thread_num=$1.no);
+                  RETURN;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION "{board_name}_delete_thread"(n_parent integer) RETURNS void AS $$
+                BEGIN
+                  DELETE FROM "{board_name}_threads" WHERE thread_num = n_parent;
+                  RETURN;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION a_insert_image(n_row "{board_name_main}") RETURNS integer AS $$
+                DECLARE
+                    img_id INTEGER;
+                    n_row_preview_orig text;
+                    n_row_media_hash text;
+                    n_row_media_orig text;
+                BEGIN
+                    n_row_preview_orig := (CASE WHEN n_row.tim is not null THEN (n_row.tim::text || '.jpg') ELSE null END);
+                    n_row_media_hash := n_row.md5;
+                    n_row_media_orig := (CASE WHEN n_row.tim is not null and n_row.ext is not null THEN (n_row.tim::text || n_row.ext) ELSE null END);
+                  INSERT INTO "{board_name}_images"
+                    (media_hash, media, preview_op, preview_reply, total)
+                    SELECT n_row_media_hash, n_row_media_orig, NULL, NULL, 0
+                    WHERE NOT EXISTS (SELECT 1 FROM a_images WHERE media_hash = n_row_media_hash);
+
+                  IF n_row.resto = 0 THEN
+                    UPDATE "{board_name}_images" SET total = (total + 1), preview_op = COALESCE(preview_op, n_row_preview_orig) WHERE media_hash = n_row_media_hash RETURNING media_id INTO img_id;
+                  ELSE
+                    UPDATE "{board_name}_images" SET total = (total + 1), preview_reply = COALESCE(preview_reply, n_row_preview_orig) WHERE media_hash = n_row_media_hash RETURNING media_id INTO img_id;
+                  END IF;
+                  RETURN img_id;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION "{board_name}_delete_image"(n_media_id integer) RETURNS void AS $$
+                BEGIN
+                  UPDATE "{board_name}_images" SET total = (total - 1) WHERE id = n_media_id;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION "{board_name}_insert_post"(n_row "{board_name_main}") RETURNS void AS $$
+                DECLARE
+                  d_day integer;
+                  d_image integer;
+                  d_sage integer;
+                  d_anon integer;
+                  d_trip integer;
+                  d_name integer;
+                BEGIN
+                  d_day := FLOOR($1.time/86400)*86400;
+                  d_image := CASE WHEN $1.md5 IS NOT NULL THEN 1 ELSE 0 END;
+                  d_sage := CASE WHEN $1.name = 'sage' THEN 1 ELSE 0 END;
+                  d_anon := CASE WHEN $1.name = 'Anonymous' AND $1.trip IS NULL THEN 1 ELSE 0 END;
+                  d_trip := CASE WHEN $1.trip IS NOT NULL THEN 1 ELSE 0 END;
+                  d_name := CASE WHEN COALESCE($1.name <> 'Anonymous' AND $1.trip IS NULL, TRUE) THEN 1 ELSE 0 END;
+
+                  INSERT INTO a_daily
+                    SELECT d_day, 0, 0, 0, 0, 0, 0
+                    WHERE NOT EXISTS (SELECT 1 FROM a_daily WHERE day = d_day);
+
+                  UPDATE a_daily SET posts=posts+1, images=images+d_image,
+                    sage=sage+d_sage, anons=anons+d_anon, trips=trips+d_trip,
+                    names=names+d_name WHERE day = d_day;
+
+                  IF (SELECT trip FROM "{board_name}_users" WHERE trip = $1.trip) IS NOT NULL THEN
+                    UPDATE a_users SET postcount=postcount+1,
+                      firstseen = LEAST($1.time, firstseen),
+                      name = COALESCE($1.name, '')
+                      WHERE trip = $1.trip;
+                  ELSE
+                    INSERT INTO "{board_name}_users" (name, trip, firstseen, postcount)
+                      SELECT COALESCE($1.name,''), COALESCE($1.trip,''), $1.time, 0
+                      WHERE NOT EXISTS (SELECT 1 FROM a_users WHERE name = COALESCE($1.name,'') AND trip = COALESCE($1.trip,''));
+
+                    UPDATE "{board_name}_users" SET postcount=postcount+1,
+                      firstseen = LEAST($1.time, firstseen)
+                      WHERE name = COALESCE($1.name,'') AND trip = COALESCE($1.trip,'');
+                  END IF;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION a_delete_post(n_row "{board_name_main}") RETURNS void AS $$
+                DECLARE
+                  d_day integer;
+                  d_image integer;
+                  d_sage integer;
+                  d_anon integer;
+                  d_trip integer;
+                  d_name integer;
+                BEGIN
+                  d_day := FLOOR($1.timestamp/86400)*86400;
+                  d_image := CASE WHEN $1.media_hash IS NOT NULL THEN 1 ELSE 0 END;
+                  d_sage := CASE WHEN $1.email = 'sage' THEN 1 ELSE 0 END;
+                  d_anon := CASE WHEN $1.name = 'Anonymous' AND $1.trip IS NULL THEN 1 ELSE 0 END;
+                  d_trip := CASE WHEN $1.trip IS NOT NULL THEN 1 ELSE 0 END;
+                  d_name := CASE WHEN COALESCE($1.name <> 'Anonymous' AND $1.trip IS NULL, TRUE) THEN 1 ELSE 0 END;
+
+                  UPDATE "{board_name}_daily" SET posts=posts-1, images=images-d_image,
+                    sage=sage-d_sage, anons=anons-d_anon, trips=trips-d_trip,
+                    names=names-d_name WHERE day = d_day;
+
+                  IF (SELECT trip FROM a_users WHERE trip = $1.trip) IS NOT NULL THEN
+                    UPDATE "{board_name}_users" SET postcount=postcount-1,
+                      firstseen = LEAST($1.timestamp, firstseen)
+                      WHERE trip = $1.trip;
+                  ELSE
+                    UPDATE "{board_name}_users" SET postcount=postcount-1,
+                      firstseen = LEAST($1.timestamp, firstseen)
+                      WHERE (name = $1.name OR $1.name IS NULL) AND (trip = $1.trip OR $1.trip IS NULL);
+                  END IF;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION "{board_name}_before_insert"() RETURNS trigger AS $$
+                BEGIN
+                  IF NEW.md5 IS NOT NULL THEN
+                    SELECT "{board_name}_insert_image"(NEW) INTO NEW.no;
+                  END IF;
+                  RETURN NEW;
+                END
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION "{board_name}_after_insert"() RETURNS trigger AS $$
+                BEGIN
+                  IF NEW.resto = 0 THEN
+                    PERFORM "{board_name}_create_thread"(NEW);
+                  END IF;
+                  PERFORM "{board_name}_update_thread"(NEW);
+                  PERFORM "{board_name}_insert_post"(NEW);
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION a_after_del() RETURNS trigger AS $$
+                BEGIN
+                  PERFORM "{board_name}_update_thread"(OLD);
+                  IF OLD.resto = 0 THEN
+                    PERFORM "{board_name}_delete_thread"(OLD.no);
+                  END IF;
+                  PERFORM "{board_name}_delete_post"(OLD);
+                  IF OLD.md5 IS NOT NULL THEN
+                    PERFORM "{board_name}_delete_image"(OLD.no);
+                  END IF;
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS "{board_name}_after_delete" ON "{board_name_main}";
+                CREATE TRIGGER "{board_name}_after_delete" after DELETE ON "{board_name_main}"
+                  FOR EACH ROW EXECUTE PROCEDURE "a_after_del"();
+
+                DROP TRIGGER IF EXISTS "{board_name}_before_insert" ON "{board_name_main}";
+                CREATE TRIGGER "{board_name}_before_insert" before INSERT ON "{board_name_main}"
+                  FOR EACH ROW EXECUTE PROCEDURE "{board_name}_before_insert"();
+
+                DROP TRIGGER IF EXISTS "{board_name}_after_insert" ON "{board_name_main}";
+                CREATE TRIGGER "{board_name}_after_insert" after INSERT ON "{board_name_main}"
+                  FOR EACH ROW EXECUTE PROCEDURE "{board_name}_after_insert"();
+
+            "#, board_name=board, board_name_main=board_main)).expect("Err initializing trigger functions");
+
     }
 
     fn listen_to_exit(&self) {
@@ -253,9 +542,10 @@ impl YotsubaArchiver {
 
     async fn assign_to_board(&self, bs: BoardSettings2) -> Option<()> {
         self.init_board(&bs.board);
-        self.create_board_view(&bs.board);
-
-        let current_board = &bs.board.replace("_","");
+        let current_board = &bs.board.replace("_ena", "");
+        if bs.board.contains("_ena") {
+            self.create_board_view(current_board);
+        }
         let current_board_raw = &bs.board;
         let one_millis = Duration::from_millis(1);
         let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
@@ -267,6 +557,9 @@ impl YotsubaArchiver {
         let mut init_archive = true;
         let mut has_archives = true;
         // let mut count:u32 = 0;
+        let ps = self.settings.get("settings").expect("Err get settings").get("path").expect("err getting path").as_str().expect("err converting path to str");
+        let p = ps.trim_end_matches('/').trim_end_matches('\\');
+
         loop {
             // Listen to CTRL-C
             if let Some(finished) = self.finished.try_lock() {
@@ -483,7 +776,7 @@ impl YotsubaArchiver {
                         } else {
                             eprintln!("Lock occurred trying to get finished");
                         }
-                        self.assign_to_thread(&bs, thread).await;
+                        self.assign_to_thread(&bs, thread, p).await;
                     }
 
                     // Update the cache at the end so that if the program was stopped while processing threads, when it restarts it'll use the same
@@ -511,8 +804,9 @@ impl YotsubaArchiver {
         Some(())
     }
 
-    async fn assign_to_thread(&self, bs: &BoardSettings2, thread: u32) {
+    async fn assign_to_thread(&self, bs: &BoardSettings2, thread: u32, path: &str) {
         let board = &bs.board;
+        let board_clean = &bs.board.replace("_ena", "");
         let mut _retry = 0;
         let mut _status_resp = reqwest::StatusCode::OK;
     
@@ -524,7 +818,7 @@ impl YotsubaArchiver {
             // Listen to CTRL-C
 
             let (_last_modified_, status, body) =
-                self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain=bs.api_url, bo=board, th=thread ), "").await;
+                self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain=bs.api_url, bo=board_clean, th=thread ), "").await;
             _status_resp = status;
 
             if let Ok(jb) = body {
@@ -532,7 +826,7 @@ impl YotsubaArchiver {
                     Ok(ret) => {
                         self.upsert_thread2(board, &ret);
                         self.upsert_deleteds(board, thread, &ret);
-                        println!("/{}/{}", board, thread);
+                        println!("/{}/{}", board_clean, thread);
                         _canb=true;
                         _retry=0;
                         break;
@@ -542,7 +836,7 @@ impl YotsubaArchiver {
                             self.upsert_deleted(board, thread);
                             break;
                         }
-                        eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}", board, thread, status, e,jb);
+                        eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}", board_clean, thread, status, e,jb);
                         let delay:u128 = bs.throttle_millisec.into();
                         while now.elapsed().as_millis() <= delay {
                             task::sleep(one_millis).await;
@@ -561,10 +855,9 @@ impl YotsubaArchiver {
         }
 
         // DL MEDIA
+        // There's an SQL query here which should probably be moved out
         if bs.download_media || bs.download_thumbnails {
-            let ps = self.settings.get("settings").expect("Err get settings").get("path").expect("err getting path").as_str().expect("err converting path to str");
-            let p = ps.trim_end_matches('/').trim_end_matches('\\');
-            let media_list = self.conn.query(&format!("select * FROM {board_name} where (no={op} or resto={op}) and (md5 is not null) and (sha256 is null or sha256t is null) order by no", board_name=board, op=thread), &[]).expect("Err getting missing media");
+            let media_list = self.conn.query(&format!(r#"select * FROM "{board_name}" where (no={op} or resto={op}) and (md5 is not null) and (sha256 is null or sha256t is null) order by no"#, board_name=board, op=thread), &[]).expect("Err getting missing media");
             let mut fut = FuturesUnordered::new();
             let client = &self.client;
             let mut has_media = false;
@@ -579,23 +872,23 @@ impl YotsubaArchiver {
                 if let Some(h) = sha256 {
                     // Improper sha, re-dl
                     if h.len() < 65 && bs.download_media {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, p));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, path));
                     }
                 } else {
                     // No media, proceed to dl
                     if bs.download_media {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, p));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, path));
                     }
                 }
                 if let Some(h) = sha256t {
                     // Improper sha, re-dl
                     if h.len() < 65 && bs.download_thumbnails {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, p));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, path));
                     }
                 } else {
                     // No thumbs, proceed to dl
                     if bs.download_thumbnails {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, p));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, path));
                     }
                 }
             }
@@ -705,6 +998,7 @@ impl YotsubaArchiver {
 
     }
 
+    // GET request will loop if nonexistant url
     async fn cget(&self, url: &str, last_modified: &str) -> (Option<String>, reqwest::StatusCode, Result<String, reqwest::Error>) {
         let mut res = 
             match if last_modified == "" { self.client.get(url).send() } else {self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() }{
@@ -740,41 +1034,43 @@ impl YotsubaArchiver {
     }
 
     fn upsert_hash2(&self, board: &str, no:u64, hash_type: &str, hashsum: &str) {
-        let sql = format!("
-                    INSERT INTO {board_name}
+        let sql = format!(r#"
+                    INSERT INTO "{board_name}"
                     SELECT *
-                    FROM {board_name}
+                    FROM "{board_name}"
                     where no = {no_id}
                     ON CONFLICT (no) DO UPDATE
-                        SET {htype} = $1", board_name=board, no_id=no, htype=hash_type);
+                        SET {htype} = $1"#, board_name=board, no_id=no, htype=hash_type);
         self.conn.execute(&sql, &[&hashsum]).expect("Err executing sql: upsert_hash2");
     }
 
     // Single upsert
     fn upsert_deleted(&self, board: &str, no:u32) {
-        let sql = format!("
-                    INSERT INTO {board_name}
+        let sql = format!(r#"
+                    INSERT INTO "{board_name}"
                     SELECT *
-                    FROM {board_name}
+                    FROM "{board_name}"
                     where no = {no_id}
                     ON CONFLICT (no) DO UPDATE
-                        SET deleted = 1", board_name=board, no_id=no);
+                        SET deleted = 1"#, board_name=board, no_id=no);
         self.conn.execute(&sql, &[]).expect("Err executing sql: upsert_deleted");
     }
     
     fn upsert_deleteds(&self, board: &str, thread:u32, json_item: &serde_json::Value) {
-        let sql = format!("
-                        insert into {board_name}
+        // The specific insert into and null::board_base is all to avoid inserting into
+        // a generated column: com_search
+        let sql = format!(r#"
+                        insert into "{board_name}"
                             SELECT x.* from
-                            (select * FROM {board_name} where no={op} or resto={op} order by no) x
+                            (select * FROM "{board_name}" where no={op} or resto={op} order by no) x
                             FULL JOIN
-                            (select * FROM jsonb_populate_recordset(null::{board_name}, $1::jsonb->'posts')) z
+                            (select * FROM jsonb_populate_recordset(null::"{board_name}", $1::jsonb->'posts')) z
                             ON  x.no  = z.no
                             where z.no is null
                         ON CONFLICT (no) 
                         DO
                             UPDATE 
-                            SET deleted = 1;", board_name=board, op=thread);
+                            SET deleted = 1;"#, board_name=board, op=thread);
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_deleteds");
     }
     
@@ -784,9 +1080,10 @@ impl YotsubaArchiver {
         // (It doesn't modify/update sha256, sha25t, or deleted. Those are manually done)
         // https://stackoverflow.com/a/36406023
         // https://dba.stackexchange.com/a/39821
-        let sql = format!("
-                        insert into {board_name}
-                            select * from jsonb_populate_recordset(null::{board_name}, $1::jsonb->'posts')
+        // println!("{}", serde_json::to_string_pretty(json_item).unwrap());
+        let sql = format!(r#"
+                        insert into "{board_name}"
+                            select * from jsonb_populate_recordset(null::"{board_name}", $1::jsonb->'posts')
                             where no is not null
                         ON CONFLICT (no) 
                         DO
@@ -825,50 +1122,50 @@ impl YotsubaArchiver {
                                 semantic_url = excluded.semantic_url,
                                 replies = excluded.replies,
                                 images = excluded.images,
-                                unique_ips = CASE WHEN excluded.unique_ips is not null THEN excluded.unique_ips ELSE {board_name}.unique_ips END,
+                                unique_ips = CASE WHEN excluded.unique_ips is not null THEN excluded.unique_ips ELSE "{board_name}".unique_ips END,
                                 tag = excluded.tag,
                                 since4pass = excluded.since4pass
                             where excluded.no is not null
                               and exists 
                                 (
-                                select {board_name}.no,
-                                        {board_name}.sticky,
-                                        {board_name}.closed,
-                                        {board_name}.now,
-                                        {board_name}.name,
-                                        {board_name}.sub,
-                                        {board_name}.com,
-                                        {board_name}.filedeleted,
-                                        {board_name}.spoiler,
-                                        {board_name}.custom_spoiler,
-                                        {board_name}.filename,
-                                        {board_name}.ext,
-                                        {board_name}.w,
-                                        {board_name}.h,
-                                        {board_name}.tn_w,
-                                        {board_name}.tn_h,
-                                        {board_name}.tim,
-                                        {board_name}.time,
-                                        {board_name}.md5,
-                                        {board_name}.fsize,
-                                        {board_name}.m_img,
-                                        {board_name}.resto,
-                                        {board_name}.trip,
-                                        {board_name}.id,
-                                        {board_name}.capcode,
-                                        {board_name}.country,
-                                        {board_name}.country_name,
-                                        {board_name}.archived,
-                                        {board_name}.bumplimit,
-                                        {board_name}.archived_on,
-                                        {board_name}.imagelimit,
-                                        {board_name}.semantic_url,
-                                        {board_name}.replies,
-                                        {board_name}.images,
-                                        {board_name}.unique_ips,
-                                        {board_name}.tag,
-                                        {board_name}.since4pass
-                                    where {board_name}.no is not null
+                                select "{board_name}".no,
+                                        "{board_name}".sticky,
+                                        "{board_name}".closed,
+                                        "{board_name}".now,
+                                        "{board_name}".name,
+                                        "{board_name}".sub,
+                                        "{board_name}".com,
+                                        "{board_name}".filedeleted,
+                                        "{board_name}".spoiler,
+                                        "{board_name}".custom_spoiler,
+                                        "{board_name}".filename,
+                                        "{board_name}".ext,
+                                        "{board_name}".w,
+                                        "{board_name}".h,
+                                        "{board_name}".tn_w,
+                                        "{board_name}".tn_h,
+                                        "{board_name}".tim,
+                                        "{board_name}".time,
+                                        "{board_name}".md5,
+                                        "{board_name}".fsize,
+                                        "{board_name}".m_img,
+                                        "{board_name}".resto,
+                                        "{board_name}".trip,
+                                        "{board_name}".id,
+                                        "{board_name}".capcode,
+                                        "{board_name}".country,
+                                        "{board_name}".country_name,
+                                        "{board_name}".archived,
+                                        "{board_name}".bumplimit,
+                                        "{board_name}".archived_on,
+                                        "{board_name}".imagelimit,
+                                        "{board_name}".semantic_url,
+                                        "{board_name}".replies,
+                                        "{board_name}".images,
+                                        "{board_name}".unique_ips,
+                                        "{board_name}".tag,
+                                        "{board_name}".since4pass
+                                    where "{board_name}".no is not null
                                 except
                                 select excluded.no,
                                         excluded.sticky,
@@ -907,8 +1204,8 @@ impl YotsubaArchiver {
                                         excluded.unique_ips,
                                         excluded.tag,
                                         excluded.since4pass
-                                where excluded.no is not null and excluded.no = {board_name}.no
-                                )", board_name=board);
+                                where excluded.no is not null and excluded.no = "{board_name}".no
+                                )"#, board_name=board);
         self.conn.execute(&sql, &[&json_item]).expect("Err executing sql: upsert_thread2");
     }
     
@@ -965,11 +1262,12 @@ impl YotsubaArchiver {
                         ON prev->'no' = (newv -> 'no') 
                         )q
                         left join
-                        (select no as nno from {board_name} where resto=0 and (archived=1 or deleted=1))w
+                        (select no as nno from "{board_name}" where resto=0 and (archived=1 or deleted=1))w
                         ON c = nno
                         where nno is null
                         "#, board_name=board)
                 } else {
+                    // archives
                     format!(r#"
                     select jsonb_agg(c) from (
                     SELECT coalesce (newv, prev)::bigint as c from
@@ -979,7 +1277,7 @@ impl YotsubaArchiver {
                     ON prev = newv
                     )q
                     left join
-                    (select no as nno from {board_name} where resto=0 and (archived=1 or deleted=1))w
+                    (select no as nno from "{board_name}" where resto=0 and (archived=1 or deleted=1))w
                     ON c = nno
                     where nno is null
                     "#, board_name=board)
