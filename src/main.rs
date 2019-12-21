@@ -42,7 +42,6 @@ fn main() {
        \ \____/\ \_\ \_\ \__/.\_\
         \/___/  \/_/\/_/\/__/\/_/   An ultra lightweight 4chan archiver (¬ ‿ ¬ )
     "#);
-    std::thread::sleep(Duration::from_millis(1500));
     let start_time = Instant::now();
     let start_time_str = Local::now().to_rfc2822();
     start_background_thread();
@@ -54,6 +53,7 @@ fn start_background_thread() {
             let archiver = YotsubaArchiver::new();
             archiver.listen_to_exit();
             archiver.init_metadata();
+            std::thread::sleep(Duration::from_millis(1500));
 
             let a = &archiver;
             let mut fut = FuturesUnordered::new();
@@ -222,7 +222,7 @@ impl YotsubaArchiver {
                                     country as poster_country,
                                     country_name as poster_country_name,
                                     null as exif --not used
-                                    from "{board_name}_ena""#, board_name=board);
+                                    from "{board_name_main}""#, board_name=board, board_name_main=board_main);
         self.conn.execute(&sql, &[]).expect("err create view");
         self.conn.execute("CREATE TABLE IF NOT EXISTS index_counters (
                           id character varying(50) NOT NULL,
@@ -230,7 +230,7 @@ impl YotsubaArchiver {
                           PRIMARY KEY (id)
                         )", &[]).expect("err create index_counters");
         self.conn.batch_execute(&format!(r#"
-                                        CREATE TABLE IF NOT EXISTS {board}_threads (
+                                        CREATE TABLE IF NOT EXISTS "{board}_threads" (
                                           thread_num integer NOT NULL,
                                           time_op integer NOT NULL,
                                           time_last integer NOT NULL,
@@ -246,12 +246,12 @@ impl YotsubaArchiver {
                                           PRIMARY KEY (thread_num)
                                         );
 
-                                        CREATE INDEX {board}_threads_time_op_index on {board}_threads (time_op);
-                                        CREATE INDEX {board}_threads_time_bump_index on {board}_threads (time_bump);
-                                        CREATE INDEX {board}_threads_time_ghost_bump_index on {board}_threads (time_ghost_bump);
-                                        CREATE INDEX {board}_threads_time_last_modified_index on {board}_threads (time_last_modified);
-                                        CREATE INDEX {board}_threads_sticky_index on {board}_threads (sticky);
-                                        CREATE INDEX {board}_threads_locked_index on {board}_threads (locked);
+                                        CREATE INDEX IF NOT EXISTS "{board}_threads_time_op_index" on "{board}_threads" (time_op);
+                                        CREATE INDEX IF NOT EXISTS "{board}_threads_time_bump_index" on "{board}_threads" (time_bump);
+                                        CREATE INDEX IF NOT EXISTS "{board}_threads_time_ghost_bump_index" on "{board}_threads" (time_ghost_bump);
+                                        CREATE INDEX IF NOT EXISTS "{board}_threads_time_last_modified_index" on "{board}_threads" (time_last_modified);
+                                        CREATE INDEX IF NOT EXISTS "{board}_threads_sticky_index" on "{board}_threads" (sticky);
+                                        CREATE INDEX IF NOT EXISTS "{board}_threads_locked_index" on "{board}_threads" (locked);
 
                                         CREATE TABLE IF NOT EXISTS {board}_users (
                                           user_id SERIAL NOT NULL,
@@ -264,10 +264,10 @@ impl YotsubaArchiver {
                                           UNIQUE (name, trip)
                                         );
 
-                                        CREATE INDEX {board}_users_firstseen_index on {board}_users (firstseen);
-                                        CREATE INDEX {board}_users_postcount_index on {board}_users (postcount);
+                                        CREATE INDEX IF NOT EXISTS "{board}_users_firstseen_index" on "{board}_users" (firstseen);
+                                        CREATE INDEX IF NOT EXISTS "{board}_users_postcount_index "on "{board}_users" (postcount);
 
-                                        CREATE TABLE IF NOT EXISTS {board}_images (
+                                        CREATE TABLE IF NOT EXISTS "{board}_images" (
                                           media_id SERIAL NOT NULL,
                                           media_hash character varying(25) NOT NULL,
                                           media character varying(20),
@@ -280,10 +280,10 @@ impl YotsubaArchiver {
                                           UNIQUE (media_hash)
                                         );
 
-                                        CREATE INDEX {board}_images_total_index on {board}_images (total);
-                                        CREATE INDEX {board}_images_banned_index ON {board}_images (banned);
+                                        CREATE INDEX IF NOT EXISTS "{board}_images_total_index" on "{board}_images" (total);
+                                        CREATE INDEX IF NOT EXISTS "{board}_images_banned_index" ON "{board}_images" (banned);
 
-                                        CREATE TABLE IF NOT EXISTS {board}_daily (
+                                        CREATE TABLE IF NOT EXISTS "{board}_daily" (
                                           day integer NOT NULL,
                                           posts integer NOT NULL,
                                           images integer NOT NULL,
@@ -295,8 +295,8 @@ impl YotsubaArchiver {
                                           PRIMARY KEY (day)
                                         );
 
-                                        CREATE TABLE IF NOT EXISTS {board}_deleted (
-                                          LIKE {board} INCLUDING ALL
+                                        CREATE TABLE IF NOT EXISTS "{board}_deleted" (
+                                          LIKE "{board}" INCLUDING ALL
                                         );
 
                                         "#, board=board)).expect("Err initializing trigger functions");
@@ -304,7 +304,7 @@ impl YotsubaArchiver {
                 CREATE OR REPLACE FUNCTION "{board_name}_update_thread"(n_row "{board_name_main}") RETURNS void AS $$
                 BEGIN
                   UPDATE
-                    a_threads AS op
+                    "{board_name}_threads" AS op
                   SET
                     time_last = (
                       COALESCE(GREATEST(
@@ -365,7 +365,7 @@ impl YotsubaArchiver {
                 END;
                 $$ LANGUAGE plpgsql;
 
-                CREATE OR REPLACE FUNCTION a_insert_image(n_row "{board_name_main}") RETURNS integer AS $$
+                CREATE OR REPLACE FUNCTION "{board_name}_insert_image"(n_row "{board_name_main}") RETURNS integer AS $$
                 DECLARE
                     img_id INTEGER;
                     n_row_preview_orig text;
@@ -378,7 +378,7 @@ impl YotsubaArchiver {
                   INSERT INTO "{board_name}_images"
                     (media_hash, media, preview_op, preview_reply, total)
                     SELECT n_row_media_hash, n_row_media_orig, NULL, NULL, 0
-                    WHERE NOT EXISTS (SELECT 1 FROM a_images WHERE media_hash = n_row_media_hash);
+                    WHERE NOT EXISTS (SELECT 1 FROM "{board_name}_images" WHERE media_hash = n_row_media_hash);
 
                   IF n_row.resto = 0 THEN
                     UPDATE "{board_name}_images" SET total = (total + 1), preview_op = COALESCE(preview_op, n_row_preview_orig) WHERE media_hash = n_row_media_hash RETURNING media_id INTO img_id;
@@ -411,23 +411,23 @@ impl YotsubaArchiver {
                   d_trip := CASE WHEN $1.trip IS NOT NULL THEN 1 ELSE 0 END;
                   d_name := CASE WHEN COALESCE($1.name <> 'Anonymous' AND $1.trip IS NULL, TRUE) THEN 1 ELSE 0 END;
 
-                  INSERT INTO a_daily
+                  INSERT INTO "{board_name}_daily"
                     SELECT d_day, 0, 0, 0, 0, 0, 0
-                    WHERE NOT EXISTS (SELECT 1 FROM a_daily WHERE day = d_day);
+                    WHERE NOT EXISTS (SELECT 1 FROM "{board_name}_daily" WHERE day = d_day);
 
-                  UPDATE a_daily SET posts=posts+1, images=images+d_image,
+                  UPDATE "{board_name}_daily" SET posts=posts+1, images=images+d_image,
                     sage=sage+d_sage, anons=anons+d_anon, trips=trips+d_trip,
                     names=names+d_name WHERE day = d_day;
 
                   IF (SELECT trip FROM "{board_name}_users" WHERE trip = $1.trip) IS NOT NULL THEN
-                    UPDATE a_users SET postcount=postcount+1,
+                    UPDATE "{board_name}_users" SET postcount=postcount+1,
                       firstseen = LEAST($1.time, firstseen),
                       name = COALESCE($1.name, '')
                       WHERE trip = $1.trip;
                   ELSE
                     INSERT INTO "{board_name}_users" (name, trip, firstseen, postcount)
                       SELECT COALESCE($1.name,''), COALESCE($1.trip,''), $1.time, 0
-                      WHERE NOT EXISTS (SELECT 1 FROM a_users WHERE name = COALESCE($1.name,'') AND trip = COALESCE($1.trip,''));
+                      WHERE NOT EXISTS (SELECT 1 FROM "{board_name}_users" WHERE name = COALESCE($1.name,'') AND trip = COALESCE($1.trip,''));
 
                     UPDATE "{board_name}_users" SET postcount=postcount+1,
                       firstseen = LEAST($1.time, firstseen)
@@ -436,7 +436,7 @@ impl YotsubaArchiver {
                 END;
                 $$ LANGUAGE plpgsql;
 
-                CREATE OR REPLACE FUNCTION a_delete_post(n_row "{board_name_main}") RETURNS void AS $$
+                CREATE OR REPLACE FUNCTION "{board_name}_delete_post"(n_row "{board_name_main}") RETURNS void AS $$
                 DECLARE
                   d_day integer;
                   d_image integer;
@@ -445,9 +445,9 @@ impl YotsubaArchiver {
                   d_trip integer;
                   d_name integer;
                 BEGIN
-                  d_day := FLOOR($1.timestamp/86400)*86400;
-                  d_image := CASE WHEN $1.media_hash IS NOT NULL THEN 1 ELSE 0 END;
-                  d_sage := CASE WHEN $1.email = 'sage' THEN 1 ELSE 0 END;
+                  d_day := FLOOR($1.time/86400)*86400;
+                  d_image := CASE WHEN $1.md5 IS NOT NULL THEN 1 ELSE 0 END;
+                  d_sage := CASE WHEN $1.name = 'sage' THEN 1 ELSE 0 END;
                   d_anon := CASE WHEN $1.name = 'Anonymous' AND $1.trip IS NULL THEN 1 ELSE 0 END;
                   d_trip := CASE WHEN $1.trip IS NOT NULL THEN 1 ELSE 0 END;
                   d_name := CASE WHEN COALESCE($1.name <> 'Anonymous' AND $1.trip IS NULL, TRUE) THEN 1 ELSE 0 END;
@@ -456,13 +456,13 @@ impl YotsubaArchiver {
                     sage=sage-d_sage, anons=anons-d_anon, trips=trips-d_trip,
                     names=names-d_name WHERE day = d_day;
 
-                  IF (SELECT trip FROM a_users WHERE trip = $1.trip) IS NOT NULL THEN
+                  IF (SELECT trip FROM "{board_name}_users" WHERE trip = $1.trip) IS NOT NULL THEN
                     UPDATE "{board_name}_users" SET postcount=postcount-1,
-                      firstseen = LEAST($1.timestamp, firstseen)
+                      firstseen = LEAST($1.time, firstseen)
                       WHERE trip = $1.trip;
                   ELSE
                     UPDATE "{board_name}_users" SET postcount=postcount-1,
-                      firstseen = LEAST($1.timestamp, firstseen)
+                      firstseen = LEAST($1.time, firstseen)
                       WHERE (name = $1.name OR $1.name IS NULL) AND (trip = $1.trip OR $1.trip IS NULL);
                   END IF;
                 END;
@@ -471,7 +471,8 @@ impl YotsubaArchiver {
                 CREATE OR REPLACE FUNCTION "{board_name}_before_insert"() RETURNS trigger AS $$
                 BEGIN
                   IF NEW.md5 IS NOT NULL THEN
-                    SELECT "{board_name}_insert_image"(NEW) INTO NEW.no;
+                    --SELECT "{board_name}_insert_image"(NEW) INTO NEW.no;
+                    PERFORM "{board_name}_insert_image"(NEW);
                   END IF;
                   RETURN NEW;
                 END
@@ -488,7 +489,7 @@ impl YotsubaArchiver {
                 END;
                 $$ LANGUAGE plpgsql;
 
-                CREATE OR REPLACE FUNCTION a_after_del() RETURNS trigger AS $$
+                CREATE OR REPLACE FUNCTION "{board_name}_after_del"() RETURNS trigger AS $$
                 BEGIN
                   PERFORM "{board_name}_update_thread"(OLD);
                   IF OLD.resto = 0 THEN
@@ -504,7 +505,7 @@ impl YotsubaArchiver {
 
                 DROP TRIGGER IF EXISTS "{board_name}_after_delete" ON "{board_name_main}";
                 CREATE TRIGGER "{board_name}_after_delete" after DELETE ON "{board_name_main}"
-                  FOR EACH ROW EXECUTE PROCEDURE "a_after_del"();
+                  FOR EACH ROW EXECUTE PROCEDURE "{board_name}_after_del"();
 
                 DROP TRIGGER IF EXISTS "{board_name}_before_insert" ON "{board_name_main}";
                 CREATE TRIGGER "{board_name}_before_insert" before INSERT ON "{board_name_main}"
@@ -1088,7 +1089,8 @@ impl YotsubaArchiver {
                         ON CONFLICT (no) 
                         DO
                             UPDATE 
-                            SET no = excluded.no,
+                            SET 
+                                no = excluded.no,
                                 sticky = excluded.sticky,
                                 closed = excluded.closed,
                                 now = excluded.now,
@@ -1128,7 +1130,8 @@ impl YotsubaArchiver {
                             where excluded.no is not null
                               and exists 
                                 (
-                                select "{board_name}".no,
+                                select 
+                                        "{board_name}".no,
                                         "{board_name}".sticky,
                                         "{board_name}".closed,
                                         "{board_name}".now,
@@ -1167,7 +1170,8 @@ impl YotsubaArchiver {
                                         "{board_name}".since4pass
                                     where "{board_name}".no is not null
                                 except
-                                select excluded.no,
+                                select 
+                                        excluded.no,
                                         excluded.sticky,
                                         excluded.closed,
                                         excluded.now,
