@@ -20,7 +20,7 @@ Low resource and high performance archiver to dump and archive posts, images and
 
 ## Changes from Asagi
 * Media downloading uses sha256 as its filename and its directory structure is the same as yuki.la's
-* PostgreSQL 12 is the only database engine currently supported
+* PostgreSQL is the only database engine currently supported
 
 
 ## Installation
