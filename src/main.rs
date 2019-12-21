@@ -55,14 +55,6 @@ fn main() {
     println!("\nStarted on:\t{}\nFinished on:\t{}\nElapsed time:\t{}ms", start_time_str, Local::now().to_rfc2822(), start_time.elapsed().as_millis());
 }
 
-trait Hex {
-    fn as_hex(&self) -> String;
-}
-impl Hex for String {
-    fn as_hex(&self) -> String {
-        self.chars().filter(|&c| !(c == ',' || c == ' ' || c == '[' || c == ']')).collect::<String>()
-    }
-}
 fn start_background_thread() {
         task::block_on(async{
             let archiver = YotsubaArchiver::new();
@@ -1409,5 +1401,15 @@ fn read_json(path: &str) -> Option<serde_json::Value>{
         }
     } else {
         None
+    }
+}
+
+trait Hex {
+    fn as_hex(&self) -> String;
+}
+
+impl Hex for String {
+    fn as_hex(&self) -> String {
+        self.chars().filter(|&c| !(c == ',' || c == ' ' || c == '[' || c == ']')).collect::<String>()
     }
 }
