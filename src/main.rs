@@ -31,16 +31,23 @@ use std::path::Path;
 
 extern crate ctrlc;
 
-
 fn main() {
     println!(r#"
-     ____                        
-    /\  _`\                      
-    \ \ \L\_\    ___      __     
-     \ \  _\L  /' _ `\  /'__`\   
-      \ \ \L\ \/\ \/\ \/\ \L\.\_ 
-       \ \____/\ \_\ \_\ \__/.\_\
-        \/___/  \/_/\/_/\/__/\/_/   An ultra lightweight 4chan archiver (¬ ‿ ¬ )
+    ⡿⠋⠄⣀⣀⣤⣴⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣌⠻⣿⣿
+    ⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⠹⣿
+    ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠹     
+    ⣿⣿⡟⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡛⢿⣿⣿⣿⣮⠛⣿⣿⣿⣿⣿⣿⡆       ____           
+    ⡟⢻⡇⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣣⠄⡀⢬⣭⣻⣷⡌⢿⣿⣿⣿⣿⣿      /\  _`\     
+    ⠃⣸⡀⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠈⣆⢹⣿⣿⣿⡈⢿⣿⣿⣿⣿      \ \ \L\_     ___      __     
+    ⠄⢻⡇⠄⢛⣛⣻⣿⣿⣿⣿⣿⣿⣿⣿⡆⠹⣿⣆⠸⣆⠙⠛⠛⠃⠘⣿⣿⣿⣿       \ \  __\  /' _ `\  /'__`\   
+    ⠄⠸⣡⠄⡈⣿⣿⣿⣿⣿⣿⣿⣿⠿⠟⠁⣠⣉⣤⣴⣿⣿⠿⠿⠿⡇⢸⣿⣿⣿        \ \ \___\/\ \/\ \/\ \L\.\_ 
+    ⠄⡄⢿⣆⠰⡘⢿⣿⠿⢛⣉⣥⣴⣶⣿⣿⣿⣿⣻⠟⣉⣤⣶⣶⣾⣿⡄⣿⡿⢸         \ \____/\ \_\ \_\ \__/.\_\
+    ⠄⢰⠸⣿⠄⢳⣠⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣼⣿⣿⣿⣿⣿⣿⡇⢻⡇⢸          \/___/  \/_/\/_/\/__/\/_/   v0.3.0
+    ⢷⡈⢣⣡⣶⠿⠟⠛⠓⣚⣻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⢸⠇⠘     
+    ⡀⣌⠄⠻⣧⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⡿⠟⠛⠛⠛⢿⣿⣿⣿⣿⣿⡟⠘⠄⠄   
+    ⣷⡘⣷⡀⠘⣿⣿⣿⣿⣿⣿⣿⣿⡋⢀⣠⣤⣶⣶⣾⡆⣿⣿⣿⠟⠁⠄⠄⠄⠄     An ultra lightweight 4chan archiver (¬ ‿ ¬ )
+    ⣿⣷⡘⣿⡀⢻⣿⣿⣿⣿⣿⣿⣿⣧⠸⣿⣿⣿⣿⣿⣷⡿⠟⠉⠄⠄⠄⠄⡄⢀
+    ⣿⣿⣷⡈⢷⡀⠙⠛⠻⠿⠿⠿⠿⠿⠷⠾⠿⠟⣛⣋⣥⣶⣄⠄⢀⣄⠹⣦⢹⣿
     "#);
     let start_time = Instant::now();
     let start_time_str = Local::now().to_rfc2822();
@@ -48,6 +55,14 @@ fn main() {
     println!("\nStarted on:\t{}\nFinished on:\t{}\nElapsed time:\t{}ms", start_time_str, Local::now().to_rfc2822(), start_time.elapsed().as_millis());
 }
 
+trait Hex {
+    fn as_hex(&self) -> String;
+}
+impl Hex for String {
+    fn as_hex(&self) -> String {
+        self.chars().filter(|&c| !(c == ',' || c == ' ' || c == '[' || c == ']')).collect::<String>()
+    }
+}
 fn start_background_thread() {
         task::block_on(async{
             let archiver = YotsubaArchiver::new();
@@ -57,7 +72,11 @@ fn start_background_thread() {
 
             let a = &archiver;
             let mut fut = FuturesUnordered::new();
-            let asagiCompat = a.settings.get("settings").expect("Err get settings").get("asagiCompat").expect("Err getting asagiCompat").as_bool().expect("err deserializing asagiCompat to bool");
+            let asagiCompat = if let Some(set) =  a.settings.get("settings").expect("Err get settings").get("asagiCompat") {
+                set.as_bool().expect("err deserializing asagiCompat to bool")
+            } else {
+                false
+            };
 
             // Push each board to queue to be run concurrently
             let mut config = a.settings.to_owned();
@@ -155,7 +174,7 @@ impl YotsubaArchiver {
                         tn_h int,
                         tim bigint,
                         time bigint NOT NULL,
-                        md5 text,
+                        md5 bytea,
                         sha256 bytea,
                         sha256t bytea,
                         fsize bigint,
@@ -205,7 +224,7 @@ impl YotsubaArchiver {
                                     (CASE WHEN w is null THEN 0 ELSE w END) as media_w,
                                     (CASE WHEN h is null THEN 0 ELSE h END) as media_h,
                                     (CASE WHEN fsize is null THEN 0 ELSE fsize END) as media_size,
-                                    md5 as media_hash,
+                                    encode(md5, 'base64') as media_hash,
                                     (CASE WHEN tim is not null and ext is not null THEN (tim::text || ext) ELSE null END) as media_orig,
                                     (CASE WHEN spoiler is null or spoiler=0 THEN false ELSE true END) as spoiler,
                                     (CASE WHEN deleted is null or deleted=0 THEN false ELSE true END) as deleted,
@@ -373,7 +392,7 @@ impl YotsubaArchiver {
                     n_row_media_orig text;
                 BEGIN
                     n_row_preview_orig := (CASE WHEN n_row.tim is not null THEN (n_row.tim::text || 's.jpg') ELSE null END);
-                    n_row_media_hash := n_row.md5;
+                    n_row_media_hash := encode(n_row.md5, 'base64');
                     n_row_media_orig := (CASE WHEN n_row.tim is not null and n_row.ext is not null THEN (n_row.tim::text || n_row.ext) ELSE null END);
                   INSERT INTO "{board_name}_images"
                     (media_hash, media, preview_op, preview_reply, total)
@@ -865,31 +884,31 @@ impl YotsubaArchiver {
             for row in media_list.iter() {
                 has_media = true;
                 let no : i64  = row.get("no");
-                let sha256 : Option<String> = row.get("sha256");
-                let sha256t : Option<String> = row.get("sha256t");
+                let sha256 : Option<Vec<u8>> = row.get("sha256");
+                let sha256t : Option<Vec<u8>> = row.get("sha256t");
                 let ext : String = row.get("ext");
                 let ext2 : String = row.get("ext");
                 let tim : i64 = row.get("tim");
                 if let Some(h) = sha256 {
                     // Improper sha, re-dl
-                    if h.len() < 65 && bs.download_media {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, path));
+                    if h.len() < (65/2) && bs.download_media {
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, board_clean, thread, tim, ext, no as u64, true, false, client, path));
                     }
                 } else {
                     // No media, proceed to dl
                     if bs.download_media {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext, no as u64, true, false, client, path));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, board_clean, thread, tim, ext, no as u64, true, false, client, path));
                     }
                 }
                 if let Some(h) = sha256t {
                     // Improper sha, re-dl
-                    if h.len() < 65 && bs.download_thumbnails {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, path));
+                    if h.len() < (65/2) && bs.download_thumbnails {
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, board_clean, thread, tim, ext2, no as u64, false, true, client, path));
                     }
                 } else {
                     // No thumbs, proceed to dl
                     if bs.download_thumbnails {
-                        fut.push(Self::dl_media_post(&bs.media_url, bs, thread, tim, ext2, no as u64, false, true, client, path));
+                        fut.push(Self::dl_media_post(&bs.media_url, bs, board_clean, thread, tim, ext2, no as u64, false, true, client, path));
                     }
                 }
             }
@@ -907,10 +926,10 @@ impl YotsubaArchiver {
                         }
 
                         if let Some(hsum) = hashsum {
-                            s.upsert_hash2(board, no, "sha256", &hsum);
+                            s.upsert_hash2(board, no, "sha256", hsum);
                         }
                         if let Some(hsumt) = thumb_hash {
-                            s.upsert_hash2(board, no, "sha256t", &hsumt);
+                            s.upsert_hash2(board, no, "sha256t", hsumt);
                         }
                     }
                 }
@@ -924,9 +943,9 @@ impl YotsubaArchiver {
     }
 
     // This downloads any missing media and/or thumbs
-    async fn dl_media_post(domain:&str, bs: &BoardSettings2, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client, path:&str)  -> Option<(u64, Option<String>, Option<String>)> {
-        let board = &bs.board;
-        let dl = |thumb| -> Result<String, reqwest::Error> {
+    async fn dl_media_post(domain:&str, bs: &BoardSettings2, board: &str, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client, path:&str)  -> Option<(u64, Option<Vec<u8>>, Option<Vec<u8>>)> {
+        // let board = &bs.board;
+        let dl = |thumb| -> Result<Vec<u8>, reqwest::Error> {
             let url = format!("{}/{}/{}{}{}", domain, board, tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext} );
             println!("/{}/{}#{} -> {}{}{}",  board, thread, no,tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext});
             // TODO retry here
@@ -934,7 +953,7 @@ impl YotsubaArchiver {
             // Download and save to file
             let mut resp = cl.get(&url).send()?;
             let status = resp.status();
-            let mut hash_str = String::new();
+            let mut hash_byte : Result<Vec<u8>, reqwest::Error> = Ok(vec![]);
             match status {
                 reqwest::StatusCode::OK => {
                     let temp_path = format!("{}/tmp/{}_{}{}",path, no,tim,ext);
@@ -949,17 +968,18 @@ impl YotsubaArchiver {
                     let mut hasher = Sha256::new();
                     std::io::copy(&mut file, &mut hasher).expect("err io copy to hasher");
                     let hash = hasher.result();
+                    hash_byte = Ok(hash.to_vec());
+                    // println!("{}", &format!("{:x?}", a).as_hex());
 
                     // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
                     // /1/0a
                     // Move and rename
-                    hash_str.push_str(&format!("{:x}", hash));
-                    let path_hash = Path::new(&hash_str);
-                    let basename = path_hash.file_stem().expect("err get basename").to_str().expect("err get basename end");
+                    let hash_str = format!("{:x}", hash);
+                    let basename = Path::new(&hash_str).file_stem().expect("err get basename").to_str().expect("err get basename end");
                     let second = &basename[&basename.len()-3..&basename.len()-1];
                     let first = &basename[&basename.len()-1..];
                     let final_dir_path = format!("{}/media/{}/{}",path, first, second);
-                    let final_path = format!("{}/{:x}{}", final_dir_path, hash, ext);
+                    let final_path = format!("{}/{}{}", final_dir_path, hash_str, ext);
 
                     if (bs.keep_media && !thumb) || (bs.keep_thumbnails && thumb) || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb)) {
                         
@@ -978,7 +998,7 @@ impl YotsubaArchiver {
                 reqwest::StatusCode::NOT_FOUND => eprintln!("/{}/{} <{}> {}", board, no, status, url),
                 _ => eprintln!("/{}/{} <{}> {}", board, no, status, url),
             }
-            Ok(hash_str)
+            hash_byte//Ok(hash_byte)
         };
         let mut hashsum = None;
         let mut thumb_hash = None;
@@ -1034,7 +1054,7 @@ impl YotsubaArchiver {
         (last_modified_, status, body)
     }
 
-    fn upsert_hash2(&self, board: &str, no:u64, hash_type: &str, hashsum: &str) {
+    fn upsert_hash2(&self, board: &str, no:u64, hash_type: &str, hashsum: Vec<u8>) {
         let sql = format!(r#"
                     INSERT INTO "{board_name}"
                     SELECT *
@@ -1081,11 +1101,21 @@ impl YotsubaArchiver {
         // (It doesn't modify/update sha256, sha25t, or deleted. Those are manually done)
         // https://stackoverflow.com/a/36406023
         // https://dba.stackexchange.com/a/39821
-        // println!("{}", serde_json::to_string_pretty(json_item).unwrap());
+        // println!("{}", serde_json::to_string(json_item).unwrap());
+        //
+        // md5 -> 4chan for some reason inserts a backslash
+        // https://stackoverflow.com/a/11449627
         let sql = format!(r#"
-                        insert into "{board_name}"
-                            select * from jsonb_populate_recordset(null::"{board_name}", $1::jsonb->'posts')
-                            where no is not null
+                        insert into "{board_name}" (no,sticky,closed,now,name,sub,com,filedeleted,spoiler,
+                                    custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time,md5,
+                                    fsize, m_img, resto,trip,id,capcode,country,country_name,archived,bumplimit,
+                                    archived_on,imagelimit,semantic_url,replies,images,unique_ips,tag,since4pass)
+                            select no,sticky,closed,now,name,sub,com,filedeleted,spoiler,
+                                    custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time, (CASE WHEN length(q.md5)>20 and q.md5 is not null THEN  decode(REPLACE (encode(q.md5, 'escape'::text), E'\\', '')::text, 'base64'::text) ELSE null::bytea END) as md55,
+                                    fsize, m_img, resto,trip,q.id,capcode,country,country_name,archived,bumplimit,
+                                    archived_on,imagelimit,semantic_url,replies,images,unique_ips,tag,since4pass
+                            from jsonb_populate_recordset(null::"{board_name}", $1::jsonb->'posts') q
+                            where q.no is not null
                         ON CONFLICT (no) 
                         DO
                             UPDATE 

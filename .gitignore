@@ -6,6 +6,8 @@ test
 *.sql
 *.txt
 *.jpg
+*.gif
+*.png
 archive
 *.json
 !ena_config.json
