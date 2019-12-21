@@ -198,7 +198,7 @@ impl YotsubaArchiver {
                                     (CASE WHEN resto=0 THEN true ELSE false END) as op,
                                     time as "timestamp",
                                     0 as "timestamp_expired", --not used
-                                    (CASE WHEN tim is not null THEN (tim::text || '.jpg') ELSE null END) as preview_orig,
+                                    (CASE WHEN tim is not null THEN (tim::text || 's.jpg') ELSE null END) as preview_orig,
                                     (CASE WHEN tn_w is null THEN 0 ELSE tn_w END) as preview_w,
                                     (CASE WHEN tn_h is null THEN 0 ELSE tn_h END) as preview_h,
                                     (CASE WHEN filename is not null THEN (filename::text || ext) ELSE null END) as media_filename,
@@ -372,7 +372,7 @@ impl YotsubaArchiver {
                     n_row_media_hash text;
                     n_row_media_orig text;
                 BEGIN
-                    n_row_preview_orig := (CASE WHEN n_row.tim is not null THEN (n_row.tim::text || '.jpg') ELSE null END);
+                    n_row_preview_orig := (CASE WHEN n_row.tim is not null THEN (n_row.tim::text || 's.jpg') ELSE null END);
                     n_row_media_hash := n_row.md5;
                     n_row_media_orig := (CASE WHEN n_row.tim is not null and n_row.ext is not null THEN (n_row.tim::text || n_row.ext) ELSE null END);
                   INSERT INTO "{board_name}_images"
