@@ -871,6 +871,7 @@ impl YotsubaArchiver {
                     },
                     Err(e) => {
                         if status == reqwest::StatusCode::NOT_FOUND {
+                            println!("[{}/{}]\t/{}/{} <DELETED>",position, length, board_clean, thread);
                             self.upsert_deleted(board, thread);
                             break;
                         }
