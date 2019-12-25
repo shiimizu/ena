@@ -5,7 +5,7 @@
 extern crate reqwest;
 extern crate pretty_env_logger;
 extern crate rand;
-// #[macro_use] extern crate log;
+#[macro_use] extern crate log;
 
 #[macro_use] extern crate if_chain;
 
@@ -51,6 +51,7 @@ fn main() {
     "#);
     let start_time = Instant::now();
     let start_time_str = Local::now().to_rfc2822();
+    pretty_env_logger::init();
     start_background_thread();
     println!("\nStarted on:\t{}\nFinished on:\t{}\nElapsed time:\t{}ms", start_time_str, Local::now().to_rfc2822(), start_time.elapsed().as_millis());
 }
@@ -122,13 +123,12 @@ impl YotsubaArchiver {
                                     host=defs.get("host").expect("Err get localhost").as_str().expect("Err convert host to str"),
                                     port=defs.get("port").expect("Err get port"),
                                     database=defs.get("database").expect("Err get database").as_str().expect("Err convert database to str") );
-        let y = YotsubaArchiver {
+        YotsubaArchiver {
                 conn: Connection::connect(conn_url, TlsMode::None).expect("Error connecting"),
                 settings: settingss,
                 client: reqwest::ClientBuilder::new().default_headers(default_headers).build().unwrap(),
                 finished: async_std::sync::Arc::new(async_std::sync::Mutex::new(false)),
-            };
-        y
+            }
     }
 
     fn init_metadata(&self) {
@@ -826,21 +826,23 @@ impl YotsubaArchiver {
         let one_millis = Duration::from_millis(1);
 
         let mut _canb=false;
-        'outer: loop {
+        let delay:u128 = bs.throttle_millisec.into();
+
+        for _ in 0..=bs.retry_attempts {
             // Listen to CTRL-C
 
             let (_last_modified_, status, body) =
                 self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain=bs.api_url, bo=board_clean, th=thread ), "").await;
             _status_resp = status;
 
-            if let Ok(jb) = body {
-                match serde_json::from_str::<serde_json::Value>(&jb) {
+            match body {
+                Ok(jb) => match serde_json::from_str::<serde_json::Value>(&jb) {
                     Ok(ret) => {
                         self.upsert_thread2(board, &ret);
                         self.upsert_deleteds(board, thread, &ret);
                         println!("/{}/{}", board_clean, thread);
-                        _canb=true;
-                        _retry=0;
+                        // _canb=true;
+                        // _retry=0;
                         break;
                     },
                     Err(e) => {
@@ -849,19 +851,21 @@ impl YotsubaArchiver {
                             break;
                         }
                         eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}", board_clean, thread, status, e,jb);
-                        let delay:u128 = bs.throttle_millisec.into();
                         while now.elapsed().as_millis() <= delay {
                             task::sleep(one_millis).await;
                         }
-                        _retry += 1;
+                        /*_retry += 1;
                         if _retry <=(bs.retry_attempts+1) {
                             continue 'outer;
                         } else {
                             // TODO handle what to do with invalid thread
                             _retry = 0;
                             break 'outer;
-                        }
+                        }*/
                     },
+                },
+                Err(e) => {
+                    println!("/{}/{} <{}> Error getting body {:?}", board_clean, thread, status, e );
                 }
             }
         }
@@ -928,7 +932,6 @@ impl YotsubaArchiver {
             }
         }
 
-        let delay:u128 = bs.throttle_millisec.into();
         while now.elapsed().as_millis() <= delay {
             task::sleep(one_millis).await;
         }
@@ -1237,7 +1240,7 @@ impl YotsubaArchiver {
     
     async fn get_threads_list(&self, json_item: &serde_json::Value) -> Option<VecDeque<u32>> {
         let sql = "SELECT jsonb_agg(newv->'no') from
-                    (select jsonb_path_query($1::jsonb, '$[*].threads[*]') as newv)z";
+                    (select jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z";
         let resp = self.conn.query(&sql, &[&json_item]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
         'outer: for _ri in 0..4 {
@@ -1282,9 +1285,9 @@ impl YotsubaArchiver {
                     format!(r#"
                         select jsonb_agg(c) from (
                         SELECT coalesce (prev->'no', newv->'no')::bigint as c from
-                        (select jsonb_path_query(threads, '$[*].threads[*]') as prev from metadata where board = $1)x
+                        (select jsonb_array_elements(jsonb_array_elements(threads)->'threads') as prev from metadata where board = $1)x
                         full JOIN
-                        (select jsonb_path_query($2::jsonb, '$[*].threads[*]') as newv)z
+                        (select jsonb_array_elements(jsonb_array_elements($2::jsonb)->'threads') as newv)z
                         ON prev->'no' = (newv -> 'no') 
                         )q
                         left join
@@ -1339,9 +1342,9 @@ impl YotsubaArchiver {
         let sql = if threads {
                 r#"
                 SELECT jsonb_agg(COALESCE(newv->'no',prev->'no')) from
-                (select jsonb_path_query(threads, '$[*].threads[*]') as prev from metadata where board = $1)x
+                (select jsonb_array_elements(jsonb_array_elements(threads)->'threads') as prev from metadata where board = $1)x
                 full JOIN
-                (select jsonb_path_query($2::jsonb, '$[*].threads[*]') as newv)z
+                (select jsonb_array_elements(jsonb_array_elements($2::jsonb)->'threads') as newv)z
                 ON prev->'no' = (newv -> 'no') 
                 where newv is null or not prev->'last_modified' <@ (newv -> 'last_modified')
                 "#
