@@ -198,9 +198,9 @@ impl YotsubaArchiver {
                         semantic_url text,
                         replies int,
                         images int,
-                        unique_ips bigint,
+                        unique_ips int,
                         tag text,
-                        since4pass text,
+                        since4pass smallint,
                         PRIMARY KEY (no),
                         CONSTRAINT "unique_no_{board_name}" UNIQUE (no)
                     )"#, board_name=board, schema=self.schema);
@@ -259,12 +259,12 @@ impl YotsubaArchiver {
         self.conn.batch_execute(&format!(r#"
                                         CREATE TABLE IF NOT EXISTS "{schema}"."{board}_threads" (
                                           thread_num integer NOT NULL,
-                                          time_op integer NOT NULL,
-                                          time_last integer NOT NULL,
-                                          time_bump integer NOT NULL,
-                                          time_ghost integer DEFAULT NULL,
-                                          time_ghost_bump integer DEFAULT NULL,
-                                          time_last_modified integer NOT NULL,
+                                          time_op bigint NOT NULL,
+                                          time_last bigint NOT NULL,
+                                          time_bump bigint NOT NULL,
+                                          time_ghost bigint DEFAULT NULL,
+                                          time_ghost_bump bigint DEFAULT NULL,
+                                          time_last_modified bigint NOT NULL,
                                           nreplies integer NOT NULL DEFAULT '0',
                                           nimages integer NOT NULL DEFAULT '0',
                                           sticky boolean DEFAULT false NOT NULL,
@@ -284,8 +284,8 @@ impl YotsubaArchiver {
                                           user_id SERIAL NOT NULL,
                                           name character varying(100) NOT NULL DEFAULT '',
                                           trip character varying(25) NOT NULL DEFAULT '',
-                                          firstseen integer NOT NULL,
-                                          postcount integer NOT NULL,
+                                          firstseen bigint NOT NULL,
+                                          postcount bigint NOT NULL,
 
                                           PRIMARY KEY (user_id),
                                           UNIQUE (name, trip)
@@ -311,7 +311,7 @@ impl YotsubaArchiver {
                                         CREATE INDEX IF NOT EXISTS "{board}_images_banned_index" ON "{schema}"."{board}_images" (banned);
 
                                         CREATE TABLE IF NOT EXISTS "{schema}"."{board}_daily" (
-                                          day integer NOT NULL,
+                                          day bigint NOT NULL,
                                           posts integer NOT NULL,
                                           images integer NOT NULL,
                                           sage integer NOT NULL,
