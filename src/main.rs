@@ -432,7 +432,7 @@ impl YotsubaArchiver {
                 BEGIN
                   d_day := FLOOR($1.time/86400)*86400;
                   d_image := CASE WHEN $1.md5 IS NOT NULL THEN 1 ELSE 0 END;
-                  d_sage := CASE WHEN $1.name = 'sage' THEN 1 ELSE 0 END;
+                  d_sage := CASE WHEN $1.name ILIKE '%sage%' THEN 1 ELSE 0 END;
                   d_anon := CASE WHEN $1.name = 'Anonymous' AND $1.trip IS NULL THEN 1 ELSE 0 END;
                   d_trip := CASE WHEN $1.trip IS NOT NULL THEN 1 ELSE 0 END;
                   d_name := CASE WHEN COALESCE($1.name <> 'Anonymous' AND $1.trip IS NULL, TRUE) THEN 1 ELSE 0 END;
@@ -473,7 +473,7 @@ impl YotsubaArchiver {
                 BEGIN
                   d_day := FLOOR($1.time/86400)*86400;
                   d_image := CASE WHEN $1.md5 IS NOT NULL THEN 1 ELSE 0 END;
-                  d_sage := CASE WHEN $1.name = 'sage' THEN 1 ELSE 0 END;
+                  d_sage := CASE WHEN $1.name ILIKE '%sage%' THEN 1 ELSE 0 END;
                   d_anon := CASE WHEN $1.name = 'Anonymous' AND $1.trip IS NULL THEN 1 ELSE 0 END;
                   d_trip := CASE WHEN $1.trip IS NOT NULL THEN 1 ELSE 0 END;
                   d_name := CASE WHEN COALESCE($1.name <> 'Anonymous' AND $1.trip IS NULL, TRUE) THEN 1 ELSE 0 END;
@@ -498,6 +498,7 @@ impl YotsubaArchiver {
                 BEGIN
                   IF NEW.md5 IS NOT NULL THEN
                     --SELECT "{schema}"."{board_name}_insert_image"(NEW) INTO NEW.no;
+                    --INTO asagi.media_id;
                     PERFORM "{board_name}_insert_image"(NEW);
                   END IF;
                   RETURN NEW;
@@ -506,6 +507,11 @@ impl YotsubaArchiver {
 
                 CREATE OR REPLACE FUNCTION "{board_name}_after_insert"() RETURNS trigger AS $$
                 BEGIN
+                  IF NEW.md5 IS NOT NULL THEN
+                    --SELECT "{schema}"."{board_name}_insert_image"(NEW) INTO NEW.no;
+                    --INTO asagi.media_id;
+                    PERFORM "{board_name}_insert_image"(NEW);
+                  END IF;
                   IF NEW.resto = 0 THEN
                     PERFORM "{board_name}_create_thread"(NEW);
                   END IF;
@@ -533,9 +539,9 @@ impl YotsubaArchiver {
                 CREATE TRIGGER "{board_name}_after_delete" after DELETE ON "{schema}"."{board_name_main}"
                   FOR EACH ROW EXECUTE PROCEDURE "{board_name}_after_del"();
 
-                DROP TRIGGER IF EXISTS "{board_name}_before_insert" ON "{schema}"."{board_name_main}";
-                CREATE TRIGGER "{board_name}_before_insert" before INSERT ON "{schema}"."{board_name_main}"
-                  FOR EACH ROW EXECUTE PROCEDURE "{board_name}_before_insert"();
+                --DROP TRIGGER IF EXISTS "{board_name}_before_insert" ON "{schema}"."{board_name_main}";
+                --CREATE TRIGGER "{board_name}_before_insert" before INSERT ON "{schema}"."{board_name_main}"
+                  --FOR EACH ROW EXECUTE PROCEDURE "{board_name}_before_insert"();
 
                 DROP TRIGGER IF EXISTS "{board_name}_after_insert" ON "{schema}"."{board_name_main}";
                 CREATE TRIGGER "{board_name}_after_insert" after INSERT ON "{schema}"."{board_name_main}"
