@@ -206,7 +206,7 @@ impl YotsubaArchiver {
                         CONSTRAINT "unique_no_{board_name}" UNIQUE (no)
                     )"#, board_name=board, schema=self.schema);
         if let Ok(_) = self.conn.execute(&sql, &[]) {}
-        if let Ok(_) = self.conn.execute(&format!(r#"create index "idx_no_resto_{board_name}" on "{schema}"."{board_name}"(no, resto)"#, board_name=board, schema=self.schema), &[]) {}
+        if let Ok(_) = self.conn.execute(&format!(r#"create index IF NOT EXISTS "idx_no_resto_{board_name}" on "{schema}"."{board_name}"(no, resto)"#, board_name=board, schema=self.schema), &[]) {}
         self.conn.execute("set enable_seqscan to off;", &[]).expect("Err executing sql: set enable_seqscan to off");
         self.conn.batch_execute(&format!(r#"
             CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -1397,7 +1397,16 @@ impl YotsubaArchiver {
                 let jsonb : Option<serde_json::Value> = row.get(0);
                 match jsonb {
                     Some(val) => {
-                        let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_deleted_and_modified_threads2");
+                        let q = if let Ok(iv) = serde_json::from_value::<i64>(val.to_owned()) {
+                            let mut vd = VecDeque::new();
+                            vd.push_back(iv as u32);
+                            vd
+                        } else if let Ok(v) = serde_json::from_value::<VecDeque<u32>>(val) {
+                            v
+                        } else {
+                            break 'outer;
+                        };
+                        //let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_deleted_and_modified_threads2");
                         _result = Some(q);
                         break 'outer;
                     },
