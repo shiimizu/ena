@@ -367,7 +367,7 @@ impl YotsubaArchiver {
                     ),
                     nreplies = (
                       SELECT COUNT(*) FROM "{schema}"."{board_name}" re WHERE
-                        re.thread_num = $1.no
+                        (re.thread_num = $1.no or re.thread_num = $1.resto)
                     ),
                     nimages = (
                       SELECT COUNT(media_hash) FROM "{schema}"."{board_name}" re WHERE
@@ -523,6 +523,13 @@ impl YotsubaArchiver {
                 END;
                 $$ LANGUAGE plpgsql;
 
+                CREATE OR REPLACE FUNCTION "{board_name}_after_update"() RETURNS trigger AS $$
+                BEGIN
+                  PERFORM "{board_name}_update_thread"(NEW);
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
                 CREATE OR REPLACE FUNCTION "{board_name}_after_del"() RETURNS trigger AS $$
                 BEGIN
                   PERFORM "{board_name}_update_thread"(OLD);
@@ -548,6 +555,10 @@ impl YotsubaArchiver {
                 DROP TRIGGER IF EXISTS "{board_name}_after_insert" ON "{schema}"."{board_name_main}";
                 CREATE TRIGGER "{board_name}_after_insert" after INSERT ON "{schema}"."{board_name_main}"
                   FOR EACH ROW EXECUTE PROCEDURE "{board_name}_after_insert"();
+
+                DROP TRIGGER IF EXISTS "{board_name}_after_update" ON "{schema}"."{board_name_main}";
+                CREATE TRIGGER "{board_name}_after_update" after UPDATE ON "{schema}"."{board_name_main}"
+                  FOR EACH ROW EXECUTE PROCEDURE "{board_name}_after_update"();
             "#, board_name=board, board_name_main=board_main, schema=self.schema)).expect("Err initializing trigger functions");
 
     }
