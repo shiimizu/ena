@@ -144,6 +144,7 @@ impl YotsubaArchiver {
         self.conn.execute(&format!(r#"CREATE SCHEMA IF NOT EXISTS "{schema}";"#, schema=self.schema), &[])
             .expect(&format!("Err creating schema: {}", self.schema));
     }
+
     fn init_metadata(&self) {
         let sql = format!(r#"CREATE TABLE IF NOT EXISTS "{schema}".metadata
                     (
@@ -794,13 +795,14 @@ impl YotsubaArchiver {
             // Process the threads
             {
                 // let queue = self.queue.get(&current_board).expect("err getting queue for board3");
-                if local_threads_list.len() > 0 {
+                let len = local_threads_list.len();
+                if len > 0 {
                     println!("/{}/ Total New threads: {}", current_board, local_threads_list.len());
                     // BRUH I JUST WANT TO SHARE MUTABLE DATA
                     // This will loop until it recieves none
                     // while let Some(_) = self.drain_list(board).await {
                     // }
-
+                    let mut position = 1;
                     while let Some(thread) = local_threads_list.pop_front() {
                         if let Some(finished) = self.finished.try_lock() {
                             if *finished {
@@ -809,7 +811,8 @@ impl YotsubaArchiver {
                         } else {
                             eprintln!("Lock occurred trying to get finished");
                         }
-                        self.assign_to_thread(&bs, thread, p).await;
+                        self.assign_to_thread(&bs, thread, p, &position, &len).await;
+                        position += 1;
                     }
 
                     // Update the cache at the end so that if the program was stopped while processing threads, when it restarts it'll use the same
@@ -837,7 +840,7 @@ impl YotsubaArchiver {
         Some(())
     }
 
-    async fn assign_to_thread(&self, bs: &BoardSettings2, thread: u32, path: &str) {
+    async fn assign_to_thread(&self, bs: &BoardSettings2, thread: u32, path: &str, position: &u32, length: &usize) {
         let board = &bs.board;
         let board_clean = &bs.board.replace("_ena", "");
         let mut _retry = 0;
@@ -861,7 +864,7 @@ impl YotsubaArchiver {
                     Ok(ret) => {
                         self.upsert_thread2(board, &ret);
                         self.upsert_deleteds(board, thread, &ret);
-                        println!("/{}/{}", board_clean, thread);
+                        println!("[{}/{}]\t/{}/{}",position, length, board_clean, thread);
                         // _canb=true;
                         // _retry=0;
                         break;
