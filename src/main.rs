@@ -60,8 +60,8 @@ fn start_background_thread() {
         task::block_on(async{
             let archiver = YotsubaArchiver::new();
             archiver.listen_to_exit();
-            archiver.init_metadata();
             archiver.init_schema();
+            archiver.init_metadata();
             std::thread::sleep(Duration::from_millis(1500));
 
             let a = &archiver;
@@ -152,9 +152,10 @@ impl YotsubaArchiver {
                         archive jsonb,
                         PRIMARY KEY (board),
                         CONSTRAINT board_unique UNIQUE (board)
-                    );"#, schema=self.schema);
-        if let Ok(_) = self.conn.execute(&sql, &[]) {}
-        if let Ok(_) = self.conn.execute(&format!(r#"create index metadata_board_idx on "{schema}".metadata(board)"#, schema=self.schema), &[]) {}
+                    );
+                    CREATE INDEX IF NOT EXISTS metadata_board_idx on "{schema}".metadata(board);
+                    "#, schema=self.schema);
+        self.conn.batch_execute(&sql).expect("Err creating metadata");
     }
 
     fn init_board(&self, board: &str) {
