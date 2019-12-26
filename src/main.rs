@@ -216,8 +216,8 @@ impl YotsubaArchiver {
     fn create_board_view(&self, board: &str) {
         let board_main = board.to_owned() + "_ena";
         let sql = format!(r#"
-                            CREATE OR REPLACE VIEW "{schema}"."{board_name}" AS
-                            select  no as doc_id,
+                        CREATE OR REPLACE VIEW "{schema}"."{board_name}" AS
+                            SELECT  no as doc_id,
                                     (CASE WHEN md5 is not null THEN no ELSE null END) as media_id,
                                     0::smallint as poster_ip, --not used
                                     no as num,
@@ -242,15 +242,50 @@ impl YotsubaArchiver {
                                     name,
                                     trip,
                                     sub as title,
-                                    com as comment,
+                                    (select r29
+                                          from 
+                                                regexp_replace(com, E'&#039;', E'\'', 'g') r0
+                                                , regexp_replace(r0, E'&gt;', '>', 'g') r1
+                                                , regexp_replace(r1, E'&lt;', '<', 'g') r2
+                                                , regexp_replace(r2, E'&quot;', E'\"', 'g') r3
+                                                , regexp_replace(r3, E'&amp;', E'&', 'g') r4
+                                                , regexp_replace(r4, E'\\s*$', '', 'g') r5
+                                                , regexp_replace(r5, E'^\\s*$', '', 'g') r6
+                                                , regexp_replace(r6, E'<span class=\"capcodeReplies\"><span style=\"font-size: smaller;\"><span style=\"font-weight: bold;\">(?:Administrator|Moderator|Developer) Repl(?:y|ies):</span>.*?</span><br></span>', '', 'g') r7
+                                                , regexp_replace(r7, E'\\[(/?(banned|moot|spoiler|code))]', '[\1:lit]', 'g') r8
+                                                , regexp_replace(r8, E'<span class=\"abbr\">.*?</span>', '', 'g') r9
+                                                , regexp_replace(r9, E'<table class=\"exif\"[^>]*>.*?</table>', '', 'g') r10
+                                                , regexp_replace(r10, E'<br><br><small><b>Oekaki Post</b>.*?</small>', '', 'g') r11
+                                                , regexp_replace(r11, E'<(?:b|strong) style=\"color:\\s*red;\">(.*?)</(?:b|strong)>', '[banned]\1[/banned]', 'g') r12
+                                                , regexp_replace(r12, E'<div style=\"padding: 5px;margin-left: \\.5em;border-color: #faa;border: 2px dashed rgba\\(255,0,0,\\.1\\);border-radius: 2px\">(.*?)</div>', '[moot]\1[/moot]', 'g') r13
+                                                , regexp_replace(r13, E'<span class=\"fortune\" style=\"color:(.*?)\"><br><br><b>(.*?)</b></span>', '\n\n[fortune color=\"\1\"]$2[/fortune]', 'g') r14
+                                                , regexp_replace(r14, E'<(?:b|strong)>(.*?)</(?:b|strong)>', '[b]\1[/b]', 'g') r15
+                                                , regexp_replace(r15, E'<pre[^>]*>', '[code]', 'g') r16
+                                                , replace(r16, '</pre>', '[/code]') r17
+                                                , regexp_replace(r17, E'<span class=\"math\">(.*?)</span>', '[math]\1[/math]', 'g') r18
+                                                , regexp_replace(r18, E'<div class=\"math\">(.*?)</div>', '[eqn]\1[/eqn]', 'g') r19
+                                                , regexp_replace(r19, E'<font class=\"unkfunc\">(.*?)</font>', '\1', 'g') r20
+                                                , regexp_replace(r20, E'<span class=\"quote\">(.*?)</span>', '\1', 'g') r21
+                                                , regexp_replace(r21, E'<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>', '\1', 'g') r22 
+                                                , regexp_replace(r22, E'<a.*?>(.*?)</a>', '\1', 'g') r23 -- changed for postgres regex
+                                                , regexp_replace(r23, E'<span class=\"spoiler\"[^>]*>(.*?)</span>', '[spoiler]\1[/spoiler]', 'g') r24
+                                                , regexp_replace(r24, E'<span class=\"sjis\">(.*?)</span>', '[shiftjis]\1[/shiftjis]', 'g') r25 
+                                                , regexp_replace(r25, E'<s>', '[spoiler]', 'g') r26
+                                                , regexp_replace(r26, E'</s>', '[/spoiler]', 'g') r27
+                                                , regexp_replace(r27, E'<br\\s*/?>', E'\n', 'g') r28
+                                                , regexp_replace(r28, E'<wbr>', '', 'g') r29
+                                           ) as comment,
                                     null as delpass, --not used
                                     (CASE WHEN sticky is null or sticky=0 THEN false ELSE true END) as sticky,
                                     (CASE WHEN closed is null or closed=0 THEN false ELSE true END) as locked,
                                     (CASE WHEN id='Developer' THEN 'Dev' ELSE id END) as poster_hash, --not the same as media_hash
                                     country as poster_country,
                                     country_name as poster_country_name,
-                                    null as exif --not used
-                                    from "{schema}"."{board_name_main}""#, board_name=board, board_name_main=board_main, schema=self.schema);
+                                    null as exif, --not used
+                                    (CASE WHEN archived is null or archived=0 THEN false ELSE true END) as archived,
+                                    archived_on
+                                    from "{schema}"."{board_name_main}";
+                                    "#, board_name=board, board_name_main=board_main, schema=self.schema);
         self.conn.execute(&sql, &[]).expect("err create view");
         self.conn.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "{schema}".index_counters (
                           id character varying(50) NOT NULL,
