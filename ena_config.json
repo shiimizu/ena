@@ -1,29 +1,29 @@
 {
 	"settings": {
 		"engine": "postgresql",
-		"database": "archive3",
+		"database": "archive",
+		"schema": "asagi",
 		"host": "localhost",
 		"port": 5432,
 		"username": "postgres",
 		"password": "zxc",
 		"charset": "utf8",
-		"path": "./archive",
-		"asagiCompat": true
+		"path": "./archive"
 	},
 	"boardSettings": {
 		"board": "",
 		"retryAttempts": 3,
-		"refreshDelay": 30,
+		"refreshDelay": 20,
 		"apiUrl": "http://a.4cdn.org",
 		"throttleMillisec": 1100,
 		"mediaUrl": "http://i.4cdn.org",
 		"downloadMedia": false,
-		"downloadThumbnails": true,
+		"downloadThumbnails": false,
 		"keepMedia": false,
 		"keepThumbnails": false
 	},
 	"boards": [{
-			"board": "a"
+			"board": "g"
 		}
 	]
 }
