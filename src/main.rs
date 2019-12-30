@@ -321,7 +321,7 @@ impl YotsubaArchiver {
         /*if bs.board.contains("_ena") {
             self.init_views(current_board);
         }*/
-        let one_millis = Duration::from_millis(1);
+        let _one_millis = Duration::from_millis(1);
         let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
         let mut archives_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
         let mut local_threads_list : VecDeque<u32> = VecDeque::new();

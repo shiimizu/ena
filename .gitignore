@@ -18,3 +18,4 @@ txt
 unknown_thread
 Cargo.lock
 justfile
+*.log

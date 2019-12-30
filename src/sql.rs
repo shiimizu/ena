@@ -22,15 +22,16 @@ pub fn init_board(schema: &str, board: &str) -> String {
             no bigint NOT NULL,
             subnum bigint,
             tim bigint,
+            resto bigint NOT NULL DEFAULT 0,
             time bigint NOT NULL DEFAULT 0,
+            last_modified bigint,
+            archived_on bigint,
             deleted_on bigint,
             fsize bigint,
-            archived_on bigint,
             w int,
             h int,
             tn_w int,
             tn_h int,
-            resto int NOT NULL DEFAULT 0,
             replies int,
             images int,
             unique_ips int,
@@ -41,11 +42,8 @@ pub fn init_board(schema: &str, board: &str) -> String {
             filedeleted boolean,
             spoiler boolean,
             m_img boolean,
-            archived boolean,
             bumplimit boolean,
             imagelimit boolean,
-            deleted boolean,
-            now text NOT NULL,
             name text,
             sub text,
             com text,
@@ -159,7 +157,7 @@ pub fn init_views(schema: &str, board: &str) -> String {
                 encode(md5, 'base64') AS media_hash,
                 (CASE WHEN tim IS NOT NULL and ext IS NOT NULL THEN (tim::text || ext) ELSE NULL END) AS media_orig,
                 (CASE WHEN spoiler IS NULL THEN false ELSE spoiler END) AS spoiler,
-                (CASE WHEN deleted IS NULL THEN false ELSE deleted END) AS deleted,
+                (CASE WHEN deleted_on IS NULL THEN false ELSE true END) AS deleted,
                 (CASE WHEN capcode IS NULL THEN 'N' ELSE capcode END) AS capcode,
                 NULL AS email, --deprecated
                 name,
@@ -205,11 +203,11 @@ pub fn init_views(schema: &str, board: &str) -> String {
                 country AS poster_country,
                 country_name AS poster_country_name,
                 NULL AS exif, --TODO not used
-                (CASE WHEN archived IS NULL THEN false ELSE true END) AS archived,
+                (CASE WHEN archived_on IS NULL THEN false ELSE true END) AS archived,
                 archived_on
                 FROM "{0}"."{1}"
                 {2};
-        "#, schema, board, if is_main { "" } else { "WHERE deleted=true" }));
+        "#, schema, board, if is_main { "" } else { "WHERE deleted_on is not null" }));
     
     let board_threads = safe_create_view("_threads", format!(r#"
         SELECT
@@ -592,13 +590,13 @@ pub fn create_asagi_triggers(schema: &str, board: &str, board_name_main: &str) -
 pub fn upsert_deleted(schema: &str, board: &str, no: u32) -> String {
     // This will find an already existing post due to the WHERE clause, meaning it's ok to only select no
     format!(r#"
-        INSERT INTO "{0}"."{1}" (no, time, resto, now)
-            SELECT no, time, resto, now FROM "{0}"."{1}" WHERE no = {2}
+        INSERT INTO "{0}"."{1}" (no, time, resto)
+            SELECT no, time, resto FROM "{0}"."{1}" WHERE no = {2}
             --SELECT * FROM "{0}"."{1}" WHERE no = {2}
         ON CONFLICT (no)
         DO
             UPDATE
-            SET deleted = true,
+            SET last_modified = extract(epoch from now())::bigint,
                 deleted_on = extract(epoch from now())::bigint;
         "#, schema, board, no)
 }
@@ -606,35 +604,48 @@ pub fn upsert_deleted(schema: &str, board: &str, no: u32) -> String {
 pub fn upsert_deleteds(schema: &str, board: &str, thread: u32) -> String {
     // This will find an already existing post due to the WHERE clause, meaning it's ok to only select no
     format!(r#"
-        INSERT INTO "{0}"."{1}" (no, time, resto, now)
+        INSERT INTO "{0}"."{1}" (no, time, resto)
             SELECT x.* FROM
-                (SELECT no, time, resto, now FROM "{0}"."{1}" where no={2} or resto={2} order by no) x
+                (SELECT no, time, resto FROM "{0}"."{1}" where no={2} or resto={2} order by no) x
                 --(SELECT * FROM "{0}"."{1}" where no={2} or resto={2} order by no) x
             FULL JOIN
-                (SELECT no, time, resto, now FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
+                (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
                 --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
             ON x.no = z.no
             WHERE z.no is null
         ON CONFLICT (no) 
         DO
             UPDATE
-            SET deleted = true,
+            SET last_modified = extract(epoch from now())::bigint,
                 deleted_on = extract(epoch from now())::bigint;
         "#, schema, board, thread)
+}
+
+pub fn upsert_hash(schema: &str, board: &str, no: u64, hash_type: &str) -> String {
+    // This will find an already existing post due to the WHERE clause, meaning it's ok to only select no
+    format!(r#"
+        INSERT INTO "{0}"."{1}" (no, time, resto)
+            SELECT no, time, resto FROM "{0}"."{1}" WHERE no = {2}
+            --SELECT * FROM "{0}"."{1}" WHERE no = {2}
+        ON CONFLICT (no) DO UPDATE
+            SET last_modified = extract(epoch from now())::bigint,
+                "{3}" = $1;
+        "#, schema, board, no, hash_type)
 }
 
 pub fn upsert_thread(schema: &str, board: &str) -> String {
     format!(r#"
         INSERT INTO "{0}"."{1}" (
-            no,sticky,closed,now,name,sub,com,filedeleted,spoiler,
+            no,sticky,closed,name,sub,com,filedeleted,spoiler,
             custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time,md5,
-            fsize, m_img,resto,trip,id,capcode,country,country_name,archived,bumplimit,
-            archived_on,imagelimit,semantic_url,replies,images,unique_ips,tag,since4pass)
+            fsize, m_img,resto,trip,id,capcode,country,country_name,bumplimit,
+            archived_on,imagelimit,semantic_url,replies,images,unique_ips,tag,since4pass,last_modified)
             SELECT
-                no,sticky::int::bool,closed::int::bool,now,name,sub,com,filedeleted::int::bool,spoiler::int::bool,
+                no,sticky::int::bool,closed::int::bool,name,sub,com,filedeleted::int::bool,spoiler::int::bool,
                 custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time, (CASE WHEN length(q.md5)>20 and q.md5 IS NOT NULL THEN decode(REPLACE (q.md5, E'\\', '')::text, 'base64'::text) ELSE null::bytea END) AS md5,
-                fsize, m_img::int::bool, resto,trip,q.id,capcode,country,country_name,archived::int::bool,bumplimit::int::bool,
-                archived_on,imagelimit::int::bool,semantic_url,replies,images,unique_ips,tag,since4pass
+                fsize, m_img::int::bool, resto,trip,q.id,capcode,country,country_name,bumplimit::int::bool,
+                archived_on,imagelimit::int::bool,semantic_url,replies,images,unique_ips,
+                tag,since4pass, extract(epoch from now())::bigint as last_modified
             FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts') q
             WHERE q.no IS NOT NULL
         ON CONFLICT (no) 
@@ -643,7 +654,6 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
                 no = excluded.no,
                 sticky = excluded.sticky::int::bool,
                 closed = excluded.closed::int::bool,
-                now = excluded.now,
                 name = excluded.name,
                 sub = excluded.sub,
                 com = excluded.com,
@@ -667,7 +677,6 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
                 capcode = excluded.capcode,
                 country = excluded.country,
                 country_name = excluded.country_name,
-                archived = excluded.archived::int::bool,
                 bumplimit = excluded.bumplimit::int::bool,
                 archived_on = excluded.archived_on,
                 imagelimit = excluded.imagelimit::int::bool,
@@ -676,13 +685,13 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
                 images = excluded.images,
                 unique_ips = CASE WHEN excluded.unique_ips is not null THEN excluded.unique_ips ELSE "{0}"."{1}".unique_ips END,
                 tag = excluded.tag,
-                since4pass = excluded.since4pass
+                since4pass = excluded.since4pass,
+                last_modified = extract(epoch from now())::bigint
             WHERE excluded.no IS NOT NULL AND EXISTS (
                 SELECT 
                     "{0}"."{1}".no,
                     "{0}"."{1}".sticky,
                     "{0}"."{1}".closed,
-                    "{0}"."{1}".now,
                     "{0}"."{1}".name,
                     "{0}"."{1}".sub,
                     "{0}"."{1}".com,
@@ -706,14 +715,13 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
                     "{0}"."{1}".capcode,
                     "{0}"."{1}".country,
                     "{0}"."{1}".country_name,
-                    "{0}"."{1}".archived,
                     "{0}"."{1}".bumplimit,
                     "{0}"."{1}".archived_on,
                     "{0}"."{1}".imagelimit,
                     "{0}"."{1}".semantic_url,
                     "{0}"."{1}".replies,
                     "{0}"."{1}".images,
-                    "{0}"."{1}".unique_ips,
+                    --"{0}"."{1}".unique_ips,
                     "{0}"."{1}".tag,
                     "{0}"."{1}".since4pass
                     WHERE "{0}"."{1}".no IS NOT NULL
@@ -722,7 +730,6 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
                     excluded.no,
                     excluded.sticky,
                     excluded.closed,
-                    excluded.now,
                     excluded.name,
                     excluded.sub,
                     excluded.com,
@@ -746,14 +753,13 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
                     excluded.capcode,
                     excluded.country,
                     excluded.country_name,
-                    excluded.archived,
                     excluded.bumplimit,
                     excluded.archived_on,
                     excluded.imagelimit,
                     excluded.semantic_url,
                     excluded.replies,
                     excluded.images,
-                    excluded.unique_ips,
+                    --excluded.unique_ips,
                     excluded.tag,
                     excluded.since4pass
                 WHERE excluded.no IS NOT NULL AND excluded.no = "{0}"."{1}".no
@@ -768,17 +774,6 @@ pub fn upsert_metadata(schema: &str, column: &str) -> String {
             DO UPDATE
                 SET {1} = $2::jsonb;
         "#, schema, column)
-}
-
-pub fn upsert_hash(schema: &str, board: &str, no: u64, hash_type: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's ok to only select no
-    format!(r#"
-        INSERT INTO "{0}"."{1}" (no, time, resto, now)
-            SELECT no, time, resto, now FROM "{0}"."{1}" WHERE no = {2}
-            --SELECT * FROM "{0}"."{1}" WHERE no = {2}
-        ON CONFLICT (no) DO UPDATE
-            SET "{3}" = $1;
-        "#, schema, board, no, hash_type)
 }
 
 pub fn media_posts(schema: &str, board: &str, thread: u32) -> String {
@@ -810,10 +805,12 @@ pub fn threads_list<'a>() -> &'a str {
     "SELECT jsonb_agg(newv->'no') from
                     (select jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
 }
+
 pub fn check_metadata_col(schema: &str, column: &str) -> String {
     format!(r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
                                     schema, column)
 }
+
 pub fn combined_threads(schema: &str, board: &str, is_threads: bool) -> String {
     format!(r#"
         select jsonb_agg(c) from (
@@ -824,7 +821,7 @@ pub fn combined_threads(schema: &str, board: &str, is_threads: bool) -> String {
             ON {5}
         )q
         left join
-            (select no as nno from "{0}"."{1}" where resto=0 and (archived=true or deleted=true))w
+            (select no as nno from "{0}"."{1}" where resto=0 and (archived_on is not null or deleted_on is not null))w
         ON c = nno
         where nno is null;
         "#, schema, board,
