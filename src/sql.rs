@@ -64,9 +64,10 @@ pub fn init_board(schema: &str, board: &str) -> String {
 
         CREATE INDEX IF NOT EXISTS "idx_{1}_no_resto" on "{0}"."{1}"(no, resto);
         
+        -- Needs to be superuser
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
         
-        CREATE INDEX IF NOT EXISTS "trgm_idx_{1}_com" ON "{0}"."{1}" USING gin (com gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS "trgm_idx_{1}_com" ON "{0}"."{1}" USING gin (com "{0}".gin_trgm_ops);
         -- SET enable_seqscan TO OFF;
         "#, schema, board)
 }
