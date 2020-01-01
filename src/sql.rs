@@ -792,13 +792,13 @@ pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
         full JOIN
         (select jsonb_array_elements({3}) as newv)z
         ON {4}
-        where newv is null or {5};
+        where newv is null or prev is null {5};
         "#, schema,
             if is_threads { r#"jsonb_agg(COALESCE(newv->'no',prev->'no'))"# } else { "coalesce(newv,prev)" },
             if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
             if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
             if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
-            if is_threads { r#"not prev->'last_modified' <@ (newv -> 'last_modified')"# } else { "prev is null" }
+            if is_threads { r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"# } else { "" }
         )
 }
 
