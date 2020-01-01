@@ -787,14 +787,14 @@ pub fn media_posts(schema: &str, board: &str, thread: u32) -> String {
 
 pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
     format!(r#"
-        SELECT {1} from
+        SELECT jsonb_agg({1}) from
         (select jsonb_array_elements({2}) as prev from "{0}".metadata where board = $1)x
         full JOIN
         (select jsonb_array_elements({3}) as newv)z
         ON {4}
         where newv is null or prev is null {5};
         "#, schema,
-            if is_threads { r#"jsonb_agg(COALESCE(newv->'no',prev->'no'))"# } else { "coalesce(newv,prev)" },
+            if is_threads { r#"COALESCE(newv->'no',prev->'no')"# } else { "coalesce(newv,prev)" },
             if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
             if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
             if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
@@ -803,8 +803,9 @@ pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
 }
 
 pub fn threads_list<'a>() -> &'a str {
-    "SELECT jsonb_agg(newv->'no') from
-                    (select jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
+    "SELECT jsonb_agg(newv->'no')
+    FROM
+    (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
 }
 
 pub fn check_metadata_col(schema: &str, column: &str) -> String {
