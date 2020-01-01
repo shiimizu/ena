@@ -21,7 +21,7 @@ features = ["with-serde_json"]
 [dependencies]
 serde = "*"
 serde_derive = "*"
-reqwest = "*"
+reqwest = "0.9.24"
 chrono = "*"
 futures = { git = "https://github.com/rust-lang/futures-rs" }
 futures-util = "0.3.1"
