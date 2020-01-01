@@ -19,3 +19,5 @@ unknown_thread
 Cargo.lock
 justfile
 *.log
+*docker/*
+json

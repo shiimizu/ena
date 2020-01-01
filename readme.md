@@ -16,7 +16,7 @@ Low resource and high performance archiver to dump and archive posts, images and
 * massive threads consisting of thousands of posts
   -->
 ## Runtime dependencies
-* [PostgreSQL](https://www.postgresql.org/download/)
+* [PostgreSQL](https://www.postgresql.org/download/) >= 11.0
 
 ## Changes from Asagi
 * Media downloading uses sha256 as its filename and its directory structure is the same as yuki.la's

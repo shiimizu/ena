@@ -65,7 +65,7 @@ pub fn init_board(schema: &str, board: &str) -> String {
         CREATE INDEX IF NOT EXISTS "idx_{1}_no_resto" on "{0}"."{1}"(no, resto);
         
         -- Needs to be superuser
-        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA "{0}";
         
         CREATE INDEX IF NOT EXISTS "trgm_idx_{1}_com" ON "{0}"."{1}" USING gin (com "{0}".gin_trgm_ops);
         -- SET enable_seqscan TO OFF;
@@ -787,18 +787,29 @@ pub fn media_posts(schema: &str, board: &str, thread: u32) -> String {
 
 pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
     format!(r#"
-        SELECT jsonb_agg({1}) from
-        (select jsonb_array_elements({2}) as prev from "{0}".metadata where board = $1)x
-        full JOIN
-        (select jsonb_array_elements({3}) as newv)z
-        ON {4}
-        where newv is null or prev is null {5};
+        SELECT (
+            CASE WHEN new_hash IS DISTINCT FROM prev_hash THEN
+            (
+                SELECT jsonb_agg({1}) from
+                (select jsonb_array_elements({2}) as prev from "{0}".metadata where board = $1)x
+                full JOIN
+                (select jsonb_array_elements({3}) as newv)z
+                ON {4}
+                where newv is null or prev is null {5}
+            )
+            END
+        ) FROM 
+        (SELECT sha256(decode({6} #>> '{{}}', 'escape')) as prev_hash from "{0}".metadata where board=$1)w
+        FULL JOIN
+        (SELECT sha256(decode($2::jsonb #>> '{{}}', 'escape')) as new_hash)q
+        ON TRUE;
         "#, schema,
             if is_threads { r#"COALESCE(newv->'no',prev->'no')"# } else { "coalesce(newv,prev)" },
             if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
             if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
             if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
-            if is_threads { r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"# } else { "" }
+            if is_threads { r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"# } else { "" },
+            if is_threads { r#"threads"# } else { "archive" }
         )
 }
 

@@ -285,31 +285,12 @@ impl YotsubaArchiver {
         // Use the new threads.json as the base now.
         let resp = self.conn.query(&sql::deleted_and_modified_threads(&self.schema, is_threads), &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
         let mut _result : Option<VecDeque<u32>> = None;
-        'outer: for _ri in 0..4 {
-            for row in resp.iter() {
-                let jsonb : Option<serde_json::Value> = row.get(0);
-                match jsonb {
-                    Some(val) => {
-                        let q = if let Ok(iv) = serde_json::from_value::<i64>(val.to_owned()) {
-                            let mut vd = VecDeque::new();
-                            vd.push_back(iv as u32);
-                            vd
-                        } else if let Ok(v) = serde_json::from_value::<VecDeque<u32>>(val) {
-                            v
-                        } else {
-                            break 'outer;
-                        };
-                        //let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_deleted_and_modified_threads2");
-                        _result = Some(q);
-                        break 'outer;
-                    },
-                    None => {
-                        eprintln!("Error getting get_deleted_and_modified_threads2 at column 0: NULL @ {}", Local::now().to_rfc2822());
-                        task::sleep(Duration::from_secs(1)).await;
-                    },
-                }
+        resp.iter().for_each(|row| {
+            let jsonb : Option<serde_json::Value> = row.get(0);
+            if let Some(val) = jsonb {
+                _result = serde_json::from_value::<VecDeque<u32>>(val).ok();
             }
-        }
+        });
         _result
     }
 
