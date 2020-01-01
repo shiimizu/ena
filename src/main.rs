@@ -253,7 +253,7 @@ impl YotsubaArchiver {
         // This query is only run ONCE at every startup
         // Running a JOIN to compare against the entire DB on every INSERT/UPDATE would not be that great. 
         // This gets all the threads from cache, compares it to the new json to get new + modified threads
-        // The compares that result to the database where a thread is deleted or archived, and takes only the threads where's it's not
+        // Then compares that result to the database where a thread is deleted or archived, and takes only the threads where's it's not
         // deleted or archived
         let resp = self.conn.query(&sql::combined_threads(&self.schema, board, is_threads), &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json in get_combined_threads");
         let mut _result : Option<VecDeque<u32>> = None;

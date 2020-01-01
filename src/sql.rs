@@ -214,16 +214,16 @@ pub fn init_views(schema: &str, board: &str) -> String {
         SELECT
             no as thread_num,
             time as time_op,
-            time as time_last,
-            time as time_bump,
-            null as time_ghost,
-            null as time_ghost_bump,
-            time as time_last_modified,
-            replies as nreplies,
-            1 as nimages,
+            last_modified as time_last,
+            last_modified as time_bump,
+            (CASE WHEN subnum is not null then "time" else NULL END ) as time_ghost,
+            (CASE WHEN subnum is not null then last_modified else NULL END )  as time_ghost_bump,
+            last_modified as time_last_modified,
+            (SELECT COUNT(no) FROM "asagi"."a" re WHERE t.no = resto or t.no = no) as nreplies,
+            (SELECT COUNT(md5) FROM "asagi"."a" re WHERE t.no = resto or t.no = no) as nimages,
             (CASE WHEN sticky IS NULL THEN false ELSE sticky END) AS sticky,
             (CASE WHEN closed IS NULL THEN false ELSE closed END) AS locked
-        from "{0}"."{1}" where resto=0;
+        from "{0}"."{1}" t where resto=0;
         "#, schema, board));
 
     let board_users = safe_create_view("_users", format!(r#"
