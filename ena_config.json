@@ -1,29 +1,34 @@
 {
-	"settings": {
-		"engine": "postgresql",
-		"database": "archive",
-		"schema": "asagi",
-		"host": "localhost",
-		"port": 5432,
-		"username": "postgres",
-		"password": "zxc",
-		"charset": "utf8",
-		"path": "./archive"
-	},
-	"boardSettings": {
-		"board": "",
-		"retryAttempts": 3,
-		"refreshDelay": 20,
-		"apiUrl": "http://a.4cdn.org",
-		"throttleMillisec": 1100,
-		"mediaUrl": "http://i.4cdn.org",
-		"downloadMedia": false,
-		"downloadThumbnails": false,
-		"keepMedia": false,
-		"keepThumbnails": false
-	},
-	"boards": [{
-			"board": "g"
-		}
-	]
+  "settings": {
+    "engine": "postgresql",
+    "database": "fftest",
+    "schema": "asagi",
+    "host": "localhost",
+    "port": 5432,
+    "username": "postgres",
+    "password": "zxc",
+    "charset": "utf8",
+    "path": "./archive",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0",
+    "apiUrl": "http://a.4cdn.org",
+    "mediaUrl": "http://i.4cdn.org"
+  },
+  "boardSettings": {
+    "board": "",
+    "retryAttempts": 3,
+    "refreshDelay": 20,
+    "throttleMillisec": 500,
+    "downloadMedia": false,
+    "downloadThumbnails": true,
+    "keepMedia": false,
+    "keepThumbnails": false
+  },
+  "boards": [
+    { "board": "po" },
+    { "board": "n" },
+    { "board": "x",
+      "retryAttempts": 4,
+      "refreshDelay": 30,
+      "throttleMillisec": 300 }
+  ]
 }

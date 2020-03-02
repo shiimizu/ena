@@ -1,846 +1,1325 @@
+#![forbid(unsafe_code)]
 #![deny(unsafe_code)]
 #![allow(unreachable_code)]
-#![allow(non_snake_case)]
-#![allow(unused_imports)]
+#![allow(irrefutable_let_patterns)]
+#![allow(clippy::range_plus_one)]
 
-mod sql; 
+mod config;
+mod request;
+mod sql;
 
-extern crate reqwest;
-extern crate pretty_env_logger;
-extern crate rand;
-#[macro_use] extern crate log;
+// extern crate reqwest;
+// extern crate pretty_env_logger;
+// #[macro_use] extern crate log;
+// extern crate ctrlc;
 
-#[macro_use] extern crate if_chain;
+// extern crate serde;
+// extern crate serde_json;
+// #[macro_use] extern crate serde_derive;
 
-extern crate serde;
-extern crate serde_json;
-#[macro_use] extern crate serde_derive;
+// use tokio::prelude::*;
+// use tokio::task;
+// use postgres::{Connection, TlsMode};
+// use sha2::{Sha256, Digest};
+// use std::time::{Duration, Instant};
 
-use futures::stream::StreamExt as FutureStreamExt;
-use futures::stream::FuturesUnordered;
-use std::time::{Duration, Instant};
-use postgres::{Connection, TlsMode};
-use reqwest::header::{HeaderMap, HeaderValue, LAST_MODIFIED, USER_AGENT, IF_MODIFIED_SINCE};
+use crate::config::{BoardSettings, Settings};
+use core::sync::atomic::Ordering;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, VecDeque},
+    env,
+    fs::File,
+    io::BufReader,
+    path::Path,
+    sync::atomic::AtomicBool
+};
 
-use std::collections::VecDeque;
+use futures::{
+    future::Future,
+    stream::{FuturesOrdered, FuturesUnordered, StreamExt as FutureStreamExt}
+};
+use reqwest::{
+    self,
+    header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, LAST_MODIFIED, USER_AGENT},
+    StatusCode
+};
+use tokio::{
+    prelude::*,
+    runtime::Builder,
+    sync::{
+        broadcast, mpsc,
+        mpsc::{UnboundedReceiver, UnboundedSender}
+    },
+    task,
+    time::{self, delay_for as sleep, Duration, Instant}
+};
+
+use anyhow::{anyhow, Context, Result};
 use chrono::Local;
-use sha2::{Sha256, Digest};
-//use async_std::prelude::*;
-use async_std::task;
-use std::io::BufReader;
-use std::fs::File;
-
-use std::path::Path;
-
-extern crate ctrlc;
+use ctrlc;
+use log::*;
+use pretty_env_logger;
+use serde_json;
+use sha2::{Digest, Sha256};
 
 fn main() {
-    println!(r#"
-    ⡿⠋⠄⣀⣀⣤⣴⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣌⠻⣿⣿
-    ⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⠹⣿
-    ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠹     
-    ⣿⣿⡟⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡛⢿⣿⣿⣿⣮⠛⣿⣿⣿⣿⣿⣿⡆       ____           
-    ⡟⢻⡇⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣣⠄⡀⢬⣭⣻⣷⡌⢿⣿⣿⣿⣿⣿      /\  _`\     
-    ⠃⣸⡀⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠈⣆⢹⣿⣿⣿⡈⢿⣿⣿⣿⣿      \ \ \L\_     ___      __     
-    ⠄⢻⡇⠄⢛⣛⣻⣿⣿⣿⣿⣿⣿⣿⣿⡆⠹⣿⣆⠸⣆⠙⠛⠛⠃⠘⣿⣿⣿⣿       \ \  __\  /' _ `\  /'__`\   
-    ⠄⠸⣡⠄⡈⣿⣿⣿⣿⣿⣿⣿⣿⠿⠟⠁⣠⣉⣤⣴⣿⣿⠿⠿⠿⡇⢸⣿⣿⣿        \ \ \___\/\ \/\ \/\ \L\.\_ 
-    ⠄⡄⢿⣆⠰⡘⢿⣿⠿⢛⣉⣥⣴⣶⣿⣿⣿⣿⣻⠟⣉⣤⣶⣶⣾⣿⡄⣿⡿⢸         \ \____/\ \_\ \_\ \__/.\_\
-    ⠄⢰⠸⣿⠄⢳⣠⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣼⣿⣿⣿⣿⣿⣿⡇⢻⡇⢸          \/___/  \/_/\/_/\/__/\/_/   v{version}
-    ⢷⡈⢣⣡⣶⠿⠟⠛⠓⣚⣻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⢸⠇⠘     
-    ⡀⣌⠄⠻⣧⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⡿⠟⠛⠛⠛⢿⣿⣿⣿⣿⣿⡟⠘⠄⠄   
-    ⣷⡘⣷⡀⠘⣿⣿⣿⣿⣿⣿⣿⣿⡋⢀⣠⣤⣶⣶⣾⡆⣿⣿⣿⠟⠁⠄⠄⠄⠄     An ultra lightweight 4chan archiver (¬ ‿ ¬ )
-    ⣿⣷⡘⣿⡀⢻⣿⣿⣿⣿⣿⣿⣿⣧⠸⣿⣿⣿⣿⣿⣷⡿⠟⠉⠄⠄⠄⠄⡄⢀
-    ⣿⣿⣷⡈⢷⡀⠙⠛⠻⠿⠿⠿⠿⠿⠷⠾⠿⠟⣛⣋⣥⣶⣄⠄⢀⣄⠹⣦⢹⣿
-    "#, version=option_env!("CARGO_PKG_VERSION").unwrap_or("Unknown"));
+    println!(
+        r#"
+    ⣿⠟⣽⣿⣿⣿⣿⣿⢣⠟⠋⡜⠄⢸⣿⣿⡟⣬⢁⠠⠁⣤⠄⢰⠄⠇⢻⢸
+    ⢏⣾⣿⣿⣿⠿⣟⢁⡴⡀⡜⣠⣶⢸⣿⣿⢃⡇⠂⢁⣶⣦⣅⠈⠇⠄⢸⢸
+    ⣹⣿⣿⣿⡗⣾⡟⡜⣵⠃⣴⣿⣿⢸⣿⣿⢸⠘⢰⣿⣿⣿⣿⡀⢱⠄⠨⢸       ____ 
+    ⣿⣿⣿⣿⡇⣿⢁⣾⣿⣾⣿⣿⣿⣿⣸⣿⡎⠐⠒⠚⠛⠛⠿⢧⠄⠄⢠⣼      /\  _`\
+    ⣿⣿⣿⣿⠃⠿⢸⡿⠭⠭⢽⣿⣿⣿⢂⣿⠃⣤⠄⠄⠄⠄⠄⠄⠄⠄⣿⡾      \ \ \L\_     ___      __  
+    ⣼⠏⣿⡏⠄⠄⢠⣤⣶⣶⣾⣿⣿⣟⣾⣾⣼⣿⠒⠄⠄⠄⡠⣴⡄⢠⣿⣵       \ \  __\  /' _ `\  /'__`\
+    ⣳⠄⣿⠄⠄⢣⠸⣹⣿⡟⣻⣿⣿⣿⣿⣿⣿⡿⡻⡖⠦⢤⣔⣯⡅⣼⡿⣹        \ \ \___\/\ \/\ \/\ \L\.\_ 
+    ⡿⣼⢸⠄⠄⣷⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣕⡜⡌⡝⡸⠙⣼⠟⢱⠏         \ \____/\ \_\ \_\ \__/.\_\
+    ⡇⣿⣧⡰⡄⣿⣿⣿⣿⡿⠿⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣋⣪⣥⢠⠏⠄          \/___/  \/_/\/_/\/__/\/_/   v{version}
+    ⣧⢻⣿⣷⣧⢻⣿⣿⣿⡇⠄⢀⣀⣀⡙⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠂⠄⠄
+    ⢹⣼⣿⣿⣿⣧⡻⣿⣿⣇⣴⣿⣿⣿⣷⢸⣿⣿⣿⣿⣿⣿⣿⣿⣰⠄⠄⠄
+    ⣼⡟⡟⣿⢸⣿⣿⣝⢿⣿⣾⣿⣿⣿⢟⣾⣿⣿⣿⣿⣿⣿⣿⣿⠟⠄⡀⡀        A lightweight 4chan archiver (¬ ‿ ¬ )
+    ⣿⢰⣿⢹⢸⣿⣿⣿⣷⣝⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠉⠄⠄⣸⢰⡇
+    ⣿⣾⣹⣏⢸⣿⣿⣿⣿⣿⣷⣍⡻⣛⣛⣛⡉⠁⠄⠄⠄⠄⠄⠄⢀⢇⡏⠄
+    "#,
+        version = option_env!("CARGO_PKG_VERSION").unwrap_or("?.?.?")
+    );
 
-    let start_time_str = Local::now().to_rfc2822();
-    pretty_env_logger::init();
-    start_background_thread();
-    println!("\nStarted on:\t{}\nFinished on:\t{}", start_time_str, Local::now().to_rfc2822());
-}
+    let start_time = Local::now();
+    pretty_env_logger::try_init_timed_custom_env("ENA_LOG").unwrap();
 
-fn start_background_thread() {
-        task::block_on(async{
-            let archiver = YotsubaArchiver::new();
-            archiver.listen_to_exit();
-            archiver.init_type();
-            archiver.init_schema();
-            archiver.init_metadata();
-            std::thread::sleep(Duration::from_millis(1200));
-
-            let a = &archiver;
-            let mut fut = FuturesUnordered::new();
-            /*let asagiCompat = if let Some(set) =  a.settings.get("settings").expect("Err get settings").get("asagiCompat") {
-                set.as_bool().expect("err deserializing asagiCompat to bool")
-            } else {
-                false
-            };*/
-
-            // Push each board to queue to be run concurrently
-            let mut config = a.settings.to_owned();
-            let bb = config.to_owned();
-            let boards = bb.get("boards").expect("Err getting boards").as_array().expect("Err getting boards as array");
-            for board in boards {
-                let default = config.get_mut("boardSettings").expect("Err getting boardSettings").as_object_mut().expect("Err boardSettings as_object_mut");
-                let board_map = board.as_object().expect("Err serializing board");
-                for (k,v) in board_map.iter() {
-                    default.insert(k.to_string(), v.to_owned()
-                        /*if asagiCompat && k == "board" {
-                            serde_json::json!(v.as_str().expect("Err deserializing v from k,v").to_string() + "_ena")
-                        } else {
-                            v.to_owned()
-                        }*/
-                    );
-                }
-                let bs : BoardSettings2 = serde_json::from_value(serde_json::to_value(default.to_owned()).expect("Error serializing default")).expect("Error deserializing default");
-                fut.push(a.assign_to_board(bs));
+    match Builder::new().enable_all().threaded_scheduler().build() {
+        Ok(mut runtime) => runtime.block_on(async {
+            if let Err(e) = async_main().await {
+                error!("{}", e);
             }
+        }),
+        Err(e) => error!("{}", e)
+    }
 
-            // Run each board concurrently
-            while let Some(_) = fut.next().await {}
-        });
-        
+    info!(
+        "\nStarted on:\t{}\nFinished on:\t{}",
+        start_time.to_rfc2822(),
+        Local::now().to_rfc2822()
+    );
 }
 
-// Have a struct to store our variables without using global statics
+async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
+    let archiver = YotsubaArchiver::new().await;
+
+    &archiver.listen_to_exit();
+    &archiver.init_type().await?;
+    &archiver.init_schema().await;
+    &archiver.init_metadata().await;
+    sleep(Duration::from_millis(1200)).await;
+
+    let boards = &archiver.config.boards;
+
+    // Push each board to queue to be run concurrently
+    let mut bv: Vec<BoardSettings> = vec![];
+    for bss in boards.iter() {
+        let mut default = archiver.config.board_settings.to_owned();
+        default.board.clear();
+        default.board.push_str(&bss.board);
+        if let Some(i) = bss.retry_attempts {
+            default.retry_attempts = i;
+        }
+        if let Some(i) = bss.refresh_delay {
+            default.refresh_delay = i;
+        }
+        if let Some(i) = bss.throttle_millisec {
+            default.throttle_millisec = i;
+        }
+        if let Some(i) = bss.download_media {
+            default.download_media = i;
+        }
+        if let Some(i) = bss.download_thumbnails {
+            default.download_thumbnails = i;
+        }
+        if let Some(i) = bss.keep_media {
+            default.keep_media = i;
+        }
+        if let Some(i) = bss.keep_thumbnails {
+            default.keep_thumbnails = i;
+        }
+        // Populate new values using the default as base
+        bv.push(default.to_owned());
+    }
+
+    let archiver_ref = &archiver;
+    let mut fut2 = FuturesUnordered::new();
+    for board in bv.iter() {
+        archiver_ref.init_board(&board.board).await;
+        archiver_ref.init_views(&board.board).await;
+
+        let (mut tx, mut rx) = mpsc::unbounded_channel();
+        fut2.push(archiver_ref.compute(YotsubaType::Archive, board, Some(tx.clone()), None));
+        fut2.push(archiver_ref.compute(YotsubaType::Threads, board, Some(tx.clone()), None));
+        // fut2.push(archiver_ref.compute(YotsubaType::Media, board, None,
+        // Some(rx)));
+    }
+
+    // Waiting for this task causes a loop that's intended.
+    // Run each task concurrently
+    while let Some(_) = fut2.next().await {}
+
+    Ok(0)
+}
+
+#[derive(Clone)]
+pub struct MediaInfo {
+    board: BoardSettings,
+    thread: u32
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum YotsubaType {
+    Archive,
+    Threads,
+    Media
+}
+
+/// A struct to store variables without using global statics.
+/// It also allows passing http client as reference.
 pub struct YotsubaArchiver {
-    conn: Connection,
-    settings : serde_json::Value,
+    conn: tokio_postgres::Client,
+    config: config::Settings,
     client: reqwest::Client,
-    schema: String,
-    finished: async_std::sync::Arc<async_std::sync::Mutex::<bool>>,
+    finished: std::sync::Arc<AtomicBool>
 }
 
 impl YotsubaArchiver {
-
-    fn new() -> YotsubaArchiver {
-        let mut default_headers = HeaderMap::new();
-        default_headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0"));
-        let settingss = read_json("ena_config.json").expect("Err get config");
-        
-        let defs = settingss.get("settings").expect("Err get settings");
-        let ps = defs.get("path").expect("err getting path").as_str().expect("err converting path to str");
-        let p = ps.trim_end_matches('/').trim_end_matches('\\').to_string();
-        std::fs::create_dir_all(p + "/tmp").expect("Err create dir tmp");
-
-        let schema = if let Some(set) =  &defs.get("schema") {
-            set.as_str().expect("err deserializing schema to str").to_string()
-        } else {
-            "public".to_string()
-        };
-
+    async fn new() -> Self {
+        let config_path = "ena_config.json";
+        let config: config::Settings = config::read_json(config_path).unwrap_or_default();
         let conn_url = format!(
             "postgresql://{username}:{password}@{host}:{port}/{database}",
-            username=defs.get("username").expect("Err get username").as_str().expect("Err convert username to str"),
-            password=defs.get("password").expect("Err get password").as_str().expect("Err convert password to str"),
-            host=defs.get("host").expect("Err get localhost").as_str().expect("Err convert host to str"),
-            port=defs.get("port").expect("Err get port"),
-            database=defs.get("database").expect("Err get database").as_str().expect("Err convert database to str"));
+            username = option_env!("ENA_DATABASE_USERNAME")
+                .unwrap_or(&config.settings.username.as_ref().unwrap()),
+            password = option_env!("ENA_DATABASE_PASSWORD")
+                .unwrap_or(&config.settings.password.as_ref().unwrap()),
+            host =
+                option_env!("ENA_DATABASE_HOST").unwrap_or(&config.settings.host.as_ref().unwrap()),
+            port = option_env!("ENA_DATABASE_PORT")
+                .unwrap_or(&config.settings.port.unwrap().to_string()),
+            database = option_env!("ENA_DATABASE_NAME")
+                .unwrap_or(&config.settings.database.as_ref().unwrap())
+        );
 
-        YotsubaArchiver {
-            conn: Connection::connect(conn_url, TlsMode::None).expect("Error connecting"),
-            settings: settingss,
-            client: reqwest::ClientBuilder::new().default_headers(default_headers).build().unwrap(),
-            schema: schema,
-            finished: async_std::sync::Arc::new(async_std::sync::Mutex::new(false)),
+        let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
+            .await
+            .context(format!("\nPlease check your settings. Connection url used: {}", conn_url))
+            .expect("Connecting to database");
+
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                error!("connection error: {}", e);
+            }
+        });
+
+        let client = reqwest::ClientBuilder::new()
+            .default_headers(
+                config::default_headers(
+                    option_env!("ENA_USERAGENT")
+                        .unwrap_or(config.settings.user_agent.as_ref().unwrap().as_str())
+                )
+                .unwrap()
+            )
+            .build()
+            .expect("Error building the HTTP Client");
+        Self {
+            conn: db_client,
+            client: client,
+            config: config,
+            finished: std::sync::Arc::new(AtomicBool::new(false))
         }
     }
 
-    fn init_type(&self) {
-        self.conn.execute(&sql::init_type(), &[]).expect(&format!("Err creating 4chan schema type"));
+    fn schema(&self) -> &str {
+        option_env!("ENA_DATABASE_SCHEMA")
+            .unwrap_or(self.config.settings.schema.as_ref().unwrap().as_str())
     }
 
-    fn init_schema(&self) {
-        self.conn.execute(&sql::init_schema(&self.schema), &[]).expect(&format!("Err creating schema: {}", &self.schema));
-    }
-
-    fn init_metadata(&self) {
-        self.conn.batch_execute(&sql::init_metadata(&self.schema)).expect("Err creating metadata");
-    }
-
-    fn init_board(&self, board: &str) {
-        self.conn.batch_execute(&sql::init_board(&self.schema, board)).expect(&format!("Err creating schema: {}", board));
-    }
-
-    fn init_views(&self, board: &str) {
-        self.conn.batch_execute(&sql::init_views(&self.schema, board)).expect("Err create views");
-        // self.conn.batch_execute(&sql::create_asagi_tables(&self.schema, board)).expect("Err initializing trigger functions");
-        // self.conn.batch_execute(&sql::create_asagi_triggers(&self.schema, board, &(board.to_owned() + "_ena") )).expect("Err initializing trigger functions");
+    fn get_path(&self) -> &str {
+        option_env!("ENA_PATH")
+            .unwrap_or(self.config.settings.path.as_ref().unwrap())
+            .trim_end_matches('/')
+            .trim_end_matches('\\')
     }
 
     fn listen_to_exit(&self) {
-        // let f = async_std::sync::Arc::new(async_std::sync::Mutex::new(self.finished));
-        let finished_clone = async_std::sync::Arc::clone(&self.finished);
-        ctrlc::set_handler( move || {
-                if let Some(mut finished) = finished_clone.try_lock() {
-                    *finished = true;
-                } else {
-                    eprintln!("Lock occurred trying to get finished in ctrlc::set_handler");
+        let finished_clone = std::sync::Arc::clone(&self.finished);
+        ctrlc::set_handler(move || {
+            finished_clone.compare_and_swap(false, true, Ordering::Relaxed);
+        })
+        .expect("Error setting Ctrl-C handler");
+    }
+
+    async fn create_statements(
+        &self,
+        board: &str,
+        thread_type: YotsubaType
+    ) -> HashMap<String, tokio_postgres::Statement>
+    {
+        let mut statements: HashMap<String, tokio_postgres::Statement> = HashMap::new();
+
+        // This function is only called by fetch_board so it'll never be media.
+        let thread_type = match thread_type {
+            YotsubaType::Archive => "archive",
+            _ => "threads"
+        };
+
+        for func in [
+            "upsert_deleted",
+            "upsert_deleteds",
+            "upsert_thread",
+            "upsert_metadata",
+            "media_posts",
+            "deleted_and_modified_threads",
+            "threads_list",
+            "check_metadata_col",
+            "combined_threads"
+        ]
+        .iter()
+        {
+            statements.insert(
+                format!("{}_{}_{}", thread_type, func, board),
+                match *func {
+                    "upsert_deleted" => {
+                        self.conn
+                            .prepare_typed(sql::upsert_deleted(self.schema(), board).as_str(), &[
+                                tokio_postgres::types::Type::INT8
+                            ])
+                            .await
+                    }
+                    "upsert_deleteds" => {
+                        self.conn
+                            .prepare_typed(sql::upsert_deleteds(self.schema(), board).as_str(), &[
+                                tokio_postgres::types::Type::JSONB,
+                                tokio_postgres::types::Type::INT8
+                            ])
+                            .await
+                    }
+                    "upsert_thread" => {
+                        self.conn
+                            .prepare_typed(sql::upsert_thread(self.schema(), board).as_str(), &[
+                                tokio_postgres::types::Type::JSONB
+                            ])
+                            .await
+                    }
+                    "upsert_metadata" => {
+                        self.conn
+                            .prepare_typed(
+                                sql::upsert_metadata(self.schema(), thread_type).as_str(),
+                                &[
+                                    tokio_postgres::types::Type::TEXT,
+                                    tokio_postgres::types::Type::JSONB
+                                ]
+                            )
+                            .await
+                    }
+                    "media_posts" => {
+                        self.conn
+                            .prepare_typed(sql::media_posts(self.schema(), board).as_str(), &[
+                                tokio_postgres::types::Type::INT8
+                            ])
+                            .await
+                    }
+                    "deleted_and_modified_threads" => {
+                        self.conn
+                            .prepare_typed(
+                                sql::deleted_and_modified_threads(
+                                    self.schema(),
+                                    thread_type == "threads"
+                                )
+                                .as_str(),
+                                &[
+                                    tokio_postgres::types::Type::TEXT,
+                                    tokio_postgres::types::Type::JSONB
+                                ]
+                            )
+                            .await
+                    }
+                    "threads_list" => {
+                        self.conn
+                            .prepare_typed(sql::threads_list(), &[
+                                tokio_postgres::types::Type::JSONB
+                            ])
+                            .await
+                    }
+                    "check_metadata_col" => {
+                        self.conn
+                            .prepare_typed(
+                                sql::check_metadata_col(self.schema(), thread_type).as_str(),
+                                &[tokio_postgres::types::Type::TEXT]
+                            )
+                            .await
+                    }
+                    "combined_threads" => {
+                        self.conn
+                            .prepare_typed(
+                                sql::combined_threads(
+                                    self.schema(),
+                                    board,
+                                    thread_type == "threads"
+                                )
+                                .as_str(),
+                                &[
+                                    tokio_postgres::types::Type::TEXT,
+                                    tokio_postgres::types::Type::JSONB
+                                ]
+                            )
+                            .await
+                    }
+                    _ => unreachable!()
                 }
-        }).expect("Error setting Ctrl-C handler");
-    }
-
-    fn upsert_metadata(&self, board: &str, col: &str, json_item: &serde_json::Value) {
-        self.conn.execute(&sql::upsert_metadata(&self.schema, col), &[&board, &json_item]).expect("Err executing sql: upsert_metadata");
-    }
-
-    fn get_media_posts(&self, board: &str, thread:u32) -> Result<postgres::rows::Rows, postgres::error::Error> {
-        self.conn.query(&sql::media_posts(&self.schema, board, thread), &[])
-    }
-
-    fn upsert_hash2(&self, board: &str, no: u64, hash_type: &str, hashsum: Vec<u8>) {
-        self.conn.execute(&sql::upsert_hash(&self.schema, board, no, hash_type), &[&hashsum]).expect("Err executing sql: upsert_hash2");
-    }
-
-    // Mark a single post for deletion
-    fn upsert_deleted(&self, board: &str, no:u32) {
-        self.conn.execute(&sql::upsert_deleted(&self.schema, board, no), &[]).expect("Err executing sql: upsert_deleted");
-    }
-    
-    // Mark posts where it's deleted 
-    fn upsert_deleteds(&self, board: &str, thread:u32, json_item: &serde_json::Value) {
-        self.conn.execute(&sql::upsert_deleteds(&self.schema, board, thread), &[&json_item]).expect("Err executing sql: upsert_deleteds");
-    }
-    
-    fn upsert_thread(&self, board: &str, json_item: &serde_json::Value) {
-        // This method inserts a post or updates an existing one.
-        // It only updates rows where there's a column change. A majority of posts in a thread don't change. This saves IO writes. 
-        // (It doesn't modify/update sha256, sha25t, or deleted. Those are manually done)
-        // https://stackoverflow.com/a/36406023
-        // https://dba.stackexchange.com/a/39821
-        // println!("{}", serde_json::to_string(json_item).unwrap());
-        //
-        // md5 -> 4chan for some reason inserts a backslash
-        // https://stackoverflow.com/a/11449627
-        self.conn.execute(&sql::upsert_thread(&self.schema, board), &[&json_item]).expect("Err executing sql: upsert_thread");
-    }
-    
-    fn check_metadata_col(&self, board: &str, col:&str) -> bool {
-        let resp = self.conn.query(&sql::check_metadata_col(&self.schema, col), &[&board]).expect("Err query check_metadata_col");
-        let mut res = false;
-        for row in resp.iter() {
-            let ret : Option<bool> = row.get(0);
-            if let Some(r) = ret {
-                res = r;
-            } // else it's null, meaning false
+                .expect(&format!("Error creating prepare statement {}", func))
+            );
         }
-        res
+        statements
     }
 
-    async fn get_threads_list(&self, json_item: &serde_json::Value) -> Option<VecDeque<u32>> {
-        let resp = self.conn.query(&sql::threads_list(), &[&json_item]).expect("Error getting modified and deleted threads from new threads.json in get_threads_list");
-        let mut _result : Option<VecDeque<u32>> = None;
-        'outer: for _ri in 0..4 {
-            for row in resp.iter() {
-                let jsonb : Option<serde_json::Value> = row.get(0);
-                match jsonb {
-                    Some(val) => {
-                        let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_threads_list");
-                        _result = Some(q);
-                        break 'outer;
-                    },
-                    None => {
-                        eprintln!("Error getting get_threads_list at column 0: NULL @ {}", Local::now().to_rfc2822());
-                        task::sleep(Duration::from_secs(1)).await;
-                    },
+    async fn init_type(&self) -> Result<u64, tokio_postgres::error::Error> {
+        self.conn.execute(sql::init_type(), &[]).await
+    }
+
+    async fn init_schema(&self) {
+        self.conn
+            .execute(sql::init_schema(self.schema()).as_str(), &[])
+            .await
+            .expect(&format!("Err creating schema: {}", self.schema()));
+    }
+
+    async fn init_metadata(&self) {
+        self.conn
+            .batch_execute(&sql::init_metadata(self.schema()))
+            .await
+            .expect("Err creating metadata");
+    }
+
+    async fn init_board(&self, board: &str) {
+        self.conn
+            .batch_execute(&sql::init_board(self.schema(), board))
+            .await
+            .expect(&format!("Err creating schema: {}", board));
+    }
+
+    async fn init_views(&self, board: &str) {
+        self.conn
+            .batch_execute(&sql::init_views(self.schema(), board))
+            .await
+            .expect("Err create views");
+    }
+
+    /// Converts bytes to json object and feeds that into the query
+    async fn upsert_metadata(
+        &self,
+        board: &str,
+        item: &[u8],
+        statement: &tokio_postgres::Statement
+    ) -> Result<u64>
+    {
+        Ok(self
+            .conn
+            .execute(statement, &[&board, &serde_json::from_slice::<serde_json::Value>(item)?])
+            .await?)
+        //.expect("Err executing sql: upsert_metadata");
+    }
+
+    async fn get_media_posts(
+        &self,
+        thread: u32,
+        statement: &tokio_postgres::Statement
+    ) -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>
+    {
+        self.conn.query(statement, &[&(thread as i64)]).await
+    }
+
+    async fn upsert_hash2(&self, board: &str, no: u64, hash_type: &str, hashsum: Vec<u8>) {
+        self.conn
+            .execute(sql::upsert_hash(self.schema(), board, no, hash_type).as_str(), &[&hashsum])
+            .await
+            .expect("Err executing sql: upsert_hash2");
+    }
+
+    /// Mark a single post as deleted.
+    async fn upsert_deleted(&self, no: u32, statement: &tokio_postgres::Statement) {
+        self.conn
+            .execute(statement, &[&(no as i64)])
+            .await
+            .expect("Err executing sql: upsert_deleted");
+    }
+
+    /// Mark posts from a thread where it's deleted.
+    async fn upsert_deleteds(
+        &self,
+        thread: u32,
+        item: &[u8],
+        statement: &tokio_postgres::Statement
+    ) -> Result<u64>
+    {
+        Ok(self
+            .conn
+            .execute(statement, &[
+                &serde_json::from_slice::<serde_json::Value>(item)?,
+                &(thread as i64)
+            ])
+            .await?)
+        //.expect("Err executing sql: upsert_deleteds");
+    }
+
+    /// This method updates an existing post or inserts a new one.
+    /// Posts are only updated where there's a field change.
+    /// A majority of posts in a thread don't change, this minimizes I/O writes.
+    /// (sha256, sha25t, and deleted are handled seperately as they are special
+    /// cases) https://stackoverflow.com/a/36406023
+    /// https://dba.stackexchange.com/a/39821
+    ///
+    /// 4chan inserts a backslash in their md5.
+    /// https://stackoverflow.com/a/11449627
+    async fn upsert_thread(
+        &self,
+        item: &[u8],
+        statement: &tokio_postgres::Statement
+    ) -> Result<u64>
+    {
+        Ok(self
+            .conn
+            .execute(statement, &[&serde_json::from_slice::<serde_json::Value>(item)?])
+            .await?)
+        // .expect("Err executing sql: upsert_thread");
+    }
+
+    async fn check_metadata_col(&self, board: &str, statement: &tokio_postgres::Statement) -> bool {
+        self.conn
+            .query(statement, &[&board])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .unwrap_or(false)
+    }
+
+    async fn get_threads_list(
+        &self,
+        item: &[u8],
+        statement: &tokio_postgres::Statement
+    ) -> Result<VecDeque<u32>>
+    {
+        let i = serde_json::from_slice::<serde_json::Value>(item)?;
+        Ok(self
+            .conn
+            .query(statement, &[&i])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+            .flatten()
+            .ok_or(anyhow!("Error in get_threads_list"))?)
+    }
+
+    /// This query is only run ONCE at every startup
+    /// Running a JOIN to compare against the entire DB on every INSERT/UPDATE
+    /// would not be that great. That is not done here.
+    /// This gets all the threads from cache, compares it to the new json to get
+    /// new + modified threads Then compares that result to the database
+    /// where a thread is deleted or archived, and takes only the threads
+    /// where's it's not deleted or archived
+    async fn get_combined_threads(
+        &self,
+        board: &str,
+        new_threads: &[u8],
+        statement: &tokio_postgres::Statement
+    ) -> Result<VecDeque<u32>>
+    {
+        let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        Ok(self
+            .conn
+            .query(statement, &[&board, &i])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+            .flatten()
+            .ok_or(anyhow!("Error in get_combined_threads"))?)
+    }
+
+    /// Combine new and prev threads.json into one. This retains the prev
+    /// threads (which the new json doesn't contain, meaning they're either
+    /// pruned or archived).  That's especially useful for boards without
+    /// archives. Use the WHERE clause to select only modified threads. Now
+    /// we basically have a list of deleted and modified threads.
+    /// Return back this list to be processed.
+    /// Use the new threads.json as the base now.
+    async fn get_deleted_and_modified_threads(
+        &self,
+        board: &str,
+        new_threads: &[u8],
+        statement: &tokio_postgres::Statement
+    ) -> Result<VecDeque<u32>>
+    {
+        let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        Ok(self
+            .conn
+            .query(statement, &[&board, &i])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+            .flatten()
+            .ok_or(anyhow!("Error in get_combined_threads"))?)
+    }
+
+    async fn compute(
+        &self,
+        typ: YotsubaType,
+        board_settings: &BoardSettings,
+        // media_statement: &tokio_postgres::Statement,
+        mut tx: Option<UnboundedSender<u32>>,
+        mut rx: Option<UnboundedReceiver<u32>>
+    )
+    {
+        match typ {
+            YotsubaType::Archive | YotsubaType::Threads => {
+                if let Some(t) = tx {
+                    // loop {
+                    let bs = board_settings.clone();
+                    if let Some(_) = self.fetch_board(typ, bs, &t).await {};
+                    // }
+                }
+            }
+            YotsubaType::Media => {
+                if let Some(mut r) = rx {
+                    loop {
+                        while let Some(thread) = r.recv().await {
+                            // let bs = board_settings.clone();
+                            // let info = MediaInfo { board: bs, thread: result };
+                            self.fetch_media(board_settings, thread).await;
+                        }
+                        if self.finished.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        sleep(Duration::from_millis(250)).await;
+                    }
                 }
             }
         }
-        _result
     }
 
-    async fn get_combined_threads(&self, board: &str, new_threads: &serde_json::Value, is_threads: bool) -> Option<VecDeque<u32>> {
-        // This query is only run ONCE at every startup
-        // Running a JOIN to compare against the entire DB on every INSERT/UPDATE would not be that great. 
-        // This gets all the threads from cache, compares it to the new json to get new + modified threads
-        // Then compares that result to the database where a thread is deleted or archived, and takes only the threads where's it's not
-        // deleted or archived
-        let resp = self.conn.query(&sql::combined_threads(&self.schema, board, is_threads), &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json in get_combined_threads");
-        let mut _result : Option<VecDeque<u32>> = None;
-        'outer: for _ri in 0..4 {
-            for row in resp.iter() {
-                let jsonb : Option<serde_json::Value> = row.get(0);
-                match jsonb {
-                    Some(val) => {
-                        let q :VecDeque<u32> = serde_json::from_value(val).expect("Err deserializing get_combined_threads");
-                        _result = Some(q);
-                        break 'outer;
-                    },
-                    None => {
-                        // Null from query -> no new threads
-                        //eprintln!("Error getting get_combined_threads at column 0: NULL @ {}", Local::now().to_rfc2822());
-                        task::sleep(Duration::from_secs(1)).await;
-                    },
+    async fn fetch_media(&self, info: &BoardSettings, thread: u32) {
+        // FETCH MEDIA
+        if !(info.download_media || info.download_thumbnails) {
+            return;
+        }
+        let ms = self
+            .conn
+            .prepare_typed(sql::media_posts(self.schema(), &info.board).as_str(), &[
+                tokio_postgres::types::Type::INT8
+            ])
+            .await
+            .unwrap();
+        match self.get_media_posts(thread, &ms).await {
+            Ok(media_list) => {
+                let mut fut = FuturesUnordered::new();
+                // let client = &self.client;
+                let mut has_media = false;
+                for row in media_list.iter() {
+                    has_media = true;
+                    // let no: i64 = row.get("no");
+
+                    // Preliminary checks before downloading
+                    let sha256: Option<Vec<u8>> = row.get("sha256");
+                    let sha256t: Option<Vec<u8>> = row.get("sha256t");
+                    let mut dlm = false;
+                    if info.download_media {
+                        match sha256 {
+                            Some(h) => {
+                                // Improper sha, re-dl
+                                if h.len() < (65 / 2) {
+                                    dlm = true;
+                                }
+                            }
+                            None => {
+                                // No thumbs, proceed to dl
+                                dlm = true;
+                            }
+                        }
+                        if dlm {
+                            fut.push(self.dl_media_post2(row, info, thread, false));
+                        }
+                    }
+                    let mut dlt = false;
+                    if info.download_thumbnails {
+                        match sha256t {
+                            Some(h) => {
+                                // Improper sha, re-dl
+                                if h.len() < (65 / 2) {
+                                    dlt = true;
+                                }
+                            }
+                            None => {
+                                // No thumbs, proceed to dl
+                                dlt = true;
+                            }
+                        }
+                        if dlt {
+                            fut.push(self.dl_media_post2(row, info, thread, true));
+                        }
+                    }
+                }
+                if has_media {
+                    let s = &self;
+                    while let Some(hh) = fut.next().await {
+                        if let Some((no, hashsum, thumb)) = hh {
+                            if let Some(hsum) = hashsum {
+                                // Media info
+                                // if !thumb {
+                                //     println!(
+                                //         "{}/{} Upserting sha256: ({})",
+                                //         &info.board,
+                                //         no,
+                                //         if thumb { "thumb" } else { "media" }
+                                //     );
+                                // }
+
+                                s.upsert_hash2(
+                                    &info.board,
+                                    no,
+                                    if thumb { "sha256t" } else { "sha256" },
+                                    hsum
+                                )
+                                .await;
+                            } else {
+                                error!("Error unwrapping hashsum");
+                            }
+                        } else {
+                            error!("Error running hashsum function");
+                        }
+                        // // Listen to CTRL-C
+                        // if self.finished.load(Ordering::Relaxed) {
+                        //     return;
+                        // }
+                    }
                 }
             }
+            Err(e) => error!("/{}/{}\tError getting missing media -> {}", info.board, thread, e)
         }
-        _result
     }
 
-    async fn get_deleted_and_modified_threads2(&self, board: &str, new_threads: &serde_json::Value, is_threads: bool) -> Option<VecDeque<u32>> {
-        // Combine new and prev threads.json into one. This retains the prev threads (which the new json doesn't contain, meaning they're either pruned or archived).
-        //  That's especially useful for boards without archives.
-        // Use the WHERE clause to select only modified threads. Now we basically have a list of deleted and modified threads.
-        // Return back this list to be processed.
-        // Use the new threads.json as the base now.
-        let resp = self.conn.query(&sql::deleted_and_modified_threads(&self.schema, is_threads), &[&board, &new_threads]).expect("Error getting modified and deleted threads from new threads.json");
-        let mut _result : Option<VecDeque<u32>> = None;
-        resp.iter().for_each(|row| {
-            let jsonb : Option<serde_json::Value> = row.get(0);
-            if let Some(val) = jsonb {
-                _result = serde_json::from_value::<VecDeque<u32>>(val).ok();
+    // Downloads the list of archive / live threads
+    async fn get_generic_thread(
+        &self,
+        thread_type: &str,
+        bs: &BoardSettings,
+        last_modified: &mut String,
+        fetched_threads: &mut Option<Vec<u8>>,
+        local_threads_list: &mut VecDeque<u32>,
+        init: &mut bool,
+        update_metadata: &mut bool,
+        has_archives: &mut bool,
+        statements: &HashMap<String, tokio_postgres::Statement>
+    )
+    {
+        if thread_type == "archive" && !*has_archives {
+            return;
+        };
+        let current_board = &bs.board;
+        for retry_attempt in 0..(bs.retry_attempts + 1) {
+            match request::cget(
+                &self.client,
+                format!(
+                    "{domain}/{board}/{thread_type}.json",
+                    domain = self.config.settings.api_url.as_ref().unwrap(),
+                    board = current_board,
+                    thread_type = thread_type
+                ),
+                Some(last_modified),
+                bs.retry_attempts,
+                bs.throttle_millisec
+            )
+            .await
+            {
+                Ok((_last_modified, status, body)) => {
+                    if !_last_modified.is_empty() {
+                        if *last_modified != _last_modified {
+                            last_modified.clear();
+                            last_modified.push_str(&_last_modified);
+                        }
+                    } else {
+                        error!(
+                            "/{}/ [{}] <{}> An error has occurred getting the last_modified date",
+                            current_board, thread_type, status
+                        );
+                    }
+                    match status {
+                        StatusCode::OK => {
+                            if !body.is_empty() {
+                                info!(
+                                    "({})\t/{}/\tReceived new threads", // on {}",
+                                    thread_type,
+                                    current_board // ,Local::now().to_rfc2822()
+                                );
+                                *fetched_threads = Some(body.to_owned());
+                                // *fetched_threads = Some(
+                                //     serde_json::from_str::<serde_json::Value>(&new_threads)
+                                //         .expect("Err deserializing new threads"),
+                                // );
+                                // let ft = fetched_threads.to_owned().unwrap();
+
+                                // Check if there's an entry in the metadata
+                                if self
+                                    .check_metadata_col(
+                                        &current_board,
+                                        &statements
+                                            .get(
+                                                &[
+                                                    thread_type,
+                                                    "_check_metadata_col_",
+                                                    current_board
+                                                ]
+                                                .concat()
+                                            )
+                                            .unwrap()
+                                    )
+                                    .await
+                                {
+                                    // if there's cache
+                                    // if this is a first startup
+                                    // and ena_resume is false or thread type is archive
+                                    // this will trigger getting archives from last left off
+                                    // regardless of ena_resume. ena_resume only affects threads, so
+                                    // a refetch won't be triggered.
+                                    let ena_resume = env::var("ENA_RESUME")
+                                        .ok()
+                                        .map(|a| a.parse::<bool>().ok())
+                                        .flatten()
+                                        .unwrap_or(false);
+                                    if *init
+                                        && (!ena_resume || (ena_resume && thread_type == "archive"))
+                                    {
+                                        // going here means the program was restarted
+                                        // use combination of ALL threads from cache + new threads
+                                        // (excluding archived, deleted, and duplicate threads)
+                                        if let Ok(mut list) = self
+                                            .get_combined_threads(
+                                                &current_board,
+                                                &body,
+                                                &statements
+                                                    .get(
+                                                        &[
+                                                            thread_type,
+                                                            "_combined_threads_",
+                                                            current_board
+                                                        ]
+                                                        .concat()
+                                                    )
+                                                    .unwrap()
+                                            )
+                                            .await
+                                        {
+                                            local_threads_list.append(&mut list);
+                                        } else {
+                                            info!(
+                                                "({})\t/{}/\tSeems like there was no modified threads at startup..",
+                                                thread_type, current_board
+                                            );
+                                        }
+
+                                        // update base at the end
+                                        *update_metadata = true;
+                                        *init = false;
+                                    } else {
+                                        // here is when we have cache and the program in continously
+                                        // running
+                                        // ONLY get the new/modified/deleted threads
+                                        // Compare time modified and get the new threads
+                                        let id = &[
+                                            thread_type,
+                                            "_deleted_and_modified_threads_",
+                                            current_board
+                                        ]
+                                        .concat();
+                                        match &statements.get(id) {
+                                            Some(_statements) => {
+                                                if let Ok(mut list) = self
+                                                    .get_deleted_and_modified_threads(
+                                                        &current_board,
+                                                        &body,
+                                                        _statements
+                                                    )
+                                                    .await
+                                                {
+                                                    local_threads_list.append(&mut list);
+                                                } else {
+                                                    info!(
+                                                        "({})\t/{}/\tSeems like there was no modified threads..",
+                                                        thread_type, current_board
+                                                    )
+                                                }
+                                            }
+                                            None => error!("Statement: {} was not found!", id)
+                                        }
+
+                                        // update base at the end
+                                        *update_metadata = true;
+                                        *init = false;
+                                    }
+                                } else {
+                                    // No cache found
+                                    // Use fetched_threads
+                                    if let Err(e) = self
+                                        .upsert_metadata(
+                                            &current_board,
+                                            &body,
+                                            &statements
+                                                .get(
+                                                    &[
+                                                        thread_type,
+                                                        "_upsert_metadata_",
+                                                        current_board
+                                                    ]
+                                                    .concat()
+                                                )
+                                                .unwrap()
+                                        )
+                                        .await
+                                    {
+                                        error!("Error running upsert_metadata function! {}", e)
+                                    }
+                                    *update_metadata = false;
+                                    *init = false;
+
+                                    match if thread_type == "threads" {
+                                        self.get_threads_list(
+                                            &body,
+                                            &statements
+                                                .get(
+                                                    &[thread_type, "_threads_list_", current_board]
+                                                        .concat()
+                                                )
+                                                .unwrap()
+                                        )
+                                        .await
+                                    } else {
+                                        //serde_json::from_value::<VecDeque<u32>>(
+                                        // Converting to anyhow::Error
+                                        if let Ok(t) =
+                                            serde_json::from_slice::<VecDeque<u32>>(&body)
+                                        {
+                                            Ok(t)
+                                        } else {
+                                            Err(anyhow!(
+                                                "Error converting body to VecDeque for get_threads_list"
+                                            ))
+                                        }
+                                        // .unwrap()
+                                        //)
+                                        // .ok()
+                                    } {
+                                        Ok(mut list) => local_threads_list.append(&mut list),
+                                        Err(e) => warn!(
+                                            "({})\t/{}/\tSeems like there was no modified threads in the beginning?.. {}",
+                                            thread_type, current_board, e
+                                        )
+                                    }
+                                }
+                            } else {
+                                error!(
+                                    "({})\t/{}/\t<{}> Fetched threads was found to be empty!",
+                                    thread_type, current_board, status
+                                );
+                            }
+                        }
+                        StatusCode::NOT_MODIFIED => {
+                            info!("({})\t/{}/\t<{}>", thread_type, current_board, status)
+                        }
+                        StatusCode::NOT_FOUND => {
+                            error!(
+                                "({})\t/{}/\t<{}> No {} found! {}",
+                                thread_type,
+                                current_board,
+                                status,
+                                thread_type,
+                                if retry_attempt == 0 {
+                                    "".into()
+                                } else {
+                                    format!("Retry attempt: #{}", retry_attempt)
+                                }
+                            );
+                            sleep(Duration::from_secs(1)).await;
+                            if thread_type == "archive" {
+                                *has_archives = false;
+                            }
+                            continue;
+                        }
+                        _ => error!(
+                            "({})\t/{}/\t<{}> An error has occurred!",
+                            thread_type, current_board, status
+                        )
+                    };
+                }
+                Err(e) => error!(
+                    "({})\t/{}/\tError fetching the {}.json.\t{}",
+                    thread_type, current_board, thread_type, e
+                )
             }
-        });
-        _result
+            if thread_type == "archive" {
+                *has_archives = true;
+            }
+            break;
+        }
     }
 
     // Manages a single board
-    async fn assign_to_board(&self, bs: BoardSettings2) -> Option<()> {
-        let current_board = &bs.board;//.replace("_ena", "");
-        self.init_board(&bs.board);
-        self.init_views(current_board);
-        /*if bs.board.contains("_ena") {
-            self.init_views(current_board);
-        }*/
-        let _one_millis = Duration::from_millis(1);
-        let mut threads_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
-        let mut archives_last_modified = String::from("Sun, 04 Aug 2019 00:08:35 GMT");
-        let mut local_threads_list : VecDeque<u32> = VecDeque::new();
+    async fn fetch_board(
+        &self,
+        thread_type: YotsubaType,
+        bs: BoardSettings,
+        t: &UnboundedSender<u32> // statements: HashMap<String, tokio_postgres::Statement>
+    ) -> Option<()>
+    {
+        let current_board = &bs.board;
+        let mut threads_last_modified = String::new();
+        let mut local_threads_list: VecDeque<u32> = VecDeque::new();
         let mut update_metadata = false;
-        let mut update_metadata_archive = false;
         let mut init = true;
-        let mut init_archive = true;
         let mut has_archives = true;
-        // let mut count:u32 = 0;
-        let ps = self.settings.get("settings").expect("Err get settings").get("path").expect("err getting path").as_str().expect("err converting path to str");
-        let p = ps.trim_end_matches('/').trim_end_matches('\\');
+        let statements = self.create_statements(current_board, thread_type).await;
+
+        // This function is only called by fetch_board so it'll never be media.
+        let thread_type = match thread_type {
+            YotsubaType::Archive => "archive",
+            _ => "threads"
+        };
+
+        let rd = bs.refresh_delay.into();
+        let dur = Duration::from_millis(250);
+        let ratel = Duration::from_millis(bs.throttle_millisec.into());
 
         loop {
-            // Listen to CTRL-C
-            if let Some(finished) = self.finished.try_lock() {
-                if *finished {
+            let now = tokio::time::Instant::now();
+
+            // Download threads.json / archive.json
+            let mut fetched_threads: Option<Vec<u8>> = None;
+            self.get_generic_thread(
+                thread_type,
+                &bs,
+                &mut threads_last_modified,
+                &mut fetched_threads,
+                &mut local_threads_list,
+                &mut init,
+                &mut update_metadata,
+                &mut has_archives,
+                &statements
+            )
+            .await;
+
+            // Display length of new fetched threads
+            let threads_len = local_threads_list.len();
+            if threads_len > 0 {
+                info!("({})\t/{}/\tTotal new threads: {}", thread_type, current_board, threads_len);
+            }
+            // print_len(threads_len, thread_type);
+
+            // Download each thread
+            let mut position = 1u32;
+            while let Some(thread) = local_threads_list.pop_front() {
+                let tnow = tokio::time::Instant::now();
+                self.assign_to_thread(&bs, thread_type, thread, position, threads_len, &statements)
+                    .await;
+                position += 1;
+
+                // Download thumbnails
+                // if bs.download_thumbnails {
+                // self.fetch_media(&bs, thread, false).await;
+                // }
+
+                // Send to download full media
+                // if bs.download_media {
+                // t.send(thread).unwrap();
+                // tokio::spawn(async move {
+                self.fetch_media(&bs, thread).await;
+                // });
+                // }
+
+                if self.finished.load(Ordering::Relaxed) {
                     return Some(());
                 }
-            } else {
-                eprintln!("Lock occurred trying to get finished in assign_to_board");
+                // ratelimit
+                tokio::time::delay_until(tnow + ratel).await;
             }
-            //et mut queue = self.queue.get_mut(&current_board).expect("err getting queue for board"); 
-            let now = Instant::now();
-
-            // Download threads.json
-            // Scope to drop values when done
-            let mut fetched_threads : Option<serde_json::Value> = None;
-            {
-                let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/threads.json", url=bs.api_url, bo=current_board), &threads_last_modified).await;
-                match status {
-                    reqwest::StatusCode::OK => {
-                        match last_modified_ {
-                            Some(last_modified) => {
-                                if threads_last_modified != last_modified {
-                                    threads_last_modified.clear();
-                                    threads_last_modified.push_str(&last_modified);
-                                }
-                            },
-                            None => eprintln!("/{}/ [threads] <{}> An error has occurred getting the last_modified date", current_board, status),
-                        }
-                        match body {
-                            Ok(new_threads) => {
-                                if !new_threads.is_empty() {
-                                    println!("/{}/ [threads] Received new threads on {}", current_board, Local::now().to_rfc2822());
-                                    fetched_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
-                                    let ft = fetched_threads.to_owned().unwrap();
-
-                                    if self.check_metadata_col(&current_board, "threads") {
-                                        // if there's cache
-                                        // if this is a first startup
-                                        if init {
-                                            // going here means the program was restarted
-                                            // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
-                                            if let Some(mut fetched_threads_list) = self.get_combined_threads(&current_board, &ft, true).await {
-                                                local_threads_list.append(&mut fetched_threads_list);
-                                            } else {
-                                                println!("/{}/ [threads] Seems like there was no modified threads at startup..", current_board);
-                                            }
-
-                                            // update base at the end
-                                            update_metadata = true;
-                                            init = false;
-                                        } else {
-                                            // here is when we have cache and the program in continously running
-                                            // only get new/modified/deleted threads
-                                            // compare time modified and get the new threads
-                                            if let Some(mut fetched_threads_list) = self.get_deleted_and_modified_threads2(&current_board, &ft, true).await {
-                                                local_threads_list.append(&mut fetched_threads_list);
-                                            } else {
-                                                println!("/{}/ [threads] Seems like there was no modified threads..", current_board);
-                                            }
-
-                                            // update base at the end
-                                            update_metadata = true;
-                                        }
-
-                                    } else {
-                                        // No cache
-                                        // Use fetched_threads 
-                                        if let Some(mut fetched_threads_list) = self.get_threads_list(&ft).await {
-                                            // self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
-                                            local_threads_list.append(&mut fetched_threads_list);
-                                            self.upsert_metadata(&current_board, "threads", &ft);
-                                            init = false;
-                                            update_metadata = false;
-                                        } else {
-                                            println!("/{}/ [threads] Seems like there was no modified threads in the beginning?..", current_board);
-                                        }
-                                    }
-                                    
-
-                                    
-                                } else {
-                                    eprintln!("/{}/ [threads] <{}> Fetched threads was found to be empty!", current_board, status)
-                                }
-                            },
-                            Err(e) => eprintln!("/{}/ [threads] <{}> An error has occurred getting the body\n{}", current_board, status, e),
-                        }
-                    },
-                    reqwest::StatusCode::NOT_MODIFIED => {
-                        eprintln!("/{}/ [threads] <{}>", current_board, status);
-                    },
-                    _ => {
-                        eprintln!("/{}/ [threads] <{}> An error has occurred!", current_board, status);
-                    },
+            // Update the cache at the end so that if the program was stopped while
+            // processing threads, when it restarts it'll use the same
+            // list of threads it was processing before + new ones.
+            if threads_len > 0 && update_metadata {
+                if let Some(ft) = &fetched_threads {
+                    if let Err(e) = self
+                        .upsert_metadata(
+                            &current_board,
+                            &ft,
+                            statements
+                                .get(&[thread_type, "_upsert_metadata_", &bs.board].concat())
+                                .unwrap()
+                        )
+                        .await
+                    {
+                        error!("Error executing upsert_metadata function! {}", e);
+                    }
+                    update_metadata = false;
                 }
-
-                task::sleep(Duration::from_millis(bs.throttle_millisec.into())).await; // Ratelimit
             }
-
-            // Download archive.json
-            // Scope to drop values when done
-            // Am I really copy pasting the code above....
-            let mut fetched_archive_threads : Option<serde_json::Value> = None;
-            {
-                if has_archives {
-                    for rti in 0..=bs.retry_attempts {
-                        let (last_modified_, status, body) = self.cget(&format!("{url}/{bo}/archive.json", url=bs.api_url, bo=current_board), &archives_last_modified).await;
-                        match status {
-                            reqwest::StatusCode::OK => {
-                                match last_modified_ {
-                                    Some(last_modified) => {
-                                        if archives_last_modified != last_modified {
-                                            archives_last_modified.clear();
-                                            archives_last_modified.push_str(&last_modified);
-                                        }
-                                    },
-                                    None => eprintln!("/{}/ [archive] <{}> An error has occurred getting the last_modified date", current_board, status),
-                                }
-                                match body {
-                                    Ok(new_threads) => {
-                                        if !new_threads.is_empty() {
-                                            println!("/{}/ [archive] Received new threads on {}", current_board, Local::now().to_rfc2822());
-                                            fetched_archive_threads = Some(serde_json::from_str::<serde_json::Value>(&new_threads).expect("Err deserializing new threads"));
-                                            let ft = fetched_archive_threads.to_owned().unwrap();
-
-                                            if self.check_metadata_col(&current_board, "archive") {
-                                                // if there's cache
-                                                // if this is a first startup
-                                                if init_archive {
-                                                    // going here means the program was restarted
-                                                    // use combination of all threads from cache + new threads (excluding archived, deleted, and duplicate threads)
-                                                    if let Some(mut list) = self.get_combined_threads(&current_board, &ft, false).await {
-                                                        local_threads_list.append(&mut list);
-                                                    } else {
-                                                        println!("/{}/ [archive] Seems like there was no modified threads from startup..", current_board);
-                                                    }
-
-                                                    // update base at the end
-                                                    update_metadata_archive = true;
-                                                    init_archive = false;
-                                                } else {
-                                                    // here is when we have cache and the program in continously running
-                                                    // only get new/modified/deleted threads
-                                                    // compare time modified and get the new threads
-                                                    if let Some(mut list) = self.get_deleted_and_modified_threads2(&current_board, &ft, false).await {
-                                                        local_threads_list.append(&mut list);
-                                                    } else {
-                                                        println!("/{}/ [archive] Seems like there was no modified threads..", current_board);
-                                                    }
-
-                                                    // update base at the end
-                                                    update_metadata_archive = true;
-                                                }
-
-                                            } else {
-                                                // No cache
-                                                // Use fetched_threads 
-                                                    self.upsert_metadata(&current_board, "archive", &ft);
-                                                    init_archive = false;
-                                                    update_metadata_archive = false;
-                                                if let Ok(mut list) = serde_json::from_value::<VecDeque<u32>>(ft) {
-                                                    // self.queue.get_mut(&current_board).expect("err getting queue for board2").append(&mut fetched_threads_list);
-                                                    local_threads_list.append(&mut list);
-                                                } else {
-                                                    println!("/{}/ [archive] Seems like there was no modified threads in the beginning?..", current_board);
-                                                }
-                                            }
-                                            
-
-                                            
-                                        } else {
-                                            eprintln!("/{}/ [archive] <{}> Fetched threads was found to be empty!", current_board, status)
-                                        }
-                                    },
-                                    Err(e) => eprintln!("/{}/ [archive] <{}> An error has occurred getting the body\n{}", current_board, status, e),
-                                }
-                            },
-                            reqwest::StatusCode::NOT_MODIFIED => {
-                                eprintln!("/{}/ [archive] <{}>", current_board, status);
-                            },
-                            reqwest::StatusCode::NOT_FOUND => {
-                                eprintln!("/{}/ [archive] <{}> No archives found! Retry attempt: #{}", current_board, status, rti);
-                                task::sleep(Duration::from_millis(bs.throttle_millisec.into())).await;
-                                has_archives = false;
-                                continue;
-                            },
-                            _ => {
-                                eprintln!("/{}/ [archive] <{}> An error has occurred!", current_board, status);
-                            },
-                        }
-
-                        has_archives = true;
-                        task::sleep(Duration::from_millis(bs.throttle_millisec.into())).await; // Ratelimit
-                        break;
-                    }
+            //  Board refresh delay ratelimit
+            while now.elapsed().as_secs() < rd {
+                if self.finished.load(Ordering::Relaxed) {
+                    return Some(());
                 }
-
+                sleep(dur).await;
             }
-
-            // Process the threads
-            {
-                // let queue = self.queue.get(&current_board).expect("err getting queue for board3");
-                let len = local_threads_list.len();
-                if len > 0 {
-                    println!("/{}/ Total New threads: {}", current_board, local_threads_list.len());
-                    // BRUH I JUST WANT TO SHARE MUTABLE DATA
-                    // This will loop until it recieves none
-                    // while let Some(_) = self.drain_list(board).await {
-                    // }
-                    let mut position = 1;
-                    while let Some(thread) = local_threads_list.pop_front() {
-                        if let Some(finished) = self.finished.try_lock() {
-                            if *finished {
-                                return Some(());
-                            }
-                        } else {
-                            eprintln!("Lock occurred trying to get finished");
-                        }
-                        self.assign_to_thread(&bs, thread, p, &position, &len).await;
-                        position += 1;
-                    }
-
-                    // Update the cache at the end so that if the program was stopped while processing threads, when it restarts it'll use the same
-                    // list of threads it was processing before + new ones.
-                    if update_metadata {
-                        if let Some(ft) = &fetched_threads {
-                            self.upsert_metadata(&current_board, "threads", &ft);
-                            update_metadata = false;
-                        }
-                    }
-                    if update_metadata_archive {
-                        if let Some(ft) = &fetched_archive_threads {
-                            self.upsert_metadata(&current_board, "archive", &ft);
-                            update_metadata_archive = false;
-                        }
-                    }
-                } // No need to report if no new threads cause when it's not modified it'll tell us
-            }
-            // Ratelimit after fetching threads
-            let delay:u64 = bs.refresh_delay.into();
-            while now.elapsed().as_secs() <= delay {
-                // Listen to CTRL-C
-                if let Some(finished) = self.finished.try_lock() {
-                    if *finished {
-                        return Some(());
-                    }
-                } else {
-                    eprintln!("Lock occurred trying to get finished in assign_to_board");
-                }
-                task::sleep(Duration::from_millis(250)).await;
+            if self.finished.load(Ordering::Relaxed) {
+                break;
             }
         }
         Some(())
     }
 
     // Download a single thread and its media
-    async fn assign_to_thread(&self, bs: &BoardSettings2, thread: u32, path: &str, position: &u32, length: &usize) {
-        let board = &bs.board;
-        // let board_clean = &bs.board.replace("_ena", "");
-        let mut _retry = 0;
-        let mut _status_resp = reqwest::StatusCode::OK;
-    
-        let now = Instant::now();
-        let one_millis = Duration::from_millis(1);
+    async fn assign_to_thread(
+        &self,
+        board_settings: &BoardSettings,
+        thread_type: &str,
+        thread: u32,
+        position: u32,
+        length: usize,
+        statements: &HashMap<String, tokio_postgres::Statement>
+    )
+    {
+        // if self.finished.load(Ordering::Relaxed) {
+        //     return;
+        // }
 
-        let mut _canb=false;
-        let delay:u128 = bs.throttle_millisec.into();
+        let board = &board_settings.board;
+        // let one_millis = Duration::from_millis(1);
 
-        for _ in 0..=bs.retry_attempts {
-            // Listen to CTRL-C
-
-            let (_last_modified_, status, body) =
-                self.cget(&format!("{domain}/{bo}/thread/{th}.json", domain=bs.api_url, bo=board, th=thread ), "").await;
-            _status_resp = status;
-
-            match body {
-                Ok(jb) => match serde_json::from_str::<serde_json::Value>(&jb) {
-                    Ok(ret) => {
-                        self.upsert_thread(board, &ret);
-                        self.upsert_deleteds(board, thread, &ret);
-                        println!("[{}/{}]\t/{}/{}",position, length, board, thread);
-                        // _canb=true;
-                        // _retry=0;
-                        break;
-                    },
-                    Err(e) => {
-                        if status == reqwest::StatusCode::NOT_FOUND {
-                            println!("[{}/{}]\t/{}/{} <DELETED>",position, length, board, thread);
-                            self.upsert_deleted(board, thread);
+        for _ in 0..(board_settings.retry_attempts + 1) {
+            match request::cget(
+                &self.client,
+                format!(
+                    "{domain}/{bo}/thread/{th}.json",
+                    domain = self.config.settings.api_url.as_ref().unwrap(),
+                    bo = board,
+                    th = thread
+                ),
+                None,
+                board_settings.retry_attempts,
+                board_settings.throttle_millisec
+            )
+            .await
+            {
+                Ok((_, status, body)) => match status {
+                    StatusCode::OK => {
+                        if !body.is_empty() {
+                            if let Err(e) = self
+                                .upsert_thread(
+                                    &body,
+                                    statements
+                                        .get(&[thread_type, "_upsert_thread_", board].concat())
+                                        .unwrap()
+                                )
+                                .await
+                            {
+                                error!("Error executing upsert_thread function! {}", e);
+                            }
+                            match self
+                                .upsert_deleteds(
+                                    thread,
+                                    &body,
+                                    statements
+                                        .get(&[thread_type, "_upsert_deleteds_", board].concat())
+                                        .unwrap()
+                                )
+                                .await
+                            {
+                                Ok(_) => info!(
+                                    "({})\t/{}/{}\t[{}/{}]",
+                                    thread_type, board, thread, position, length
+                                ),
+                                Err(e) => error!("Error running upsert_deleteds function! {}", e)
+                            }
                             break;
-                        }
-                        eprintln!("/{}/{} <{}> An error occured deserializing the json! {}\n{:?}", board, thread, status, e,jb);
-                        while now.elapsed().as_millis() <= delay {
-                            task::sleep(one_millis).await;
-                        }
-                        /*_retry += 1;
-                        if _retry <=(bs.retry_attempts+1) {
-                            continue 'outer;
                         } else {
-                            // TODO handle what to do with invalid thread
-                            _retry = 0;
-                            break 'outer;
-                        }*/
-                    },
+                            error!(
+                                "({})\t/{}/{}\t<{}> Body was found to be empty!",
+                                thread_type, board, thread, status
+                            );
+                            sleep(Duration::from_secs(1)).await;
+                        }
+                    }
+                    StatusCode::NOT_FOUND => {
+                        self.upsert_deleted(
+                            thread,
+                            statements
+                                .get(&[thread_type, "_upsert_deleted_", board].concat())
+                                .unwrap()
+                        )
+                        .await;
+                        warn!(
+                            "({})\t/{}/{}\t[{}/{}]\t<DELETED>",
+                            thread_type, board, thread, position, length
+                        );
+                        break;
+                    }
+                    _e => {}
                 },
                 Err(e) => {
-                    println!("/{}/{} <{}> Error getting body {:?}", board, thread, status, e );
+                    error!("({})\t/{}/{}\tError fetching thread {}", thread_type, board, thread, e);
+                    sleep(Duration::from_secs(1)).await;
                 }
             }
-        }
-
-        // FETCH MEDIA
-        if bs.download_media || bs.download_thumbnails {
-            match self.get_media_posts(board, thread) {
-                Ok(media_list) => {
-                    let mut fut = FuturesUnordered::new();
-                    let client = &self.client;
-                    let mut has_media = false;
-                    for row in media_list.iter() {
-                        has_media = true;
-                        let no : i64  = row.get("no");
-                        let sha256 : Option<Vec<u8>> = row.get("sha256");
-                        let sha256t : Option<Vec<u8>> = row.get("sha256t");
-                        let ext : String = row.get("ext");
-                        let ext2 : String = row.get("ext");
-                        let tim : i64 = row.get("tim");
-                        if let Some(h) = sha256 {
-                            // Improper sha, re-dl
-                            if h.len() < (65/2) && bs.download_media {
-                                fut.push(Self::dl_media_post(&bs.media_url, bs, board, thread, tim, ext, no as u64, true, false, client, path));
-                            }
-                        } else {
-                            // No media, proceed to dl
-                            if bs.download_media {
-                                fut.push(Self::dl_media_post(&bs.media_url, bs, board, thread, tim, ext, no as u64, true, false, client, path));
-                            }
-                        }
-                        if let Some(h) = sha256t {
-                            // Improper sha, re-dl
-                            if h.len() < (65/2) && bs.download_thumbnails {
-                                fut.push(Self::dl_media_post(&bs.media_url, bs, board, thread, tim, ext2, no as u64, false, true, client, path));
-                            }
-                        } else {
-                            // No thumbs, proceed to dl
-                            if bs.download_thumbnails {
-                                fut.push(Self::dl_media_post(&bs.media_url, bs, board, thread, tim, ext2, no as u64, false, true, client, path));
-                            }
-                        }
-                    }
-                    if has_media {
-                        let s = &self;
-                        while let Some(hh) = fut.next().await {
-                            if let Some((no, hashsum, thumb_hash)) = hh {
-                                // Listen to CTRL-C
-                                if let Some(finished) = self.finished.try_lock() {
-                                    if *finished {
-                                        return;
-                                    }
-                                } else {
-                                    eprintln!("Lock occurred trying to get finished");
-                                }
-
-                                if let Some(hsum) = hashsum {
-                                    s.upsert_hash2(board, no, "sha256", hsum);
-                                }
-                                if let Some(hsumt) = thumb_hash {
-                                    s.upsert_hash2(board, no, "sha256t", hsumt);
-                                }
-                            }
-                        }
-                    }
-                },
-                Err(e) => println!("/{}/{} Error getting missing media -> {:?}", board, thread, e),
-            }
-        }
-
-        while now.elapsed().as_millis() <= delay {
-            task::sleep(one_millis).await;
         }
     }
 
     // Downloads any missing media from a thread
-    async fn dl_media_post(domain:&str, bs: &BoardSettings2, board: &str, thread: u32, tim:i64, ext: String ,no: u64, sha:bool, sha_thumb:bool, cl: &reqwest::Client, path:&str)  -> Option<(u64, Option<Vec<u8>>, Option<Vec<u8>>)> {
-        // let board = &bs.board;
-        let dl = |thumb| -> Result<Vec<u8>, reqwest::Error> {
-            let url = format!("{}/{}/{}{}{}", domain, board, tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext} );
-            println!("/{}/{}#{} -> {}{}{}",  board, thread, no,tim, if thumb {"s"} else {""} , if thumb {".jpg"} else {&ext});
-            // TODO retry here
+    async fn dl_media_post2(
+        &self,
+        row: &tokio_postgres::row::Row,
+        bs: &BoardSettings,
+        thread: u32,
+        thumb: bool
+    ) -> Option<(u64, Option<Vec<u8>>, bool)>
+    {
+        let path = self.get_path();
+        let no: i64 = row.get("no");
+        // let _sha256: Option<Vec<u8>> = row.get("sha256");
+        // let _sha256t: Option<Vec<u8>> = row.get("sha256t");
+        let ext: String = row.get("ext");
+        // let _ext2: String = ext.clone();
+        let tim: i64 = row.get("tim");
 
-            // Download and save to file
-            let mut resp = cl.get(&url).send()?;
-            let status = resp.status();
-            let mut hash_byte : Result<Vec<u8>, reqwest::Error> = Ok(vec![]);
-            match status {
-                reqwest::StatusCode::OK => {
-                    let temp_path = format!("{}/tmp/{}_{}{}",path, no,tim,ext);
-                    if let Ok(mut dest) = std::fs::File::create(&temp_path) {
-                        if let Ok(_) = std::io::copy(&mut resp, &mut dest) {}
-                        else { eprintln!("err file temp path copy"); }
-                    }
-                    else { eprintln!("err file temp path"); }
+        let mut hashsum: Option<Vec<u8>> = None;
+        let domain = &self.config.settings.media_url.as_ref().unwrap();
+        let board = &bs.board;
 
-                    // Open the file we just downloaded, and hash it
-                    let mut file = std::fs::File::open(&temp_path).expect("err opening temp file temp path");
-                    let mut hasher = Sha256::new();
-                    std::io::copy(&mut file, &mut hasher).expect("err io copy to hasher");
-                    let hash = hasher.result();
-                    hash_byte = Ok(hash.to_vec());
-                    // println!("{}", &format!("{:x?}", a).as_hex());
+        let url = format!(
+            "{}/{}/{}{}{}",
+            domain,
+            board,
+            tim,
+            if thumb { "s" } else { "" },
+            if thumb { ".jpg" } else { &ext }
+        );
+        for _ in 0..(bs.retry_attempts + 1) {
+            match request::cget(&self.client, &url, None, bs.retry_attempts, bs.throttle_millisec)
+                .await
+            {
+                Ok((_, status, body)) => match status {
+                    StatusCode::OK => {
+                        if !body.is_empty() {
+                            // let body1 = body.clone();
+                            // let hash_q = self.conn
+                            // .query("select sha, sha::text as sha_text from (select sha256($1) as
+                            // sha)x;", &[&body]) .await;
 
-                    // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
-                    // /1/0a
-                    // Move and rename
-                    let hash_str = format!("{:x}", hash);
-                    let basename = Path::new(&hash_str).file_stem().expect("err get basename").to_str().expect("err get basename end");
-                    let second = &basename[&basename.len()-3..&basename.len()-1];
-                    let first = &basename[&basename.len()-1..];
-                    let final_dir_path = format!("{}/media/{}/{}",path, first, second);
-                    let final_path = format!("{}/{}{}", final_dir_path, hash_str, ext);
+                            // create a Sha256 object
+                            let mut hasher = Sha256::new();
 
-                    if (bs.keep_media && !thumb) || (bs.keep_thumbnails && thumb) || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb)) {
-                        
-                        let path_final = Path::new(&final_path);
-                        if !path_final.exists() {
-                            if let Ok(_) = std::fs::create_dir_all(&final_dir_path){}
-                            if let Ok(_) = std::fs::rename(&temp_path, &final_path){}
+                            // write input message
+                            hasher.input(&body);
+
+                            // read hash digest and consume hasher
+                            let hash_bytes = hasher.result();
+
+                            // let hash_bytes: Vec<u8> =
+                            // hi.try_get("sha").expect("Error getting hash u8");
+                            // let hash_text: String =
+                            // hi.try_get("sha_text").expect("Error getting hash txt");
+                            let temp_path = format!("{}/tmp/{}_{}{}", path, no, tim, ext);
+                            hashsum = Some(hash_bytes.as_slice().to_vec());
+
+                            if (bs.keep_media && !thumb)
+                                || (bs.keep_thumbnails && thumb)
+                                || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb))
+                            {
+                                if let Ok(mut dest) = std::fs::File::create(&temp_path) {
+                                    if let Ok(_) = std::io::copy(&mut body.as_slice(), &mut dest) {
+                                        // Media info
+                                        // println!(
+                                        //     "({}) /{}/{}#{} -> {}{}{}",
+                                        //     if thumb { "thumb" } else { "media" },
+                                        //     board,
+                                        //     thread,
+                                        //     no,
+                                        //     tim,
+                                        //     if thumb { "s" } else { "" },
+                                        //     if thumb { ".jpg" } else { &ext }
+                                        // );
+                                        // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
+                                        // /1/0a
+                                        // Move and rename
+
+                                        let hash_str = &format!("{:x}", hash_bytes); // &hash_text[2..];
+                                        let basename = Path::new(&hash_str)
+                                            .file_stem()
+                                            .expect("err get basename")
+                                            .to_str()
+                                            .expect("err get basename end");
+                                        let second =
+                                            &basename[&basename.len() - 3..&basename.len() - 1];
+                                        let first = &basename[&basename.len() - 1..];
+                                        let final_dir_path =
+                                            format!("{}/media/{}/{}", path, first, second);
+                                        let final_path =
+                                            format!("{}/{}{}", final_dir_path, hash_str, ext);
+
+                                        let path_final = Path::new(&final_path);
+
+                                        if !path_final.exists() {
+                                            if let Ok(_) = std::fs::create_dir_all(&final_dir_path)
+                                            {
+                                            }
+                                            if let Ok(_) = std::fs::rename(&temp_path, &final_path)
+                                            {
+                                            }
+                                        } else {
+                                            warn!("Already exists: {}", final_path);
+                                            if let Ok(_) = std::fs::remove_file(&temp_path) {}
+                                        }
+                                    } else {
+                                        error!("Error copying file to a temporary path");
+                                    }
+                                } else {
+                                    error!("Error creating a temporary file path");
+                                }
+                            }
+                            break;
                         } else {
-                            eprintln!("Already exists: {}", final_path);
-                            if let Ok(_) = std::fs::remove_file(&temp_path){}
+                            error!(
+                                "/{}/{}\t<{}> Body was found to be empty!",
+                                board, thread, status
+                            );
+                            sleep(Duration::from_secs(1)).await;
                         }
-                    } else {
-                        if let Ok(_) = std::fs::remove_file(&temp_path){}
+                    }
+                    StatusCode::NOT_FOUND => {
+                        error!("/{}/{}\t<{}> {}", board, no, status, &url);
+                        break;
+                    }
+                    _e => {
+                        error!("/{}/{}\t<{}> {}", board, no, status, &url);
+                        sleep(Duration::from_secs(1)).await;
                     }
                 },
-                reqwest::StatusCode::NOT_FOUND => eprintln!("/{}/{} <{}> {}", board, no, status, url),
-                _ => eprintln!("/{}/{} <{}> {}", board, no, status, url),
-            }
-            hash_byte//Ok(hash_byte)
-        };
-        let mut hashsum = None;
-        let mut thumb_hash = None;
-        if sha {
-            if let Ok(a) = dl(false) {
-                hashsum = Some(a);
-            }
-        }
-
-        if sha_thumb {
-            if let Ok(a) = dl(true) {
-                thumb_hash = Some(a);
-            }
-        }
-
-        Some((no, hashsum, thumb_hash)
-        )
-    }
-
-    // TODO: GET request will loop if nonexistant url
-    async fn cget(&self, url: &str, last_modified: &str) -> (Option<String>, reqwest::StatusCode, Result<String, reqwest::Error>) {
-        let mut res = 
-            match if last_modified == "" { self.client.get(url).send() } else { self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() } {
-                Ok(expr) => expr,
                 Err(e) => {
-                    eprintln!("{} -> {:?}", url, e);
-                    task::sleep(Duration::from_secs(1)).await;
-                    let a = loop {
-                        match if last_modified == "" { self.client.get(url).send() } else { self.client.get(url).header(IF_MODIFIED_SINCE,last_modified).send() } {
-                            Ok(resp) => break resp,
-                            Err(e) => {
-                                eprintln!("{} -> {:?}",url, e);
-                                task::sleep(Duration::from_secs(1)).await;
-                            },
-                        }
-                    };
-                    a
-                },
-            };
-        let mut last_modified_ : Option<String> = None;
-        if_chain! {
-            if let Some(head) = res.headers().get(LAST_MODIFIED);
-            if let Ok(head_str) = head.to_str();
-            then {
-                last_modified_ = Some(head_str.to_string());
+                    error!("/{}/{}\tError fetching thread {}", board, thread, e);
+                    sleep(Duration::from_secs(1)).await;
+                }
             }
         }
-
-        let status = res.status();
-        let body = res.text();
-
-        (last_modified_, status, body)
-    }
-
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-struct BoardSettings2 {
-    board: String,
-    retry_attempts: u16,
-    refresh_delay: u16,
-    api_url: String,
-    media_url: String,
-    throttle_millisec: u32,
-    download_media: bool,
-    download_thumbnails: bool,
-    keep_media: bool,
-    keep_thumbnails: bool,
-}
-
-fn read_json(path: &str) -> Option<serde_json::Value>{
-    if let Ok(file) = File::open(path) {
-        let reader = BufReader::new(file);
-        match serde_json::from_reader(reader) {
-            Ok(s) => Some(s),
-            Err(_) => None,
-        }
-    } else {
-        None
-    }
-}
-
-trait Hex {
-    fn as_hex(&self) -> String;
-}
-
-impl Hex for String {
-    fn as_hex(&self) -> String {
-        self.chars().filter(|&c| !(c == ',' || c == ' ' || c == '[' || c == ']')).collect::<String>()
+        Some((no as u64, hashsum, thumb))
     }
 }

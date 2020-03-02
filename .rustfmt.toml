@@ -1,0 +1,20 @@
+trailing_comma="Never"
+merge_imports=true
+overflow_delimited_expr=true
+#report_fixme="Always"
+#report_todo="Always"
+version="Two"
+where_single_line=true
+wrap_comments=true
+
+edition = "2018"
+
+# The "Default" setting has a heuristic which splits lines too aggresively.
+# We are willing to revisit this setting in future versions of rustfmt.
+# Bugs:
+#   * https://github.com/rust-lang/rustfmt/issues/3119
+#   * https://github.com/rust-lang/rustfmt/issues/3120
+use_small_heuristics = "Max"
+
+# Prevent carriage returns
+newline_style = "Unix"

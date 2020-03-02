@@ -1,10 +1,12 @@
+#![cold]
 
 pub fn init_schema(schema: &str) -> String {
     format!(r#"CREATE SCHEMA IF NOT EXISTS "{}";"#, schema)
 }
 
 pub fn init_metadata(schema: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
         CREATE TABLE IF NOT EXISTS "{0}".metadata (
                 board text NOT NULL,
                 threads jsonb,
@@ -13,11 +15,14 @@ pub fn init_metadata(schema: &str) -> String {
                 CONSTRAINT board_unique UNIQUE (board));
 
         CREATE INDEX IF NOT EXISTS metadata_board_idx on "{0}".metadata(board);
-        "#, schema)
+        "#,
+        schema
+    )
 }
 
 pub fn init_board(schema: &str, board: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
         CREATE TABLE IF NOT EXISTS "{0}"."{1}" (
             no bigint NOT NULL,
             subnum bigint,
@@ -69,7 +74,9 @@ pub fn init_board(schema: &str, board: &str) -> String {
         
         CREATE INDEX IF NOT EXISTS "trgm_idx_{1}_com" ON "{0}"."{1}" USING gin (com "{0}".gin_trgm_ops);
         -- SET enable_seqscan TO OFF;
-        "#, schema, board)
+        "#,
+        schema, board
+    )
 }
 
 pub fn init_type<'a>() -> &'a str {
@@ -123,7 +130,9 @@ pub fn init_type<'a>() -> &'a str {
 }
 
 pub fn init_views(schema: &str, board: &str) -> String {
-    let safe_create_view = |n, stmt| format!(r#"
+    let safe_create_view = |n, stmt| {
+        format!(
+            r#"
         DO $$
         BEGIN
         CREATE VIEW "{0}"."{1}{3}" AS
@@ -133,17 +142,22 @@ pub fn init_views(schema: &str, board: &str) -> String {
             NULL;
         END;
         $$;
-        "#, schema, board, stmt, n);
-    
-    let main_view = |is_main| safe_create_view(
-        if is_main { "_asagi" } else { "_deleted" },
-        format!(r#"
+        "#,
+            schema, board, stmt, n
+        )
+    };
+
+    let main_view = |is_main| {
+        safe_create_view(
+            if is_main { "_asagi" } else { "_deleted" },
+            format!(
+                r#"
             SELECT
                 no AS doc_id,
                 (CASE WHEN md5 IS NOT NULL THEN no ELSE NULL END) AS media_id,
-                0::smallint AS poster_ip, --not used
+                0::smallint AS poster_ip, -- Unused in Asagi. Used in FF.
                 no AS num,
-                subnum, --for ghost posts
+                subnum, -- Unused in Asagi. Used in FF for ghost posts.
                 (CASE WHEN NOT resto=0 THEN resto ELSE no END) AS thread_num,
                 (CASE WHEN resto=0 THEN true ELSE false END) AS op,
                 "time" AS "timestamp",
@@ -160,7 +174,7 @@ pub fn init_views(schema: &str, board: &str) -> String {
                 (CASE WHEN spoiler IS NULL THEN false ELSE spoiler END) AS spoiler,
                 (CASE WHEN deleted_on IS NULL THEN false ELSE true END) AS deleted,
                 (CASE WHEN capcode IS NULL THEN 'N' ELSE capcode END) AS capcode,
-                NULL AS email, --deprecated
+                NULL AS email, -- Used by Asagi but no longer in the API. Used by FF.
                 name,
                 trip,
                 sub AS title,
@@ -189,7 +203,7 @@ pub fn init_views(schema: &str, board: &str) -> String {
                     , regexp_replace(r19, E'<font class=\"unkfunc\">(.*?)</font>', '\1', 'g') r20
                     , regexp_replace(r20, E'<span class=\"quote\">(.*?)</span>', '\1', 'g') r21
                     , regexp_replace(r21, E'<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>', '\1', 'g') r22 
-                    , regexp_replace(r22, E'<a.*?>(.*?)</a>', '\1', 'g') r23 -- changed for postgres regex
+                    , regexp_replace(r22, E'<a.*?>(.*?)</a>', '\1', 'g') r23 -- Changed for postgres regex
                     , regexp_replace(r23, E'<span class=\"spoiler\"[^>]*>(.*?)</span>', '[spoiler]\1[/spoiler]', 'g') r24
                     , regexp_replace(r24, E'<span class=\"sjis\">(.*?)</span>', '[shiftjis]\1[/shiftjis]', 'g') r25 
                     , regexp_replace(r25, E'<s>', '[spoiler]', 'g') r26
@@ -197,66 +211,121 @@ pub fn init_views(schema: &str, board: &str) -> String {
                     , regexp_replace(r27, E'<br\\s*/?>', E'\n', 'g') r28
                     , regexp_replace(r28, E'<wbr>', '', 'g') r29
                     ) AS comment,
-                NULL AS delpass, --not used
+                NULL AS delpass, -- Unused in Asagi. Used in FF.
                 (CASE WHEN sticky IS NULL THEN false ELSE sticky END) AS sticky,
                 (CASE WHEN closed IS NULL THEN false ELSE closed END) AS locked,
                 (CASE WHEN id='Developer' THEN 'Dev' ELSE id END) AS poster_hash, --not the same AS media_hash
                 country AS poster_country,
                 country_name AS poster_country_name,
-                NULL AS exif, --TODO not used
+                (case when
+                  jsonb_strip_nulls(jsonb_build_object('uniqueIps', unique_ips, 'since4pass', since4pass, 'trollCountry', (
+                  case when 
+                  country = ANY ('{{AC,AN,BL,CF,CM,CT,DM,EU,FC,GN,GY,JH,KN,MF,NB,NZ,PC,PR,RE,TM,TR,UN,WP}}'::text[])
+                  then
+                  country
+                  else
+                  null
+                  end
+                  ))) != '{{}}'::jsonb then 
+                jsonb_strip_nulls(jsonb_build_object('uniqueIps', unique_ips, 'since4pass', since4pass, 'trollCountry', (
+                  case when 
+                  country = ANY ('{{AC,AN,BL,CF,CM,CT,DM,EU,FC,GN,GY,JH,KN,MF,NB,NZ,PC,PR,RE,TM,TR,UN,WP}}'::text[])
+                  then
+                  country
+                  else
+                  null
+                  end
+                  ))) 
+                   end )::text as exif, -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
                 (CASE WHEN archived_on IS NULL THEN false ELSE true END) AS archived,
                 archived_on
                 FROM "{0}"."{1}"
                 {2};
-        "#, schema, board, if is_main { "" } else { "WHERE deleted_on is not null" }));
-    
-    let board_threads = safe_create_view("_threads", format!(r#"
+                "#,
+                schema,
+                board,
+                if is_main { "" } else { "WHERE deleted_on is not null" }
+            )
+        )
+    };
+
+    let board_threads = safe_create_view(
+        "_threads",
+        format!(
+            r#"
         SELECT
             no as thread_num,
-            time as time_op,
+            "time" as time_op,
             last_modified as time_last,
             last_modified as time_bump,
             (CASE WHEN subnum is not null then "time" else NULL END ) as time_ghost,
             (CASE WHEN subnum is not null then last_modified else NULL END )  as time_ghost_bump,
             last_modified as time_last_modified,
-            (SELECT COUNT(no) FROM "asagi"."a" re WHERE t.no = resto or t.no = no) as nreplies,
-            (SELECT COUNT(md5) FROM "asagi"."a" re WHERE t.no = resto or t.no = no) as nimages,
+            (SELECT COUNT(no) FROM "{0}"."{1}" re WHERE t.no = resto or t.no = no) as nreplies,
+            (SELECT COUNT(md5) FROM "{0}"."{1}" re WHERE t.no = resto or t.no = no) as nimages,
             (CASE WHEN sticky IS NULL THEN false ELSE sticky END) AS sticky,
             (CASE WHEN closed IS NULL THEN false ELSE closed END) AS locked
         from "{0}"."{1}" t where resto=0;
-        "#, schema, board));
+        "#,
+            schema, board
+        )
+    );
 
-    let board_users = safe_create_view("_users", format!(r#"
+    let board_users = safe_create_view(
+        "_users",
+        format!(
+            r#"
         SELECT
-            ROW_NUMBER() OVER (ORDER by min(t.time)) AS id,
-            t.n AS name, t.tr AS trip, min(t.time) AS firstseen, count(*) AS postcount
+            ROW_NUMBER() OVER (ORDER by min(t.time)) AS user_id,
+            t.n AS name,
+            t.tr AS trip,
+            MIN(t.time) AS firstseen, COUNT(*) AS postcount
             FROM (SELECT *, COALESCE(name,'') AS n, COALESCE(trip,'') AS tr
         FROM "{0}"."{1}") t GROUP BY t.n,t.tr;
-        "#, schema, board));
+        "#,
+            schema, board
+        )
+    );
 
-    let board_images = safe_create_view("_images", format!(r#"
-        select ROW_NUMBER() OVER(ORDER by x.media) AS media_id, * from (
-            select
-                encode(md5, 'base64') as media_hash,
-                max(tim)::text || max(ext) as media,
-                (case when max(resto) = 0 then max(tim)::text || 's.jpg' else null END)  as preview_op ,
-                (case when max(resto) != 0 then max(tim)::text || 's.jpg' else null END)  as preview_reply ,
-                count(md5)::int as total,
-                0::smallint as banned
-            from "{0}"."{1}" where md5 is not null group by md5)x;
-        "#, schema, board));
+    let board_images = safe_create_view(
+        "_images",
+        format!(
+            r#"
+            SELECT ROW_NUMBER() OVER(ORDER by x.media) AS media_id, * FROM (
+              SELECT
+                  ENCODE(md5, 'base64') AS media_hash,
+                  MAX(tim)::text || max(ext) as media,
+                  (CASE WHEN MAX(resto) = 0 THEN MAX(tim)::text || 's.jpg' ELSE NULL END) AS preview_op,
+                  (CASE WHEN MAX(resto) != 0 THEN MAX(tim)::text || 's.jpg' ELSE NULL END) AS preview_reply,
+                  COUNT(md5)::int AS total,
+                  0::smallint AS banned, --unused in asagi, used in FF
+                  encode(sha256, 'hex')::text || max(ext) as media_sha256,
+                  (CASE WHEN MAX(resto) = 0 THEN encode(sha256, 'hex')::text || 's.jpg' ELSE NULL END) AS preview_op_sha256,
+                  (CASE WHEN MAX(resto) != 0 THEN encode(sha256t, 'hex')::text || 's.jpg' ELSE NULL END) AS preview_reply_sha256
+              FROM "{0}"."{1}" WHERE md5 IS NOT NULL GROUP BY md5, sha256, sha256t)x;
+        "#,
+            schema, board
+        )
+    );
 
-    let board_daily = safe_create_view("_daily", format!(r#"
+    let board_daily = safe_create_view(
+        "_daily",
+        format!(
+            r#"
         SELECT
             MIN(t.no) AS firstpost,
             t.day AS day,
-            COUNT(*) AS posts, COUNT(md5) AS images, COUNT(CASE WHEN name ~* '.*sage.*' THEN name ELSE NULL END) AS sage,
+            COUNT(*) AS posts, COUNT(md5) AS images, COUNT(CASE WHEN name ~* '.*sage.*' THEN name ELSE  NULL END) AS sage,
             COUNT(CASE WHEN name = 'Anonymous' AND trip IS NULL THEN name ELSE NULL END) AS anons, COUNT(trip) AS trips,
             COUNT(CASE WHEN COALESCE(name <> 'Anonymous' AND trip IS NULL, TRUE) THEN name ELSE NULL END) AS names
         FROM (SELECT *, (FLOOR(time/86400)*86400)::bigint AS day FROM "{0}"."{1}")t GROUP BY t.day ORDER BY day;
-        "#, schema, board));
-    
-    format!(r#"
+        "#,
+            schema, board
+        )
+    );
+
+    format!(
+        r#"
         {2}
 
         {3}
@@ -275,12 +344,23 @@ pub fn init_views(schema: &str, board: &str) -> String {
                                   id character varying(50) NOT NULL,
                                   val integer NOT NULL,
                                   PRIMARY KEY (id));
-        "#, schema, board, main_view(true), main_view(false), board_threads, board_users, board_images, board_daily)
+        "#,
+        schema,
+        board,
+        main_view(true),
+        main_view(false),
+        board_threads,
+        board_users,
+        board_images,
+        board_daily
+    )
 }
 
+/*
 #[allow(dead_code)]
 pub fn create_asagi_tables(schema: &str, board: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
         CREATE TABLE IF NOT EXISTS "{0}"."{1}_threads" (
           thread_num integer NOT NULL,
           time_op bigint NOT NULL,
@@ -349,12 +429,15 @@ pub fn create_asagi_tables(schema: &str, board: &str) -> String {
         CREATE TABLE IF NOT EXISTS "{0}"."{1}_deleted" (
           LIKE "{0}"."{1}" INCLUDING ALL
         );
-        "#, schema, board)
+        "#,
+        schema, board
+    )
 }
 
 #[allow(dead_code)]
-pub fn create_asagi_triggers(schema: &str, board: &str, board_name_main: &str) -> String  {
-    format!(r#"
+pub fn create_asagi_triggers(schema: &str, board: &str, board_name_main: &str) -> String {
+    format!(
+        r#"
         CREATE OR REPLACE FUNCTION "{1}_update_thread"(n_row "{0}"."{2}") RETURNS void AS $$
         BEGIN
           UPDATE
@@ -585,30 +668,38 @@ pub fn create_asagi_triggers(schema: &str, board: &str, board_name_main: &str) -
         DROP TRIGGER IF EXISTS "{1}_after_update" ON "{0}"."{2}";
         CREATE TRIGGER "{1}_after_update" after UPDATE ON "{0}"."{2}"
           FOR EACH ROW EXECUTE PROCEDURE "{1}_after_update"();
-        "#, schema, board, board_name_main)
-}
+        "#,
+        schema, board, board_name_main
+    )
+}*/
 
-pub fn upsert_deleted(schema: &str, board: &str, no: u32) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's ok to only select no
-    format!(r#"
+pub fn upsert_deleted(schema: &str, board: &str) -> String {
+    // This will find an already existing post due to the WHERE clause, meaning it's
+    // ok to only select no
+    format!(
+        r#"
         INSERT INTO "{0}"."{1}" (no, time, resto)
-            SELECT no, time, resto FROM "{0}"."{1}" WHERE no = {2}
-            --SELECT * FROM "{0}"."{1}" WHERE no = {2}
+            SELECT no, time, resto FROM "{0}"."{1}" WHERE no = $1
+            --SELECT * FROM "{0}"."{1}" WHERE no = $1
         ON CONFLICT (no)
         DO
             UPDATE
             SET last_modified = extract(epoch from now())::bigint,
                 deleted_on = extract(epoch from now())::bigint;
-        "#, schema, board, no)
+        "#,
+        schema, board
+    )
 }
 
-pub fn upsert_deleteds(schema: &str, board: &str, thread: u32) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's ok to only select no
-    format!(r#"
+pub fn upsert_deleteds(schema: &str, board: &str) -> String {
+    // This will find an already existing post due to the WHERE clause, meaning it's
+    // ok to only select no
+    format!(
+        r#"
         INSERT INTO "{0}"."{1}" (no, time, resto)
             SELECT x.* FROM
-                (SELECT no, time, resto FROM "{0}"."{1}" where no={2} or resto={2} order by no) x
-                --(SELECT * FROM "{0}"."{1}" where no={2} or resto={2} order by no) x
+                (SELECT no, time, resto FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
+                --(SELECT * FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
             FULL JOIN
                 (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
                 --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
@@ -619,23 +710,30 @@ pub fn upsert_deleteds(schema: &str, board: &str, thread: u32) -> String {
             UPDATE
             SET last_modified = extract(epoch from now())::bigint,
                 deleted_on = extract(epoch from now())::bigint;
-        "#, schema, board, thread)
+        "#,
+        schema, board
+    )
 }
 
 pub fn upsert_hash(schema: &str, board: &str, no: u64, hash_type: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's ok to only select no
-    format!(r#"
+    // This will find an already existing post due to the WHERE clause, meaning it's
+    // ok to only select no
+    format!(
+        r#"
         INSERT INTO "{0}"."{1}" (no, time, resto)
             SELECT no, time, resto FROM "{0}"."{1}" WHERE no = {2}
             --SELECT * FROM "{0}"."{1}" WHERE no = {2}
         ON CONFLICT (no) DO UPDATE
             SET last_modified = extract(epoch from now())::bigint,
                 "{3}" = $1;
-        "#, schema, board, no, hash_type)
+        "#,
+        schema, board, no, hash_type
+    )
 }
 
 pub fn upsert_thread(schema: &str, board: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
         INSERT INTO "{0}"."{1}" (
             no,sticky,closed,name,sub,com,filedeleted,spoiler,
             custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time,md5,
@@ -764,29 +862,38 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
                     excluded.tag,
                     excluded.since4pass
                 WHERE excluded.no IS NOT NULL AND excluded.no = "{0}"."{1}".no
-    )"#, schema, board)
+    )"#,
+        schema, board
+    )
 }
 
 pub fn upsert_metadata(schema: &str, column: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
         INSERT INTO "{0}".metadata(board, {1})
             VALUES ($1, $2::jsonb)
             ON CONFLICT (board)
             DO UPDATE
                 SET {1} = $2::jsonb;
-        "#, schema, column)
+        "#,
+        schema, column
+    )
 }
 
-pub fn media_posts(schema: &str, board: &str, thread: u32) -> String {
-    format!(r#"
+pub fn media_posts(schema: &str, board: &str) -> String {
+    format!(
+        r#"
         SELECT * FROM "{0}"."{1}"
-        WHERE (no={2} OR resto={2}) AND (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL)
+        WHERE (no=$1 OR resto=$1) AND (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL)
         ORDER BY no;
-        "#, schema, board, thread)
+        "#,
+        schema, board
+    )
 }
 
 pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
-    format!(r#"
+    format!(
+        r#"
         SELECT (
             CASE WHEN new_hash IS DISTINCT FROM prev_hash THEN
             (
@@ -803,14 +910,19 @@ pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
         FULL JOIN
         (SELECT sha256(decode($2::jsonb #>> '{{}}', 'escape')) as new_hash)q
         ON TRUE;
-        "#, schema,
-            if is_threads { r#"COALESCE(newv->'no',prev->'no')"# } else { "coalesce(newv,prev)" },
-            if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
-            if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
-            if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
-            if is_threads { r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"# } else { "" },
-            if is_threads { r#"threads"# } else { "archive" }
-        )
+        "#,
+        schema,
+        if is_threads { r#"COALESCE(newv->'no',prev->'no')"# } else { "coalesce(newv,prev)" },
+        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
+        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
+        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
+        if is_threads {
+            r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"#
+        } else {
+            ""
+        },
+        if is_threads { r#"threads"# } else { "archive" }
+    )
 }
 
 pub fn threads_list<'a>() -> &'a str {
@@ -820,12 +932,15 @@ pub fn threads_list<'a>() -> &'a str {
 }
 
 pub fn check_metadata_col(schema: &str, column: &str) -> String {
-    format!(r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
-                                    schema, column)
+    format!(
+        r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
+        schema, column
+    )
 }
 
 pub fn combined_threads(schema: &str, board: &str, is_threads: bool) -> String {
-    format!(r#"
+    format!(
+        r#"
         select jsonb_agg(c) from (
             SELECT coalesce {2} as c from
                 (select jsonb_array_elements({3}) as prev from "{0}".metadata where board = $1)x
@@ -837,10 +952,12 @@ pub fn combined_threads(schema: &str, board: &str, is_threads: bool) -> String {
             (select no as nno from "{0}"."{1}" where resto=0 and (archived_on is not null or deleted_on is not null))w
         ON c = nno
         where nno is null;
-        "#, schema, board,
-            if is_threads { r#"(prev->'no', newv->'no')::bigint"# } else { "(newv, prev)::bigint" },
-            if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
-            if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
-            if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" }
-        )
+        "#,
+        schema,
+        board,
+        if is_threads { r#"(prev->'no', newv->'no')::bigint"# } else { "(newv, prev)::bigint" },
+        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
+        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
+        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" }
+    )
 }
