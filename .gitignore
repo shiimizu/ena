@@ -7,12 +7,12 @@ Cargo.lock
 # Local stuff
 src/hex.rs
 docker
-*img
 json
 archive
 a_src
 txt
 test
+img/*
 *.sql
 *.txt
 *.jpg
