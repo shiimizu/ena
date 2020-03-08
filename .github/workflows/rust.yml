@@ -1,44 +1,148 @@
+on: [push, pull_request]
+
 name: Rust
 
-on: [push]
-
 jobs:
-  build:
-
+  clippy:
+    name: Clippy
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install nightly toolchain with clippy available
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          target: x86_64-unknown-linux-musl
+          toolchain: nightly
+          override: true
+          components: clippy
+
+      - name: Run cargo clippy
+        uses: actions-rs/cargo@v1
+        continue-on-error: true  # WARNING: only for this example, remove it!
+        with:
+          command: clippy
+          args: -- -D warnings
+
+  rustfmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install nightly toolchain with rustfmt available
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          target: x86_64-unknown-linux-musl
+          toolchain: nightly
+          override: true
+          components: rustfmt
+
+      - name: Run cargo fmt
+        uses: actions-rs/cargo@v1
+        continue-on-error: true  # WARNING: only for this example, remove it!
+        with:
+          command: fmt
+          args: --all -- --check
+
+  # combo:
+  #   name: Clippy + rustfmt
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout sources
+  #       uses: actions/checkout@v2
+
+  #     - name: Install nightly toolchain
+  #       uses: actions-rs/toolchain@v1
+  #       with:
+  #         profile: minimal
+  #         toolchain: nightly
+  #         override: true
+  #         components: rustfmt, clippy
+
+  #     - name: Run cargo fmt
+  #       uses: actions-rs/cargo@v1
+  #       continue-on-error: true  # WARNING: only for this example, remove it!
+  #       with:
+  #         command: fmt
+  #         args: --all -- --check
+
+  #     - name: Run cargo clippy
+  #       uses: actions-rs/cargo@v1
+  #       continue-on-error: true  # WARNING: only for this example, remove it!
+  #       with:
+  #         command: clippy
+  #         args: -- -D warnings
+
+  test:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        label:
+          - Windows x86_64
+          - Linux x86_64 musl
+        include:
+          - label: Linux x86_64 musl
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          # Integration tests are disabled on Windows as they take *way* too
+          # long to pull the Docker image
+          - label: Windows x86_64
+            os: windows-latest
+            test_flags: --skip buildtest --skip integration
+            target: x86_64-pc-windows-msvc
 
     steps:
-    - uses: actions/checkout@v1
+      - name: Checkout sources
+        uses: actions/checkout@master
 
-    - name: Setup rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        override: true
+      - name: Install nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          target: ${{ matrix.target }}
+          toolchain: nightly
+          override: true
 
-    - name: Cache cargo registry
-      uses: actions/cache@v1
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Cache cargo index
-      uses: actions/cache@v1
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Cache cargo build
-      uses: actions/cache@v1
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      # - name: Run tests
+      #   uses: actions-rs/cargo@v1
+      #   continue-on-error: true  # WARNING: only for this example, remove it!
+      #   with:
+      #     command: test
+      #     args: --all -- ${{ matrix.test_flags }}
 
-    - name: Check
-      run: cargo check
+      - name: Run release build
+        uses: actions-rs/cargo@v1
+        continue-on-error: true  # WARNING: only for this example, remove it!
+        with:
+          command: build
+          args: -j 4 --target ${{ matrix.target }} # --release
+        env:
+          PKG_CONFIG_ALLOW_CROSS: 1
+          # OPENSSL_DIR: /usr/local/ssl
 
-    - name: Build
-      run: cargo build
+      # Artifacts and releases are currently unstable for Github Actions
+      # https://github.com/actions/upload-artifact/issues/59
+      # https://github.com/actions/upload-release-asset/issues/16
 
-    - name: Unit Test
-      run: cargo test
+      # - run: zip -9 target/${{ matrix.target }}/release/testrs-v0.1.0-${{ matrix.target }} target/${{ matrix.target }}/release/testrs.exe
+        # continue-on-error: true
+      
+      # - if: matrix.os == 'windows-latest'
+      #   run: tar czf target/${{ matrix.target }}/release/testrs-v0.1.0-${{ matrix.target }}.tar.gz target/${{ matrix.target }}/release/testrs.exe
+      #   continue-on-error: true
+
+      # - if: matrix.os != 'windows-latest'
+      #   run: tar czf target/${{ matrix.target }}/release/testrs-v0.1.0-${{ matrix.target }}.tar.gz target/${{ matrix.target }}/release/testrs
+      #   continue-on-error: true
+
+      # - name: Create artifact
+      #   uses: actions/upload-artifact@v1
+      #   with:
+      #     name: my-artifact
+      #     path: target/${{ matrix.target }}/release/testrs-v0.1.0-${{ matrix.target }}.tar.gz
