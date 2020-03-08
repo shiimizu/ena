@@ -1,30 +1,35 @@
-on: [push, pull_request]
+# on: [push, pull_request]
+on:
+  push:
+    # Sequence of patterns matched against refs/tags
+    tags:
+    - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
 name: Rust
 
 jobs:
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
+  # clippy:
+  #   name: Clippy
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout sources
+  #       uses: actions/checkout@v2
 
-      - name: Install nightly toolchain with clippy available
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          target: x86_64-unknown-linux-musl
-          toolchain: nightly
-          override: true
-          components: clippy
+  #     - name: Install nightly toolchain with clippy available
+  #       uses: actions-rs/toolchain@v1
+  #       with:
+  #         profile: minimal
+  #         target: x86_64-unknown-linux-musl
+  #         toolchain: nightly
+  #         override: true
+  #         components: clippy
 
-      - name: Run cargo clippy
-        uses: actions-rs/cargo@v1
-        continue-on-error: true  # WARNING: only for this example, remove it!
-        with:
-          command: clippy
-          args: -- -D warnings
+  #     - name: Run cargo clippy
+  #       uses: actions-rs/cargo@v1
+  #       continue-on-error: true  # WARNING: only for this example, remove it!
+  #       with:
+  #         command: clippy
+  #         args: -- -D warnings
 
   rustfmt:
     name: Format
@@ -116,12 +121,12 @@ jobs:
       #     command: test
       #     args: --all -- ${{ matrix.test_flags }}
 
-      - name: Run release build
+      - name: Run build
         uses: actions-rs/cargo@v1
         continue-on-error: true  # WARNING: only for this example, remove it!
         with:
           command: build
-          args: -j 4 --target ${{ matrix.target }} # --release
+          args: -j 2 --target ${{ matrix.target }} # --release
         env:
           PKG_CONFIG_ALLOW_CROSS: 1
           # OPENSSL_DIR: /usr/local/ssl
