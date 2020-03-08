@@ -30,10 +30,9 @@
 
 <br>
 
-Low resource and high performance archiver to dump and archive posts, images and all relevant data from 4chan into a local database and local image store. It is:
+Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store. It is:
 
-
-* Asagi compatible - On top of having a new engine and schema, you can still use Asagi's schema alongside with it.
+* Asagi compatible - On top of having a new engine and schema, you can still use [Asagi](https://github.com/eksopl/asagi)'s schema alongside with it.
 * Memory efficient - Using less than 5mb for a single board. Less than 30mb for all 72 boards.
 * Bandwidth efficient - [API](https://github.com/4chan/4chan-API) requests stay low without sacrificing any posts by using only `threads.json` and `archive.json`, instead of continously polling every thread for updates.
 
@@ -46,13 +45,13 @@ Low resource and high performance archiver to dump and archive posts, images and
 ## Runtime dependencies
 * [PostgreSQL](https://www.postgresql.org/download/) >= 11.0
 
-## Changes from [Asagi](https://github.com/eksopl/asagi)
+## Changes from Asagi
 * PostgreSQL as the database engine
 * Media files use sha256 as its filename and its directory structure is the same as yuki.la's
 * Comments are preserved and untouched
 
 ## Installation
-1. Download the [pre-compiled binaries][latest-link] _**or**_ build from source for the latest builds.  
+1. [Download][latest-link] the pre-compiled binaries _**or**_ build from source for the latest builds.  
 You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After that, clone the repo and build.
 	```console
 	$ git clone https://github.com/shiimizu/ena.git
@@ -70,7 +69,7 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 Check the [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
 
 ### Why?
-Much of my personal time and research went into 4chan for educational purposes and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep [Asagi](https://github.com/eksopl/asagi) archiving every board. The current avaliable solutions are not practical nor production ready so I decided to help out.
+Much of my personal time and research went into 4chan for educational purposes and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. The current avaliable solutions are not practical nor production ready so I decided to help out.
 
 ### Why Rust?
 I wanted something fast, safe, and ideally able to withstand long-term usage.
@@ -80,7 +79,7 @@ I wanted something fast, safe, and ideally able to withstand long-term usage.
 
 ### What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?
-> 
+
 Being the next generation of archivers, I wanted a name to reflect that.  
 Ena happens to be the youngest of the Ayase sisters. I liked the name so I stuck with it.
 
