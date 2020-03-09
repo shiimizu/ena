@@ -8,7 +8,10 @@ mod config;
 mod request;
 mod sql;
 
-use crate::{config::BoardSettings, request::*};
+use crate::{
+    config::{BoardSettings, Config},
+    request::*
+};
 use core::sync::atomic::Ordering;
 use std::{
     collections::{HashMap, VecDeque},
@@ -76,18 +79,15 @@ fn main() {
 #[allow(unused_mut)]
 async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     let config_path = "ena_config.json";
-    let config: config::Settings = config::read_json(config_path).unwrap_or_default();
+    let config: Config = config::read_json(config_path).unwrap_or_default();
     let conn_url = format!(
-        "postgresql://{username}:{password}@{host}:{port}/{database}",
-        username = option_env!("ENA_DATABASE_USERNAME")
-            .unwrap_or(&config.settings.username.as_ref().unwrap()),
-        password = option_env!("ENA_DATABASE_PASSWORD")
-            .unwrap_or(&config.settings.password.as_ref().unwrap()),
-        host = option_env!("ENA_DATABASE_HOST").unwrap_or(&config.settings.host.as_ref().unwrap()),
-        port =
-            option_env!("ENA_DATABASE_PORT").unwrap_or(&config.settings.port.unwrap().to_string()),
-        database =
-            option_env!("ENA_DATABASE_NAME").unwrap_or(&config.settings.database.as_ref().unwrap())
+        "{engine}://{username}:{password}@{host}:{port}/{database}",
+        engine = &config.settings.engine,
+        username = &config.settings.username,
+        password = &config.settings.password,
+        host = &config.settings.host,
+        port = &config.settings.port,
+        database = &config.settings.database
     );
 
     let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
@@ -97,20 +97,14 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            error!("connection error: {}", e);
+            error!("Connection error: {}", e);
         }
     });
 
     let http_client = reqwest::ClientBuilder::new()
-        .default_headers(
-            config::default_headers(
-                option_env!("ENA_USERAGENT")
-                    .unwrap_or_else(|| config.settings.user_agent.as_ref().unwrap().as_str())
-            )
-            .unwrap()
-        )
+        .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
         .build()
-        .expect("Error building the HTTP Client");
+        .expect("Err building the HTTP Client");
 
     let archiver = YotsubaArchiver::new(http_client, db_client, config).await;
     archiver.listen_to_exit();
@@ -122,39 +116,9 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     let boards = &archiver.config.boards;
 
     // Push each board to queue to be run concurrently
-    let mut bv: Vec<BoardSettings> = vec![];
-    for bss in boards.into_iter() {
-        let mut default = archiver.config.board_settings.to_owned();
-        default.board.clear();
-        default.board.push_str(&bss.board);
-        if let Some(i) = bss.retry_attempts {
-            default.retry_attempts = i;
-        }
-        if let Some(i) = bss.refresh_delay {
-            default.refresh_delay = i;
-        }
-        if let Some(i) = bss.throttle_millisec {
-            default.throttle_millisec = i;
-        }
-        if let Some(i) = bss.download_media {
-            default.download_media = i;
-        }
-        if let Some(i) = bss.download_thumbnails {
-            default.download_thumbnails = i;
-        }
-        if let Some(i) = bss.keep_media {
-            default.keep_media = i;
-        }
-        if let Some(i) = bss.keep_thumbnails {
-            default.keep_thumbnails = i;
-        }
-        // Populate new values using the default as base
-        bv.push(default);
-    }
-
     let archiver_ref = &archiver;
     let mut fut2 = FuturesUnordered::new();
-    for board in bv.iter() {
+    for board in boards.iter() {
         archiver_ref.init_board(&board.board).await;
         archiver_ref.init_views(&board.board).await;
 
@@ -200,19 +164,14 @@ impl fmt::Display for YotsubaType {
 pub struct YotsubaArchiver<H: request::HttpClient> {
     client: YotsubaHttpClient<H>,
     conn: tokio_postgres::Client,
-    config: config::Settings,
+    config: Config,
     finished: std::sync::Arc<AtomicBool>
 }
 
 impl<H> YotsubaArchiver<H>
 where H: request::HttpClient
 {
-    async fn new(
-        http_client: H,
-        db_client: tokio_postgres::Client,
-        config: config::Settings
-    ) -> Self
-    {
+    async fn new(http_client: H, db_client: tokio_postgres::Client, config: Config) -> Self {
         Self {
             client: YotsubaHttpClient::new(http_client),
             conn: db_client,
@@ -222,15 +181,11 @@ where H: request::HttpClient
     }
 
     fn schema(&self) -> &str {
-        option_env!("ENA_DATABASE_SCHEMA")
-            .unwrap_or_else(|| self.config.settings.schema.as_ref().unwrap().as_str())
+        &self.config.settings.schema
     }
 
     fn get_path(&self) -> &str {
-        option_env!("ENA_PATH")
-            .unwrap_or_else(|| self.config.settings.path.as_ref().unwrap())
-            .trim_end_matches('/')
-            .trim_end_matches('\\')
+        &self.config.settings.path
     }
 
     fn listen_to_exit(&self) {
@@ -250,10 +205,6 @@ where H: request::HttpClient
         let mut statements: HashMap<String, tokio_postgres::Statement> = HashMap::new();
 
         // This function is only called by fetch_board so it'll never be media.
-        // let thread_type = match thread_type {
-        //     YotsubaType::Archive => "archive",
-        //     _ => "threads"
-        // };
 
         for func in [
             "upsert_deleted",
@@ -724,7 +675,7 @@ where H: request::HttpClient
                 .get(
                     &format!(
                         "{domain}/{board}/{thread_type}.json",
-                        domain = self.config.settings.api_url.as_ref().unwrap(),
+                        domain = &self.config.settings.api_url,
                         board = current_board,
                         thread_type = thread_type
                     ),
@@ -1075,7 +1026,7 @@ where H: request::HttpClient
                 .get(
                     &format!(
                         "{domain}/{bo}/thread/{th}.json",
-                        domain = self.config.settings.api_url.as_ref().unwrap(),
+                        domain = &self.config.settings.api_url,
                         bo = board,
                         th = thread
                     ),
@@ -1164,7 +1115,7 @@ where H: request::HttpClient
         let tim: i64 = row.get("tim");
 
         let mut hashsum: Option<Vec<u8>> = None;
-        let domain = &self.config.settings.media_url.as_ref().unwrap();
+        let domain = &self.config.settings.media_url;
         let board = &bs.board;
 
         let url = format!(

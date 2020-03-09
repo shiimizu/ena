@@ -16,7 +16,8 @@ pub trait HttpClient {
 
 /// Http Client wrapper to  promote modularity and extensibility.
 ///
-/// Just implement your desired http client with the `HttpClient` trait.
+/// Just add your desired http client with the `HttpClient` trait and implement
+/// `cget`.
 pub struct YotsubaHttpClient<T: HttpClient> {
     // pub components: Vec<T>,
     impl_client: T

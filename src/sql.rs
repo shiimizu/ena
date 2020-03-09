@@ -358,6 +358,295 @@ pub fn init_views(schema: &str, board: &str) -> String {
     )
 }
 
+pub fn upsert_deleted(schema: &str, board: &str) -> String {
+    // This will find an already existing post due to the WHERE clause, meaning it's
+    // ok to only select no
+    format!(
+        r#"
+      INSERT INTO "{0}"."{1}" (no, time, resto)
+          SELECT no, time, resto FROM "{0}"."{1}" WHERE no = $1
+          --SELECT * FROM "{0}"."{1}" WHERE no = $1
+      ON CONFLICT (no)
+      DO
+          UPDATE
+          SET last_modified = extract(epoch from now())::bigint,
+              deleted_on = extract(epoch from now())::bigint;
+      "#,
+        schema, board
+    )
+}
+
+pub fn upsert_deleteds(schema: &str, board: &str) -> String {
+    // This will find an already existing post due to the WHERE clause, meaning it's
+    // ok to only select no
+    format!(
+        r#"
+      INSERT INTO "{0}"."{1}" (no, time, resto)
+          SELECT x.* FROM
+              (SELECT no, time, resto FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
+              --(SELECT * FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
+          FULL JOIN
+              (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
+              --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
+          ON x.no = z.no
+          WHERE z.no is null
+      ON CONFLICT (no) 
+      DO
+          UPDATE
+          SET last_modified = extract(epoch from now())::bigint,
+              deleted_on = extract(epoch from now())::bigint;
+      "#,
+        schema, board
+    )
+}
+
+pub fn upsert_hash(schema: &str, board: &str, no: u64, hash_type: &str) -> String {
+    // This will find an already existing post due to the WHERE clause, meaning it's
+    // ok to only select no
+    format!(
+        r#"
+      INSERT INTO "{0}"."{1}" (no, time, resto)
+          SELECT no, time, resto FROM "{0}"."{1}" WHERE no = {2}
+          --SELECT * FROM "{0}"."{1}" WHERE no = {2}
+      ON CONFLICT (no) DO UPDATE
+          SET last_modified = extract(epoch from now())::bigint,
+              "{3}" = $1;
+      "#,
+        schema, board, no, hash_type
+    )
+}
+
+pub fn upsert_thread(schema: &str, board: &str) -> String {
+    format!(
+        r#"
+      INSERT INTO "{0}"."{1}" (
+          no,sticky,closed,name,sub,com,filedeleted,spoiler,
+          custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time,md5,
+          fsize, m_img,resto,trip,id,capcode,country,country_name,bumplimit,
+          archived_on,imagelimit,semantic_url,replies,images,unique_ips,tag,since4pass,last_modified)
+          SELECT
+              no,sticky::int::bool,closed::int::bool,name,sub,com,filedeleted::int::bool,spoiler::int::bool,
+              custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time, (CASE WHEN length(q.md5)>20 and q.md5 IS NOT NULL THEN decode(REPLACE (q.md5, E'\\', '')::text, 'base64'::text) ELSE null::bytea END) AS md5,
+              fsize, m_img::int::bool, resto,trip,q.id,capcode,country,country_name,bumplimit::int::bool,
+              archived_on,imagelimit::int::bool,semantic_url,replies,images,unique_ips,
+              tag,since4pass, extract(epoch from now())::bigint as last_modified
+          FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts') q
+          WHERE q.no IS NOT NULL
+      ON CONFLICT (no) 
+      DO
+          UPDATE SET 
+              no = excluded.no,
+              sticky = excluded.sticky::int::bool,
+              closed = excluded.closed::int::bool,
+              name = excluded.name,
+              sub = excluded.sub,
+              com = excluded.com,
+              filedeleted = excluded.filedeleted::int::bool,
+              spoiler = excluded.spoiler::int::bool,
+              custom_spoiler = excluded.custom_spoiler,
+              filename = excluded.filename,
+              ext = excluded.ext,
+              w = excluded.w,
+              h = excluded.h,
+              tn_w = excluded.tn_w,
+              tn_h = excluded.tn_h,
+              tim = excluded.tim,
+              time = excluded.time,
+              md5 = excluded.md5,
+              fsize = excluded.fsize,
+              m_img = excluded.m_img::int::bool,
+              resto = excluded.resto,
+              trip = excluded.trip,
+              id = excluded.id,
+              capcode = excluded.capcode,
+              country = excluded.country,
+              country_name = excluded.country_name,
+              bumplimit = excluded.bumplimit::int::bool,
+              archived_on = excluded.archived_on,
+              imagelimit = excluded.imagelimit::int::bool,
+              semantic_url = excluded.semantic_url,
+              replies = excluded.replies,
+              images = excluded.images,
+              unique_ips = CASE WHEN excluded.unique_ips is not null THEN excluded.unique_ips ELSE "{0}"."{1}".unique_ips END,
+              tag = excluded.tag,
+              since4pass = excluded.since4pass,
+              last_modified = extract(epoch from now())::bigint
+          WHERE excluded.no IS NOT NULL AND EXISTS (
+              SELECT 
+                  "{0}"."{1}".no,
+                  "{0}"."{1}".sticky,
+                  "{0}"."{1}".closed,
+                  "{0}"."{1}".name,
+                  "{0}"."{1}".sub,
+                  "{0}"."{1}".com,
+                  "{0}"."{1}".filedeleted,
+                  "{0}"."{1}".spoiler,
+                  "{0}"."{1}".custom_spoiler,
+                  "{0}"."{1}".filename,
+                  "{0}"."{1}".ext,
+                  "{0}"."{1}".w,
+                  "{0}"."{1}".h,
+                  "{0}"."{1}".tn_w,
+                  "{0}"."{1}".tn_h,
+                  "{0}"."{1}".tim,
+                  "{0}"."{1}".time,
+                  "{0}"."{1}".md5,
+                  "{0}"."{1}".fsize,
+                  "{0}"."{1}".m_img,
+                  "{0}"."{1}".resto,
+                  "{0}"."{1}".trip,
+                  "{0}"."{1}".id,
+                  "{0}"."{1}".capcode,
+                  "{0}"."{1}".country,
+                  "{0}"."{1}".country_name,
+                  "{0}"."{1}".bumplimit,
+                  "{0}"."{1}".archived_on,
+                  "{0}"."{1}".imagelimit,
+                  "{0}"."{1}".semantic_url,
+                  "{0}"."{1}".replies,
+                  "{0}"."{1}".images,
+                  --"{0}"."{1}".unique_ips,
+                  "{0}"."{1}".tag,
+                  "{0}"."{1}".since4pass
+                  WHERE "{0}"."{1}".no IS NOT NULL
+              EXCEPT
+              SELECT 
+                  excluded.no,
+                  excluded.sticky,
+                  excluded.closed,
+                  excluded.name,
+                  excluded.sub,
+                  excluded.com,
+                  excluded.filedeleted,
+                  excluded.spoiler,
+                  excluded.custom_spoiler,
+                  excluded.filename,
+                  excluded.ext,
+                  excluded.w,
+                  excluded.h,
+                  excluded.tn_w,
+                  excluded.tn_h,
+                  excluded.tim,
+                  excluded.time,
+                  excluded.md5,
+                  excluded.fsize,
+                  excluded.m_img,
+                  excluded.resto,
+                  excluded.trip,
+                  excluded.id,
+                  excluded.capcode,
+                  excluded.country,
+                  excluded.country_name,
+                  excluded.bumplimit,
+                  excluded.archived_on,
+                  excluded.imagelimit,
+                  excluded.semantic_url,
+                  excluded.replies,
+                  excluded.images,
+                  --excluded.unique_ips,
+                  excluded.tag,
+                  excluded.since4pass
+              WHERE excluded.no IS NOT NULL AND excluded.no = "{0}"."{1}".no
+  )"#,
+        schema, board
+    )
+}
+
+pub fn upsert_metadata(schema: &str, column: YotsubaType) -> String {
+    format!(
+        r#"
+      INSERT INTO "{0}".metadata(board, {1})
+          VALUES ($1, $2::jsonb)
+          ON CONFLICT (board)
+          DO UPDATE
+              SET {1} = $2::jsonb;
+      "#,
+        schema, column
+    )
+}
+
+pub fn media_posts(schema: &str, board: &str) -> String {
+    format!(
+        r#"
+      SELECT * FROM "{0}"."{1}"
+      WHERE (no=$1 OR resto=$1) AND (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL)
+      ORDER BY no;
+      "#,
+        schema, board
+    )
+}
+
+pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
+    format!(
+        r#"
+      SELECT (
+          CASE WHEN new_hash IS DISTINCT FROM prev_hash THEN
+          (
+              SELECT jsonb_agg({1}) from
+              (select jsonb_array_elements({2}) as prev from "{0}".metadata where board = $1)x
+              full JOIN
+              (select jsonb_array_elements({3}) as newv)z
+              ON {4}
+              where newv is null or prev is null {5}
+          )
+          END
+      ) FROM 
+      (SELECT sha256(decode({6} #>> '{{}}', 'escape')) as prev_hash from "{0}".metadata where board=$1)w
+      FULL JOIN
+      (SELECT sha256(decode($2::jsonb #>> '{{}}', 'escape')) as new_hash)q
+      ON TRUE;
+      "#,
+        schema,
+        if is_threads { r#"COALESCE(newv->'no',prev->'no')"# } else { "coalesce(newv,prev)" },
+        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
+        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
+        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
+        if is_threads {
+            r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"#
+        } else {
+            ""
+        },
+        if is_threads { r#"threads"# } else { "archive" }
+    )
+}
+
+pub fn threads_list<'a>() -> &'a str {
+    "SELECT jsonb_agg(newv->'no')
+  FROM
+  (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
+}
+
+pub fn check_metadata_col(schema: &str, column: YotsubaType) -> String {
+    format!(
+        r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
+        schema, column
+    )
+}
+
+pub fn combined_threads(schema: &str, board: &str, is_threads: bool) -> String {
+    format!(
+        r#"
+      select jsonb_agg(c) from (
+          SELECT coalesce {2} as c from
+              (select jsonb_array_elements({3}) as prev from "{0}".metadata where board = $1)x
+          full JOIN
+              (select jsonb_array_elements({4}) as newv)z
+          ON {5}
+      )q
+      left join
+          (select no as nno from "{0}"."{1}" where resto=0 and (archived_on is not null or deleted_on is not null))w
+      ON c = nno
+      where nno is null;
+      "#,
+        schema,
+        board,
+        if is_threads { r#"(prev->'no', newv->'no')::bigint"# } else { "(newv, prev)::bigint" },
+        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
+        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
+        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" }
+    )
+}
+
 /*
 #[allow(dead_code)]
 pub fn create_asagi_tables(schema: &str, board: &str) -> String {
@@ -674,292 +963,3 @@ pub fn create_asagi_triggers(schema: &str, board: &str, board_name_main: &str) -
         schema, board, board_name_main
     )
 }*/
-
-pub fn upsert_deleted(schema: &str, board: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's
-    // ok to only select no
-    format!(
-        r#"
-        INSERT INTO "{0}"."{1}" (no, time, resto)
-            SELECT no, time, resto FROM "{0}"."{1}" WHERE no = $1
-            --SELECT * FROM "{0}"."{1}" WHERE no = $1
-        ON CONFLICT (no)
-        DO
-            UPDATE
-            SET last_modified = extract(epoch from now())::bigint,
-                deleted_on = extract(epoch from now())::bigint;
-        "#,
-        schema, board
-    )
-}
-
-pub fn upsert_deleteds(schema: &str, board: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's
-    // ok to only select no
-    format!(
-        r#"
-        INSERT INTO "{0}"."{1}" (no, time, resto)
-            SELECT x.* FROM
-                (SELECT no, time, resto FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
-                --(SELECT * FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
-            FULL JOIN
-                (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
-                --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
-            ON x.no = z.no
-            WHERE z.no is null
-        ON CONFLICT (no) 
-        DO
-            UPDATE
-            SET last_modified = extract(epoch from now())::bigint,
-                deleted_on = extract(epoch from now())::bigint;
-        "#,
-        schema, board
-    )
-}
-
-pub fn upsert_hash(schema: &str, board: &str, no: u64, hash_type: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's
-    // ok to only select no
-    format!(
-        r#"
-        INSERT INTO "{0}"."{1}" (no, time, resto)
-            SELECT no, time, resto FROM "{0}"."{1}" WHERE no = {2}
-            --SELECT * FROM "{0}"."{1}" WHERE no = {2}
-        ON CONFLICT (no) DO UPDATE
-            SET last_modified = extract(epoch from now())::bigint,
-                "{3}" = $1;
-        "#,
-        schema, board, no, hash_type
-    )
-}
-
-pub fn upsert_thread(schema: &str, board: &str) -> String {
-    format!(
-        r#"
-        INSERT INTO "{0}"."{1}" (
-            no,sticky,closed,name,sub,com,filedeleted,spoiler,
-            custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time,md5,
-            fsize, m_img,resto,trip,id,capcode,country,country_name,bumplimit,
-            archived_on,imagelimit,semantic_url,replies,images,unique_ips,tag,since4pass,last_modified)
-            SELECT
-                no,sticky::int::bool,closed::int::bool,name,sub,com,filedeleted::int::bool,spoiler::int::bool,
-                custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time, (CASE WHEN length(q.md5)>20 and q.md5 IS NOT NULL THEN decode(REPLACE (q.md5, E'\\', '')::text, 'base64'::text) ELSE null::bytea END) AS md5,
-                fsize, m_img::int::bool, resto,trip,q.id,capcode,country,country_name,bumplimit::int::bool,
-                archived_on,imagelimit::int::bool,semantic_url,replies,images,unique_ips,
-                tag,since4pass, extract(epoch from now())::bigint as last_modified
-            FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts') q
-            WHERE q.no IS NOT NULL
-        ON CONFLICT (no) 
-        DO
-            UPDATE SET 
-                no = excluded.no,
-                sticky = excluded.sticky::int::bool,
-                closed = excluded.closed::int::bool,
-                name = excluded.name,
-                sub = excluded.sub,
-                com = excluded.com,
-                filedeleted = excluded.filedeleted::int::bool,
-                spoiler = excluded.spoiler::int::bool,
-                custom_spoiler = excluded.custom_spoiler,
-                filename = excluded.filename,
-                ext = excluded.ext,
-                w = excluded.w,
-                h = excluded.h,
-                tn_w = excluded.tn_w,
-                tn_h = excluded.tn_h,
-                tim = excluded.tim,
-                time = excluded.time,
-                md5 = excluded.md5,
-                fsize = excluded.fsize,
-                m_img = excluded.m_img::int::bool,
-                resto = excluded.resto,
-                trip = excluded.trip,
-                id = excluded.id,
-                capcode = excluded.capcode,
-                country = excluded.country,
-                country_name = excluded.country_name,
-                bumplimit = excluded.bumplimit::int::bool,
-                archived_on = excluded.archived_on,
-                imagelimit = excluded.imagelimit::int::bool,
-                semantic_url = excluded.semantic_url,
-                replies = excluded.replies,
-                images = excluded.images,
-                unique_ips = CASE WHEN excluded.unique_ips is not null THEN excluded.unique_ips ELSE "{0}"."{1}".unique_ips END,
-                tag = excluded.tag,
-                since4pass = excluded.since4pass,
-                last_modified = extract(epoch from now())::bigint
-            WHERE excluded.no IS NOT NULL AND EXISTS (
-                SELECT 
-                    "{0}"."{1}".no,
-                    "{0}"."{1}".sticky,
-                    "{0}"."{1}".closed,
-                    "{0}"."{1}".name,
-                    "{0}"."{1}".sub,
-                    "{0}"."{1}".com,
-                    "{0}"."{1}".filedeleted,
-                    "{0}"."{1}".spoiler,
-                    "{0}"."{1}".custom_spoiler,
-                    "{0}"."{1}".filename,
-                    "{0}"."{1}".ext,
-                    "{0}"."{1}".w,
-                    "{0}"."{1}".h,
-                    "{0}"."{1}".tn_w,
-                    "{0}"."{1}".tn_h,
-                    "{0}"."{1}".tim,
-                    "{0}"."{1}".time,
-                    "{0}"."{1}".md5,
-                    "{0}"."{1}".fsize,
-                    "{0}"."{1}".m_img,
-                    "{0}"."{1}".resto,
-                    "{0}"."{1}".trip,
-                    "{0}"."{1}".id,
-                    "{0}"."{1}".capcode,
-                    "{0}"."{1}".country,
-                    "{0}"."{1}".country_name,
-                    "{0}"."{1}".bumplimit,
-                    "{0}"."{1}".archived_on,
-                    "{0}"."{1}".imagelimit,
-                    "{0}"."{1}".semantic_url,
-                    "{0}"."{1}".replies,
-                    "{0}"."{1}".images,
-                    --"{0}"."{1}".unique_ips,
-                    "{0}"."{1}".tag,
-                    "{0}"."{1}".since4pass
-                    WHERE "{0}"."{1}".no IS NOT NULL
-                EXCEPT
-                SELECT 
-                    excluded.no,
-                    excluded.sticky,
-                    excluded.closed,
-                    excluded.name,
-                    excluded.sub,
-                    excluded.com,
-                    excluded.filedeleted,
-                    excluded.spoiler,
-                    excluded.custom_spoiler,
-                    excluded.filename,
-                    excluded.ext,
-                    excluded.w,
-                    excluded.h,
-                    excluded.tn_w,
-                    excluded.tn_h,
-                    excluded.tim,
-                    excluded.time,
-                    excluded.md5,
-                    excluded.fsize,
-                    excluded.m_img,
-                    excluded.resto,
-                    excluded.trip,
-                    excluded.id,
-                    excluded.capcode,
-                    excluded.country,
-                    excluded.country_name,
-                    excluded.bumplimit,
-                    excluded.archived_on,
-                    excluded.imagelimit,
-                    excluded.semantic_url,
-                    excluded.replies,
-                    excluded.images,
-                    --excluded.unique_ips,
-                    excluded.tag,
-                    excluded.since4pass
-                WHERE excluded.no IS NOT NULL AND excluded.no = "{0}"."{1}".no
-    )"#,
-        schema, board
-    )
-}
-
-pub fn upsert_metadata(schema: &str, column: YotsubaType) -> String {
-    format!(
-        r#"
-        INSERT INTO "{0}".metadata(board, {1})
-            VALUES ($1, $2::jsonb)
-            ON CONFLICT (board)
-            DO UPDATE
-                SET {1} = $2::jsonb;
-        "#,
-        schema, column
-    )
-}
-
-pub fn media_posts(schema: &str, board: &str) -> String {
-    format!(
-        r#"
-        SELECT * FROM "{0}"."{1}"
-        WHERE (no=$1 OR resto=$1) AND (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL)
-        ORDER BY no;
-        "#,
-        schema, board
-    )
-}
-
-pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
-    format!(
-        r#"
-        SELECT (
-            CASE WHEN new_hash IS DISTINCT FROM prev_hash THEN
-            (
-                SELECT jsonb_agg({1}) from
-                (select jsonb_array_elements({2}) as prev from "{0}".metadata where board = $1)x
-                full JOIN
-                (select jsonb_array_elements({3}) as newv)z
-                ON {4}
-                where newv is null or prev is null {5}
-            )
-            END
-        ) FROM 
-        (SELECT sha256(decode({6} #>> '{{}}', 'escape')) as prev_hash from "{0}".metadata where board=$1)w
-        FULL JOIN
-        (SELECT sha256(decode($2::jsonb #>> '{{}}', 'escape')) as new_hash)q
-        ON TRUE;
-        "#,
-        schema,
-        if is_threads { r#"COALESCE(newv->'no',prev->'no')"# } else { "coalesce(newv,prev)" },
-        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
-        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
-        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
-        if is_threads {
-            r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"#
-        } else {
-            ""
-        },
-        if is_threads { r#"threads"# } else { "archive" }
-    )
-}
-
-pub fn threads_list<'a>() -> &'a str {
-    "SELECT jsonb_agg(newv->'no')
-    FROM
-    (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
-}
-
-pub fn check_metadata_col(schema: &str, column: YotsubaType) -> String {
-    format!(
-        r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
-        schema, column
-    )
-}
-
-pub fn combined_threads(schema: &str, board: &str, is_threads: bool) -> String {
-    format!(
-        r#"
-        select jsonb_agg(c) from (
-            SELECT coalesce {2} as c from
-                (select jsonb_array_elements({3}) as prev from "{0}".metadata where board = $1)x
-            full JOIN
-                (select jsonb_array_elements({4}) as newv)z
-            ON {5}
-        )q
-        left join
-            (select no as nno from "{0}"."{1}" where resto=0 and (archived_on is not null or deleted_on is not null))w
-        ON c = nno
-        where nno is null;
-        "#,
-        schema,
-        board,
-        if is_threads { r#"(prev->'no', newv->'no')::bigint"# } else { "(newv, prev)::bigint" },
-        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
-        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
-        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" }
-    )
-}
