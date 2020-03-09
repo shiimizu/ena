@@ -121,6 +121,11 @@ jobs:
       #     command: test
       #     args: --all -- ${{ matrix.test_flags }}
 
+      - name: Run cargo update
+        uses: actions-rs/cargo@v1
+        with:
+          command: update
+
       - name: Run build
         uses: actions-rs/cargo@v1
         continue-on-error: true  # WARNING: only for this example, remove it!
