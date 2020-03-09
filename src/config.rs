@@ -3,14 +3,14 @@ use serde::{self, Deserialize, Serialize};
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    pub settings: ConfigSettings,
+    pub settings: InnerSettings,
     pub board_settings: BoardSettings, //pub boards: Vec<BoardSettings>
     pub boards: Vec<BoardSettingsSafe>
 }
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            settings: ConfigSettings::default(),
+            settings: InnerSettings::default(),
             board_settings: BoardSettings::default(),
             boards: vec![]
         }
@@ -19,7 +19,7 @@ impl Default for Settings {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigSettings {
+pub struct InnerSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub engine: Option<String>,
@@ -69,7 +69,7 @@ pub struct ConfigSettings {
     pub media_url: Option<String>
 }
 
-impl Default for ConfigSettings {
+impl Default for InnerSettings {
     fn default() -> Self {
         Self {
             engine: Some("postgresql".into()),

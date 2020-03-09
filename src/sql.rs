@@ -1,5 +1,7 @@
 #![cold]
 
+use crate::YotsubaType;
+
 pub fn init_schema(schema: &str) -> String {
     format!(r#"CREATE SCHEMA IF NOT EXISTS "{}";"#, schema)
 }
@@ -867,7 +869,7 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
     )
 }
 
-pub fn upsert_metadata(schema: &str, column: &str) -> String {
+pub fn upsert_metadata(schema: &str, column: YotsubaType) -> String {
     format!(
         r#"
         INSERT INTO "{0}".metadata(board, {1})
@@ -931,7 +933,7 @@ pub fn threads_list<'a>() -> &'a str {
     (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
 }
 
-pub fn check_metadata_col(schema: &str, column: &str) -> String {
+pub fn check_metadata_col(schema: &str, column: YotsubaType) -> String {
     format!(
         r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
         schema, column

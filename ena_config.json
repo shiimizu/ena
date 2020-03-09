@@ -26,9 +26,6 @@
   "boards": [
     { "board": "po" },
     { "board": "n" },
-    { "board": "x",
-      "retryAttempts": 4,
-      "refreshDelay": 30,
-      "throttleMillisec": 300 }
+    { "board": "tg" }
   ]
 }

@@ -8,59 +8,30 @@ mod config;
 mod request;
 mod sql;
 
-// extern crate reqwest;
-// extern crate pretty_env_logger;
-// #[macro_use] extern crate log;
-// extern crate ctrlc;
-
-// extern crate serde;
-// extern crate serde_json;
-// #[macro_use] extern crate serde_derive;
-
-// use tokio::prelude::*;
-// use tokio::task;
-// use postgres::{Connection, TlsMode};
-// use sha2::{Sha256, Digest};
-// use std::time::{Duration, Instant};
-
-use crate::config::{BoardSettings, Settings};
+use crate::{config::BoardSettings, request::*};
 use core::sync::atomic::Ordering;
 use std::{
-    borrow::Cow,
     collections::{HashMap, VecDeque},
-    env,
-    fs::File,
-    io::BufReader,
+    convert::TryFrom,
+    env, fmt,
     path::Path,
     sync::atomic::AtomicBool
 };
 
-use futures::{
-    future::Future,
-    stream::{FuturesOrdered, FuturesUnordered, StreamExt as FutureStreamExt}
-};
-use reqwest::{
-    self,
-    header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, LAST_MODIFIED, USER_AGENT},
-    StatusCode
-};
+use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
+use reqwest::{self, StatusCode};
 use tokio::{
-    prelude::*,
     runtime::Builder,
-    sync::{
-        broadcast, mpsc,
-        mpsc::{UnboundedReceiver, UnboundedSender}
-    },
-    task,
-    time::{self, delay_for as sleep, Duration, Instant}
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    time::{delay_for as sleep, Duration}
 };
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Local;
-use ctrlc;
+// use ctrlc;
 use log::*;
-use pretty_env_logger;
-use serde_json;
+// use pretty_env_logger;
+// use serde_json;
 use sha2::{Digest, Sha256};
 
 fn main() {
@@ -102,21 +73,57 @@ fn main() {
         Local::now().to_rfc2822()
     );
 }
-
+#[allow(unused_mut)]
 async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
-    let archiver = YotsubaArchiver::new().await;
+    let config_path = "ena_config.json";
+    let config: config::Settings = config::read_json(config_path).unwrap_or_default();
+    let conn_url = format!(
+        "postgresql://{username}:{password}@{host}:{port}/{database}",
+        username = option_env!("ENA_DATABASE_USERNAME")
+            .unwrap_or(&config.settings.username.as_ref().unwrap()),
+        password = option_env!("ENA_DATABASE_PASSWORD")
+            .unwrap_or(&config.settings.password.as_ref().unwrap()),
+        host = option_env!("ENA_DATABASE_HOST").unwrap_or(&config.settings.host.as_ref().unwrap()),
+        port =
+            option_env!("ENA_DATABASE_PORT").unwrap_or(&config.settings.port.unwrap().to_string()),
+        database =
+            option_env!("ENA_DATABASE_NAME").unwrap_or(&config.settings.database.as_ref().unwrap())
+    );
 
-    &archiver.listen_to_exit();
-    &archiver.init_type().await?;
-    &archiver.init_schema().await;
-    &archiver.init_metadata().await;
+    let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
+        .await
+        .context(format!("\nPlease check your settings. Connection url used: {}", conn_url))
+        .expect("Connecting to database");
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            error!("connection error: {}", e);
+        }
+    });
+
+    let http_client = reqwest::ClientBuilder::new()
+        .default_headers(
+            config::default_headers(
+                option_env!("ENA_USERAGENT")
+                    .unwrap_or_else(|| config.settings.user_agent.as_ref().unwrap().as_str())
+            )
+            .unwrap()
+        )
+        .build()
+        .expect("Error building the HTTP Client");
+
+    let archiver = YotsubaArchiver::new(http_client, db_client, config).await;
+    archiver.listen_to_exit();
+    archiver.init_type().await?;
+    archiver.init_schema().await;
+    archiver.init_metadata().await;
     sleep(Duration::from_millis(1200)).await;
 
     let boards = &archiver.config.boards;
 
     // Push each board to queue to be run concurrently
     let mut bv: Vec<BoardSettings> = vec![];
-    for bss in boards.iter() {
+    for bss in boards.into_iter() {
         let mut default = archiver.config.board_settings.to_owned();
         default.board.clear();
         default.board.push_str(&bss.board);
@@ -142,7 +149,7 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
             default.keep_thumbnails = i;
         }
         // Populate new values using the default as base
-        bv.push(default.to_owned());
+        bv.push(default);
     }
 
     let archiver_ref = &archiver;
@@ -151,11 +158,11 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
         archiver_ref.init_board(&board.board).await;
         archiver_ref.init_views(&board.board).await;
 
-        let (mut tx, mut rx) = mpsc::unbounded_channel();
+        let (mut tx, mut _rx) = mpsc::unbounded_channel();
         fut2.push(archiver_ref.compute(YotsubaType::Archive, board, Some(tx.clone()), None));
         fut2.push(archiver_ref.compute(YotsubaType::Threads, board, Some(tx.clone()), None));
         // fut2.push(archiver_ref.compute(YotsubaType::Media, board, None,
-        // Some(rx)));
+        // Some(_rx)));
     }
 
     // Waiting for this task causes a loop that's intended.
@@ -171,77 +178,57 @@ pub struct MediaInfo {
     thread: u32
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum YotsubaType {
     Archive,
     Threads,
     Media
 }
 
+impl fmt::Display for YotsubaType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            YotsubaType::Archive => write!(f, "archive"),
+            YotsubaType::Threads => write!(f, "threads"),
+            YotsubaType::Media => write!(f, "media")
+        }
+    }
+}
+
 /// A struct to store variables without using global statics.
 /// It also allows passing http client as reference.
-pub struct YotsubaArchiver {
+pub struct YotsubaArchiver<H: request::HttpClient> {
+    client: YotsubaHttpClient<H>,
     conn: tokio_postgres::Client,
     config: config::Settings,
-    client: reqwest::Client,
     finished: std::sync::Arc<AtomicBool>
 }
 
-impl YotsubaArchiver {
-    async fn new() -> Self {
-        let config_path = "ena_config.json";
-        let config: config::Settings = config::read_json(config_path).unwrap_or_default();
-        let conn_url = format!(
-            "postgresql://{username}:{password}@{host}:{port}/{database}",
-            username = option_env!("ENA_DATABASE_USERNAME")
-                .unwrap_or(&config.settings.username.as_ref().unwrap()),
-            password = option_env!("ENA_DATABASE_PASSWORD")
-                .unwrap_or(&config.settings.password.as_ref().unwrap()),
-            host =
-                option_env!("ENA_DATABASE_HOST").unwrap_or(&config.settings.host.as_ref().unwrap()),
-            port = option_env!("ENA_DATABASE_PORT")
-                .unwrap_or(&config.settings.port.unwrap().to_string()),
-            database = option_env!("ENA_DATABASE_NAME")
-                .unwrap_or(&config.settings.database.as_ref().unwrap())
-        );
-
-        let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
-            .await
-            .context(format!("\nPlease check your settings. Connection url used: {}", conn_url))
-            .expect("Connecting to database");
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("connection error: {}", e);
-            }
-        });
-
-        let client = reqwest::ClientBuilder::new()
-            .default_headers(
-                config::default_headers(
-                    option_env!("ENA_USERAGENT")
-                        .unwrap_or(config.settings.user_agent.as_ref().unwrap().as_str())
-                )
-                .unwrap()
-            )
-            .build()
-            .expect("Error building the HTTP Client");
+impl<H> YotsubaArchiver<H>
+where H: request::HttpClient
+{
+    async fn new(
+        http_client: H,
+        db_client: tokio_postgres::Client,
+        config: config::Settings
+    ) -> Self
+    {
         Self {
+            client: YotsubaHttpClient::new(http_client),
             conn: db_client,
-            client: client,
-            config: config,
+            config,
             finished: std::sync::Arc::new(AtomicBool::new(false))
         }
     }
 
     fn schema(&self) -> &str {
         option_env!("ENA_DATABASE_SCHEMA")
-            .unwrap_or(self.config.settings.schema.as_ref().unwrap().as_str())
+            .unwrap_or_else(|| self.config.settings.schema.as_ref().unwrap().as_str())
     }
 
     fn get_path(&self) -> &str {
         option_env!("ENA_PATH")
-            .unwrap_or(self.config.settings.path.as_ref().unwrap())
+            .unwrap_or_else(|| self.config.settings.path.as_ref().unwrap())
             .trim_end_matches('/')
             .trim_end_matches('\\')
     }
@@ -263,10 +250,10 @@ impl YotsubaArchiver {
         let mut statements: HashMap<String, tokio_postgres::Statement> = HashMap::new();
 
         // This function is only called by fetch_board so it'll never be media.
-        let thread_type = match thread_type {
-            YotsubaType::Archive => "archive",
-            _ => "threads"
-        };
+        // let thread_type = match thread_type {
+        //     YotsubaType::Archive => "archive",
+        //     _ => "threads"
+        // };
 
         for func in [
             "upsert_deleted",
@@ -329,7 +316,7 @@ impl YotsubaArchiver {
                             .prepare_typed(
                                 sql::deleted_and_modified_threads(
                                     self.schema(),
-                                    thread_type == "threads"
+                                    thread_type == YotsubaType::Threads
                                 )
                                 .as_str(),
                                 &[
@@ -360,7 +347,7 @@ impl YotsubaArchiver {
                                 sql::combined_threads(
                                     self.schema(),
                                     board,
-                                    thread_type == "threads"
+                                    thread_type == YotsubaType::Threads
                                 )
                                 .as_str(),
                                 &[
@@ -372,7 +359,7 @@ impl YotsubaArchiver {
                     }
                     _ => unreachable!()
                 }
-                .expect(&format!("Error creating prepare statement {}", func))
+                .unwrap_or_else(|_| panic!("Error creating prepare statement {}", func))
             );
         }
         statements
@@ -386,7 +373,7 @@ impl YotsubaArchiver {
         self.conn
             .execute(sql::init_schema(self.schema()).as_str(), &[])
             .await
-            .expect(&format!("Err creating schema: {}", self.schema()));
+            .unwrap_or_else(|_| panic!("Err creating schema: {}", self.schema()));
     }
 
     async fn init_metadata(&self) {
@@ -400,7 +387,7 @@ impl YotsubaArchiver {
         self.conn
             .batch_execute(&sql::init_board(self.schema(), board))
             .await
-            .expect(&format!("Err creating schema: {}", board));
+            .unwrap_or_else(|_| panic!("Err creating schema: {}", board));
     }
 
     async fn init_views(&self, board: &str) {
@@ -431,7 +418,7 @@ impl YotsubaArchiver {
         statement: &tokio_postgres::Statement
     ) -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>
     {
-        self.conn.query(statement, &[&(thread as i64)]).await
+        self.conn.query(statement, &[&i64::try_from(thread).unwrap()]).await
     }
 
     async fn upsert_hash2(&self, board: &str, no: u64, hash_type: &str, hashsum: Vec<u8>) {
@@ -444,7 +431,7 @@ impl YotsubaArchiver {
     /// Mark a single post as deleted.
     async fn upsert_deleted(&self, no: u32, statement: &tokio_postgres::Statement) {
         self.conn
-            .execute(statement, &[&(no as i64)])
+            .execute(statement, &[&i64::try_from(no).unwrap()])
             .await
             .expect("Err executing sql: upsert_deleted");
     }
@@ -461,7 +448,7 @@ impl YotsubaArchiver {
             .conn
             .execute(statement, &[
                 &serde_json::from_slice::<serde_json::Value>(item)?,
-                &(thread as i64)
+                &i64::try_from(thread).unwrap()
             ])
             .await?)
         //.expect("Err executing sql: upsert_deleteds");
@@ -517,7 +504,7 @@ impl YotsubaArchiver {
             .flatten()
             .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
             .flatten()
-            .ok_or(anyhow!("Error in get_threads_list"))?)
+            .ok_or_else(|| anyhow!("Error in get_threads_list"))?)
     }
 
     /// This query is only run ONCE at every startup
@@ -545,7 +532,7 @@ impl YotsubaArchiver {
             .flatten()
             .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
             .flatten()
-            .ok_or(anyhow!("Error in get_combined_threads"))?)
+            .ok_or_else(|| anyhow!("Error in get_combined_threads"))?)
     }
 
     /// Combine new and prev threads.json into one. This retains the prev
@@ -573,9 +560,10 @@ impl YotsubaArchiver {
             .flatten()
             .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
             .flatten()
-            .ok_or(anyhow!("Error in get_combined_threads"))?)
+            .ok_or_else(|| anyhow!("Error in get_combined_threads"))?)
     }
 
+    #[allow(unused_mut)]
     async fn compute(
         &self,
         typ: YotsubaType,
@@ -590,7 +578,7 @@ impl YotsubaArchiver {
                 if let Some(t) = tx {
                     // loop {
                     let bs = board_settings.clone();
-                    if let Some(_) = self.fetch_board(typ, bs, &t).await {};
+                    if self.fetch_board(typ, bs, &t).await.is_some() {};
                     // }
                 }
             }
@@ -636,39 +624,39 @@ impl YotsubaArchiver {
                     // Preliminary checks before downloading
                     let sha256: Option<Vec<u8>> = row.get("sha256");
                     let sha256t: Option<Vec<u8>> = row.get("sha256t");
-                    let mut dlm = false;
+                    let mut dl_media = false;
                     if info.download_media {
                         match sha256 {
                             Some(h) => {
                                 // Improper sha, re-dl
                                 if h.len() < (65 / 2) {
-                                    dlm = true;
+                                    dl_media = true;
                                 }
                             }
                             None => {
                                 // No thumbs, proceed to dl
-                                dlm = true;
+                                dl_media = true;
                             }
                         }
-                        if dlm {
+                        if dl_media {
                             fut.push(self.dl_media_post2(row, info, thread, false));
                         }
                     }
-                    let mut dlt = false;
+                    let mut dl_thumb = false;
                     if info.download_thumbnails {
                         match sha256t {
                             Some(h) => {
                                 // Improper sha, re-dl
                                 if h.len() < (65 / 2) {
-                                    dlt = true;
+                                    dl_thumb = true;
                                 }
                             }
                             None => {
                                 // No thumbs, proceed to dl
-                                dlt = true;
+                                dl_thumb = true;
                             }
                         }
-                        if dlt {
+                        if dl_thumb {
                             fut.push(self.dl_media_post2(row, info, thread, true));
                         }
                     }
@@ -715,7 +703,7 @@ impl YotsubaArchiver {
     // Downloads the list of archive / live threads
     async fn get_generic_thread(
         &self,
-        thread_type: &str,
+        thread_type: YotsubaType,
         bs: &BoardSettings,
         last_modified: &mut String,
         fetched_threads: &mut Option<Vec<u8>>,
@@ -726,99 +714,92 @@ impl YotsubaArchiver {
         statements: &HashMap<String, tokio_postgres::Statement>
     )
     {
-        if thread_type == "archive" && !*has_archives {
+        if thread_type == YotsubaType::Archive && !*has_archives {
             return;
         };
         let current_board = &bs.board;
         for retry_attempt in 0..(bs.retry_attempts + 1) {
-            match request::cget(
-                &self.client,
-                format!(
-                    "{domain}/{board}/{thread_type}.json",
-                    domain = self.config.settings.api_url.as_ref().unwrap(),
-                    board = current_board,
-                    thread_type = thread_type
-                ),
-                Some(last_modified),
-                bs.retry_attempts,
-                bs.throttle_millisec
-            )
-            .await
+            match self
+                .client
+                .get(
+                    &format!(
+                        "{domain}/{board}/{thread_type}.json",
+                        domain = self.config.settings.api_url.as_ref().unwrap(),
+                        board = current_board,
+                        thread_type = thread_type
+                    ),
+                    Some(last_modified)
+                )
+                .await
             {
-                Ok((_last_modified, status, body)) => {
-                    if !_last_modified.is_empty() {
-                        if *last_modified != _last_modified {
-                            last_modified.clear();
-                            last_modified.push_str(&_last_modified);
-                        }
-                    } else {
+                Ok((last_modified_new, status, body)) => {
+                    if last_modified_new.is_empty() {
                         error!(
                             "/{}/ [{}] <{}> An error has occurred getting the last_modified date",
                             current_board, thread_type, status
                         );
+                    } else if *last_modified != last_modified_new {
+                        last_modified.clear();
+                        last_modified.push_str(&last_modified_new);
                     }
                     match status {
                         StatusCode::OK => {
-                            if !body.is_empty() {
+                            if body.is_empty() {
+                                error!(
+                                    "({})\t/{}/\t<{}> Fetched threads was found to be empty!",
+                                    thread_type, current_board, status
+                                );
+                            } else {
                                 info!(
                                     "({})\t/{}/\tReceived new threads", // on {}",
                                     thread_type,
                                     current_board // ,Local::now().to_rfc2822()
                                 );
                                 *fetched_threads = Some(body.to_owned());
-                                // *fetched_threads = Some(
-                                //     serde_json::from_str::<serde_json::Value>(&new_threads)
-                                //         .expect("Err deserializing new threads"),
-                                // );
-                                // let ft = fetched_threads.to_owned().unwrap();
 
                                 // Check if there's an entry in the metadata
                                 if self
                                     .check_metadata_col(
                                         &current_board,
                                         &statements
-                                            .get(
-                                                &[
-                                                    thread_type,
-                                                    "_check_metadata_col_",
-                                                    current_board
-                                                ]
-                                                .concat()
-                                            )
+                                            .get(&format!(
+                                                "{}_check_metadata_col_{}",
+                                                thread_type, current_board
+                                            ))
                                             .unwrap()
                                     )
                                     .await
                                 {
+                                    let ena_resume = env::var("ENA_RESUME")
+                                        .ok()
+                                        .map(|a| a.parse::<bool>().ok())
+                                        .flatten()
+                                        .unwrap_or(false);
+
                                     // if there's cache
                                     // if this is a first startup
                                     // and ena_resume is false or thread type is archive
                                     // this will trigger getting archives from last left off
                                     // regardless of ena_resume. ena_resume only affects threads, so
                                     // a refetch won't be triggered.
-                                    let ena_resume = env::var("ENA_RESUME")
-                                        .ok()
-                                        .map(|a| a.parse::<bool>().ok())
-                                        .flatten()
-                                        .unwrap_or(false);
-                                    if *init
-                                        && (!ena_resume || (ena_resume && thread_type == "archive"))
+                                    // if *init && (!ena_resume || (ena_resume && thread_type ==
+                                    // YotsubaType::Archive))
+                                    if *init && (thread_type == YotsubaType::Archive || !ena_resume)
+                                    // clippy
                                     {
                                         // going here means the program was restarted
-                                        // use combination of ALL threads from cache + new threads
+                                        // use combination of ALL threads from cache + new threads,
+                                        // getting a total of 150+ threads
                                         // (excluding archived, deleted, and duplicate threads)
                                         if let Ok(mut list) = self
                                             .get_combined_threads(
                                                 &current_board,
                                                 &body,
                                                 &statements
-                                                    .get(
-                                                        &[
-                                                            thread_type,
-                                                            "_combined_threads_",
-                                                            current_board
-                                                        ]
-                                                        .concat()
-                                                    )
+                                                    .get(&format!(
+                                                        "{}_combined_threads_{}",
+                                                        thread_type, current_board
+                                                    ))
                                                     .unwrap()
                                             )
                                             .await
@@ -839,19 +820,17 @@ impl YotsubaArchiver {
                                         // running
                                         // ONLY get the new/modified/deleted threads
                                         // Compare time modified and get the new threads
-                                        let id = &[
-                                            thread_type,
-                                            "_deleted_and_modified_threads_",
-                                            current_board
-                                        ]
-                                        .concat();
+                                        let id = &format!(
+                                            "{}_deleted_and_modified_threads_{}",
+                                            thread_type, current_board
+                                        );
                                         match &statements.get(id) {
-                                            Some(_statements) => {
+                                            Some(statement_recieved) => {
                                                 if let Ok(mut list) = self
                                                     .get_deleted_and_modified_threads(
                                                         &current_board,
                                                         &body,
-                                                        _statements
+                                                        statement_recieved
                                                     )
                                                     .await
                                                 {
@@ -878,14 +857,10 @@ impl YotsubaArchiver {
                                             &current_board,
                                             &body,
                                             &statements
-                                                .get(
-                                                    &[
-                                                        thread_type,
-                                                        "_upsert_metadata_",
-                                                        current_board
-                                                    ]
-                                                    .concat()
-                                                )
+                                                .get(&format!(
+                                                    "{}_upsert_metadata_{}",
+                                                    thread_type, current_board
+                                                ))
                                                 .unwrap()
                                         )
                                         .await
@@ -895,14 +870,14 @@ impl YotsubaArchiver {
                                     *update_metadata = false;
                                     *init = false;
 
-                                    match if thread_type == "threads" {
+                                    match if thread_type == YotsubaType::Threads {
                                         self.get_threads_list(
                                             &body,
                                             &statements
-                                                .get(
-                                                    &[thread_type, "_threads_list_", current_board]
-                                                        .concat()
-                                                )
+                                                .get(&format!(
+                                                    "{}_threads_list_{}",
+                                                    thread_type, current_board
+                                                ))
                                                 .unwrap()
                                         )
                                         .await
@@ -929,11 +904,6 @@ impl YotsubaArchiver {
                                         )
                                     }
                                 }
-                            } else {
-                                error!(
-                                    "({})\t/{}/\t<{}> Fetched threads was found to be empty!",
-                                    thread_type, current_board, status
-                                );
                             }
                         }
                         StatusCode::NOT_MODIFIED => {
@@ -953,7 +923,7 @@ impl YotsubaArchiver {
                                 }
                             );
                             sleep(Duration::from_secs(1)).await;
-                            if thread_type == "archive" {
+                            if thread_type == YotsubaType::Archive {
                                 *has_archives = false;
                             }
                             continue;
@@ -969,7 +939,7 @@ impl YotsubaArchiver {
                     thread_type, current_board, thread_type, e
                 )
             }
-            if thread_type == "archive" {
+            if thread_type == YotsubaType::Archive {
                 *has_archives = true;
             }
             break;
@@ -981,7 +951,7 @@ impl YotsubaArchiver {
         &self,
         thread_type: YotsubaType,
         bs: BoardSettings,
-        t: &UnboundedSender<u32> // statements: HashMap<String, tokio_postgres::Statement>
+        _t: &UnboundedSender<u32> // not used because the 3rd thread for media dl is not used
     ) -> Option<()>
     {
         let current_board = &bs.board;
@@ -993,10 +963,6 @@ impl YotsubaArchiver {
         let statements = self.create_statements(current_board, thread_type).await;
 
         // This function is only called by fetch_board so it'll never be media.
-        let thread_type = match thread_type {
-            YotsubaType::Archive => "archive",
-            _ => "threads"
-        };
 
         let rd = bs.refresh_delay.into();
         let dur = Duration::from_millis(250);
@@ -1025,12 +991,11 @@ impl YotsubaArchiver {
             if threads_len > 0 {
                 info!("({})\t/{}/\tTotal new threads: {}", thread_type, current_board, threads_len);
             }
-            // print_len(threads_len, thread_type);
 
             // Download each thread
-            let mut position = 1u32;
+            let mut position = 1_u32;
             while let Some(thread) = local_threads_list.pop_front() {
-                let tnow = tokio::time::Instant::now();
+                let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, thread_type, thread, position, threads_len, &statements)
                     .await;
                 position += 1;
@@ -1052,7 +1017,7 @@ impl YotsubaArchiver {
                     return Some(());
                 }
                 // ratelimit
-                tokio::time::delay_until(tnow + ratel).await;
+                tokio::time::delay_until(now_thread + ratel).await;
             }
             // Update the cache at the end so that if the program was stopped while
             // processing threads, when it restarts it'll use the same
@@ -1064,7 +1029,7 @@ impl YotsubaArchiver {
                             &current_board,
                             &ft,
                             statements
-                                .get(&[thread_type, "_upsert_metadata_", &bs.board].concat())
+                                .get(&format!("{}_upsert_metadata_{}", thread_type, &bs.board))
                                 .unwrap()
                         )
                         .await
@@ -1092,38 +1057,41 @@ impl YotsubaArchiver {
     async fn assign_to_thread(
         &self,
         board_settings: &BoardSettings,
-        thread_type: &str,
+        thread_type: YotsubaType,
         thread: u32,
         position: u32,
         length: usize,
         statements: &HashMap<String, tokio_postgres::Statement>
     )
     {
-        // if self.finished.load(Ordering::Relaxed) {
-        //     return;
-        // }
+        let thread_type = &format!("{}", thread_type);
 
         let board = &board_settings.board;
         // let one_millis = Duration::from_millis(1);
 
         for _ in 0..(board_settings.retry_attempts + 1) {
-            match request::cget(
-                &self.client,
-                format!(
-                    "{domain}/{bo}/thread/{th}.json",
-                    domain = self.config.settings.api_url.as_ref().unwrap(),
-                    bo = board,
-                    th = thread
-                ),
-                None,
-                board_settings.retry_attempts,
-                board_settings.throttle_millisec
-            )
-            .await
+            match self
+                .client
+                .get(
+                    &format!(
+                        "{domain}/{bo}/thread/{th}.json",
+                        domain = self.config.settings.api_url.as_ref().unwrap(),
+                        bo = board,
+                        th = thread
+                    ),
+                    None
+                )
+                .await
             {
                 Ok((_, status, body)) => match status {
                     StatusCode::OK => {
-                        if !body.is_empty() {
+                        if body.is_empty() {
+                            error!(
+                                "({})\t/{}/{}\t<{}> Body was found to be empty!",
+                                thread_type, board, thread, status
+                            );
+                            sleep(Duration::from_secs(1)).await;
+                        } else {
                             if let Err(e) = self
                                 .upsert_thread(
                                     &body,
@@ -1152,12 +1120,6 @@ impl YotsubaArchiver {
                                 Err(e) => error!("Error running upsert_deleteds function! {}", e)
                             }
                             break;
-                        } else {
-                            error!(
-                                "({})\t/{}/{}\t<{}> Body was found to be empty!",
-                                thread_type, board, thread, status
-                            );
-                            sleep(Duration::from_secs(1)).await;
                         }
                     }
                     StatusCode::NOT_FOUND => {
@@ -1214,12 +1176,16 @@ impl YotsubaArchiver {
             if thumb { ".jpg" } else { &ext }
         );
         for _ in 0..(bs.retry_attempts + 1) {
-            match request::cget(&self.client, &url, None, bs.retry_attempts, bs.throttle_millisec)
-                .await
-            {
+            match self.client.get(&url, None).await {
                 Ok((_, status, body)) => match status {
                     StatusCode::OK => {
-                        if !body.is_empty() {
+                        if body.is_empty() {
+                            error!(
+                                "/{}/{}\t<{}> Body was found to be empty!",
+                                board, thread, status
+                            );
+                            sleep(Duration::from_secs(1)).await;
+                        } else {
                             // let body1 = body.clone();
                             // let hash_q = self.conn
                             // .query("select sha, sha::text as sha_text from (select sha256($1) as
@@ -1241,12 +1207,14 @@ impl YotsubaArchiver {
                             let temp_path = format!("{}/tmp/{}_{}{}", path, no, tim, ext);
                             hashsum = Some(hash_bytes.as_slice().to_vec());
 
-                            if (bs.keep_media && !thumb)
-                                || (bs.keep_thumbnails && thumb)
-                                || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb))
+                            // if (bs.keep_media && !thumb)
+                            //     || (bs.keep_thumbnails && thumb)
+                            //     || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb))
+                            if (bs.keep_thumbnails || !thumb) && (thumb || bs.keep_media)
+                            // clippy
                             {
                                 if let Ok(mut dest) = std::fs::File::create(&temp_path) {
-                                    if let Ok(_) = std::io::copy(&mut body.as_slice(), &mut dest) {
+                                    if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {
                                         // Media info
                                         // println!(
                                         //     "({}) /{}/{}#{} -> {}{}{}",
@@ -1278,16 +1246,20 @@ impl YotsubaArchiver {
 
                                         let path_final = Path::new(&final_path);
 
-                                        if !path_final.exists() {
-                                            if let Ok(_) = std::fs::create_dir_all(&final_dir_path)
-                                            {
-                                            }
-                                            if let Ok(_) = std::fs::rename(&temp_path, &final_path)
-                                            {
+                                        if path_final.exists() {
+                                            warn!("Already exists: {}", final_path);
+                                            if let Err(e) = std::fs::remove_file(&temp_path) {
+                                                error!("Remove temp: {}", e);
                                             }
                                         } else {
-                                            warn!("Already exists: {}", final_path);
-                                            if let Ok(_) = std::fs::remove_file(&temp_path) {}
+                                            if let Err(e) = std::fs::create_dir_all(&final_dir_path)
+                                            {
+                                                error!("Create final dir: {}", e);
+                                            }
+                                            if let Err(e) = std::fs::rename(&temp_path, &final_path)
+                                            {
+                                                error!("Rename temp to final: {}", e);
+                                            }
                                         }
                                     } else {
                                         error!("Error copying file to a temporary path");
@@ -1297,12 +1269,6 @@ impl YotsubaArchiver {
                                 }
                             }
                             break;
-                        } else {
-                            error!(
-                                "/{}/{}\t<{}> Body was found to be empty!",
-                                board, thread, status
-                            );
-                            sleep(Duration::from_secs(1)).await;
                         }
                     }
                     StatusCode::NOT_FOUND => {
@@ -1320,6 +1286,6 @@ impl YotsubaArchiver {
                 }
             }
         }
-        Some((no as u64, hashsum, thumb))
+        Some((u64::try_from(no).unwrap(), hashsum, thumb))
     }
 }

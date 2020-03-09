@@ -3,6 +3,14 @@ name = "ena"
 version = "0.5.0"
 authors = ["shiimizu <shiimizu@protonmail.com>"]
 edition = "2018"
+description = "Lightweight 4chan thread and board archiver"
+documentation = "https://github.com/shiimizu/ena"
+homepage = "https://github.com/shiimizu/ena"
+repository = "https://github.com/shiimizu/ena"
+license = "MIT"
+readme = "readme.md"
+keywords = ["4chan", "archiver", "scraper", "crawler"]
+categories = ["command-line-utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [profile.release]
@@ -21,6 +29,7 @@ anyhow = "1.0"
 sha2 = "0.8"
 
 # Async
+async-trait = "0.1"
 futures = "0.3"
 futures-util = "0.3"
 tokio = { version = "0.2", default-features = false, features = ["rt-threaded", "time", "io-driver", "sync"] }

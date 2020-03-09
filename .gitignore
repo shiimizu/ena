@@ -25,5 +25,5 @@ img/*
 *.log
 justfile
 changes.log
-!ena_config.json
+ena_config.json
 !img/yotsuba-and-ena.png

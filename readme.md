@@ -1,13 +1,11 @@
-<h1 align="center">
-	Ena
-	<br>
+<h1 align="center"><br>
   <img src="./img/yotsuba-and-ena.png" alt="Yotsuba&Ena!" width="470" /><br>
   
 </h1>
 
 <div align="center">
 
-<b>Lightweight 4chan thread and board archiver</b><br>
+<b>A lightweight 4chan thread and board archiver</b><br>
 
 [![Latest Version][latest-badge]][latest-link]
 [![License][license-badge]][license-url]
