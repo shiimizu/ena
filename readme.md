@@ -67,7 +67,7 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 Check the [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
 
 ### Why?
-Much of my personal time and research went into 4chan for *educational purposes* and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. At the time there weren't any avaliable practical solutions nor were they production ready so I decided to help out.
+Much of my personal time and research went into 4chan for *educational purposes* and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. At the time there wasn't any avaliable practical solutions nor were they production ready, so I decided to help out.
 
 ### Why Rust?
 I wanted something fast, safe, and ideally able to withstand long-term usage.
@@ -78,6 +78,5 @@ I wanted something fast, safe, and ideally able to withstand long-term usage.
 ### What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?
 
-Being the next generation of archivers, I wanted a name to reflect that.  
-Ena happens to be the youngest of the Ayase sisters. I liked the name so I stuck with it.
+Ena is the next generation, next in line, and the youngest of the Ayase sisters.
 

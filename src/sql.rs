@@ -1,28 +1,583 @@
-#![cold]
+// #![cold]
 
-use crate::YotsubaType;
+use crate::{YotsubaBoard, YotsubaEndpoint, YotsubaIdentifier};
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryFrom,
+    fmt,
+    ops::Add
+};
+use tokio_postgres::Statement;
+pub type StatementStore = HashMap<YotsubaIdentifier, Statement>;
 
-pub fn init_schema(schema: &str) -> String {
-    format!(r#"CREATE SCHEMA IF NOT EXISTS "{}";"#, schema)
+#[derive(
+    Debug, Copy, Clone, std::hash::Hash, PartialEq, std::cmp::Eq, enum_iterator::IntoEnumIterator,
+)]
+pub enum YotsubaStatement {
+    UpdateMetadata = 1,
+    UpdateThread,
+    Delete,
+    UpdateDeleteds,
+    Medias,
+    Threads,
+    ThreadsModified,
+    ThreadsCombined,
+    Metadata
+}
+impl fmt::Display for YotsubaStatement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            s => write!(f, "{:?}", s)
+        }
+    }
+}
+impl Add for YotsubaStatement {
+    type Output = u8;
+
+    fn add(self, other: Self) -> u8 {
+        (self as u8) + (other as u8)
+    }
+}
+/*
+trait Te {
+  fn yu(&self) -> u8;
+}
+impl Te for YotsubaStatement {
+  fn yu(&self) -> u8 {
+    match *self {
+      YotsubaStatement::UpdateDeleteds => 1,
+      YotsubaStatement::Threads => 2
+    }
+  }
+}*/
+
+#[async_trait]
+pub trait SqlQueries {
+    /// Creates the 4chan schema as a type to be easily referenced
+    async fn init_type(&self, schema: &str) -> Result<u64, tokio_postgres::error::Error>;
+
+    /// Creates the schema if nonexistent
+    async fn init_schema(&self, schema: &str);
+
+    /// Creates the metadata if nonexistent to store the api endpoints' data
+    async fn init_metadata(&self);
+
+    /// Creates a table for the specified board
+    async fn init_board(&self, board: YotsubaBoard, schema: &str);
+
+    /// Creates views for asagi
+    async fn init_views(&self, board: YotsubaBoard, schema: &str);
+
+    /// Upserts an endpoint to the metadata
+    ///
+    /// Converts bytes to json object and feeds that into the query
+    async fn update_metadata(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<u64>;
+
+    /// Upserts a thread
+    ///
+    /// This method updates an existing post or inserts a new one.
+    /// Posts are only updated where there's a field change.
+    /// A majority of posts in a thread don't change, this minimizes I/O writes.
+    /// (sha256, sha25t, and deleted are handled seperately as they are special
+    /// cases) https://stackoverflow.com/a/36406023
+    /// https://dba.stackexchange.com/a/39821
+    ///
+    /// 4chan inserts a backslash in their md5.
+    /// https://stackoverflow.com/a/11449627
+    async fn update_thread(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<u64>;
+
+    /// Marks a post as deleted
+    async fn delete(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        no: u32
+    );
+
+    // TODO: Check if new-new threads re-update the deleteds -> Add a check for deleted before updating. PgSQL needs to do this >_>..
+    /// Compares between the thread in db and the one fetched and marks any
+    /// posts missing in the fetched thread as deleted
+    async fn update_deleteds(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        thread: u32,
+        item: &[u8]
+    ) -> Result<u64>;
+
+    /// Upserts a media hash to a post
+    async fn update_hash(&self, board: YotsubaBoard, no: u64, hash_type: &str, hashsum: Vec<u8>);
+
+    /// Gets the list of posts in a thread that have media
+    async fn medias(
+        &self,
+        thread: u32,
+        statement: &Statement
+    ) -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>;
+
+    /// Gets a list of threads from the corresponding endpoint
+    async fn threads(
+        &self,
+        statement: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<VecDeque<u32>>;
+
+    /// Gets only the deleted and modified threads when comparing the metadata
+    /// and the fetched endpoint
+    async fn threads_modified(
+        &self,
+        board: YotsubaBoard,
+        new_threads: &[u8],
+        statement: &Statement
+    ) -> Result<VecDeque<u32>>;
+
+    /// Gets the list of threads from the one in the metadata + the fetched one
+    async fn threads_combined(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        new_threads: &[u8]
+    ) -> Result<VecDeque<u32>>;
+
+    /// Checks for the existence of an endpoint in the metadata
+    async fn metadata(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard
+    ) -> bool;
 }
 
-pub fn init_metadata(schema: &str) -> String {
+#[async_trait]
+impl SqlQueries for tokio_postgres::Client {
+    async fn init_type(&self, schema: &str) -> Result<u64, tokio_postgres::error::Error> {
+        self.execute(init_type(schema).as_str(), &[]).await
+    }
+
+    async fn init_schema(&self, schema: &str) {
+        self.batch_execute(
+            format!(
+                r#"
+      CREATE SCHEMA IF NOT EXISTS "{0}";
+      SET search_path TO "{0}";
+      "#,
+                schema
+            )
+            .as_str()
+        )
+        .await
+        .expect(&format!("Err creating schema: {}", schema));
+    }
+
+    async fn init_metadata(&self) {
+        self.batch_execute(&init_metadata()).await.expect("Err creating metadata");
+    }
+
+    async fn init_board(&self, board: YotsubaBoard, schema: &str) {
+        self.batch_execute(&init_board(board, schema))
+            .await
+            .expect(&format!("Err creating schema: {}", board));
+    }
+
+    async fn init_views(&self, board: YotsubaBoard, schema: &str) {
+        self.batch_execute(&init_views(schema, board)).await.expect("Err create views");
+    }
+
+    async fn update_metadata(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<u64>
+    {
+        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateMetadata };
+        let statement = statements.get(&id).unwrap();
+        Ok(self
+            .execute(statement, &[
+                &board.to_string(),
+                &serde_json::from_slice::<serde_json::Value>(item)?
+            ])
+            .await?)
+    }
+
+    async fn medias(
+        &self,
+        thread: u32,
+        statement: &Statement
+    ) -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>
+    {
+        self.query(statement, &[&i64::try_from(thread).unwrap()]).await
+    }
+
+    async fn update_hash(&self, board: YotsubaBoard, no: u64, hash_type: &str, hashsum: Vec<u8>) {
+        self.execute(update_hash(board, no, hash_type).as_str(), &[&hashsum])
+            .await
+            .expect("Err executing sql: update_hash");
+    }
+
+    /// Mark a single post as deleted.
+    async fn delete(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        no: u32
+    )
+    {
+        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Delete };
+        let statement = statements.get(&id).unwrap();
+        self.execute(statement, &[&i64::try_from(no).unwrap()])
+            .await
+            .expect("Err executing sql: delete");
+    }
+
+    /// Mark posts from a thread where it's deleted.
+    async fn update_deleteds(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        thread: u32,
+        item: &[u8]
+    ) -> Result<u64>
+    {
+        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateDeleteds };
+        let statement = statements.get(&id).unwrap();
+        Ok(self
+            .execute(statement, &[
+                &serde_json::from_slice::<serde_json::Value>(item)?,
+                &i64::try_from(thread).unwrap()
+            ])
+            .await?)
+    }
+
+    async fn update_thread(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<u64>
+    {
+        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateThread };
+        let statement = statements.get(&id).unwrap();
+        Ok(self.execute(statement, &[&serde_json::from_slice::<serde_json::Value>(item)?]).await?)
+    }
+
+    async fn metadata(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard
+    ) -> bool
+    {
+        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Metadata };
+        let statement = statements.get(&id).unwrap();
+        self.query(statement, &[&board.to_string()])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .unwrap_or(false)
+    }
+
+    async fn threads(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<VecDeque<u32>>
+    {
+        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
+        let statement = statements.get(&id).unwrap();
+        let i = serde_json::from_slice::<serde_json::Value>(item)?;
+        Ok(self
+            .query(statement, &[&i])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+            .flatten()
+            .ok_or_else(|| anyhow!("Error in get_threads_list"))?)
+    }
+
+    /// This query is only run ONCE at every startup
+    /// Running a JOIN to compare against the entire DB on every INSERT/UPDATE
+    /// would not be that great. That is not done here.
+    /// This gets all the threads from cache, compares it to the new json to get
+    /// new + modified threads Then compares that result to the database
+    /// where a thread is deleted or archived, and takes only the threads
+    /// where's it's not deleted or archived
+    async fn threads_combined(
+        &self,
+        statements: &StatementStore,
+        endpoint: YotsubaEndpoint,
+        board: YotsubaBoard,
+        new_threads: &[u8]
+    ) -> Result<VecDeque<u32>>
+    {
+        let id =
+            YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::ThreadsCombined };
+        let statement = statements.get(&id).unwrap();
+        let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        Ok(self
+            .query(statement, &[&board.to_string(), &i])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+            .flatten()
+            .ok_or_else(|| anyhow!("Error in get_combined_threads"))?)
+    }
+
+    /// Combine new and prev threads.json into one. This retains the prev
+    /// threads (which the new json doesn't contain, meaning they're either
+    /// pruned or archived).  That's especially useful for boards without
+    /// archives. Use the WHERE clause to select only modified threads. Now
+    /// we basically have a list of deleted and modified threads.
+    /// Return back this list to be processed.
+    /// Use the new threads.json as the base now.
+    async fn threads_modified(
+        &self,
+        board: YotsubaBoard,
+        new_threads: &[u8],
+        statement: &Statement
+    ) -> Result<VecDeque<u32>>
+    {
+        let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        Ok(self
+            .query(statement, &[&board.to_string(), &i])
+            .await
+            .ok()
+            .filter(|re| !re.is_empty())
+            .map(|re| re[0].try_get(0).ok())
+            .flatten()
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+            .flatten()
+            .ok_or_else(|| anyhow!("Error in get_combined_threads"))?)
+    }
+}
+
+pub fn init_metadata() -> String {
     format!(
         r#"
-        CREATE TABLE IF NOT EXISTS "{0}".metadata (
+        CREATE TABLE IF NOT EXISTS metadata (
                 board text NOT NULL,
                 threads jsonb,
                 archive jsonb,
                 PRIMARY KEY (board),
                 CONSTRAINT board_unique UNIQUE (board));
 
-        CREATE INDEX IF NOT EXISTS metadata_board_idx on "{0}".metadata(board);
-        "#,
-        schema
+        CREATE INDEX IF NOT EXISTS metadata_board_idx on metadata(board);
+        "#
     )
 }
 
-pub fn init_board(schema: &str, board: &str) -> String {
+/// This will find an already existing post
+pub fn delete(schema: &str, board: YotsubaBoard) -> String {
+    format!(
+        r#"
+      UPDATE "{0}"."{1}"
+      SET deleted_on    = extract(epoch from now())::bigint,
+          last_modified = extract(epoch from now())::bigint
+      WHERE
+        no = $1;
+      "#,
+        schema, board
+    )
+}
+
+pub fn update_deleteds(schema: &str, board: YotsubaBoard) -> String {
+    // This will find an already existing post due to the WHERE clause, meaning it's
+    // ok to only select no
+    format!(
+        r#"
+      INSERT INTO "{0}"."{1}" (no, time, resto)
+          SELECT x.* FROM
+              (SELECT no, time, resto FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
+              --(SELECT * FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
+          FULL JOIN
+              (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
+              --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
+          ON x.no = z.no
+          WHERE z.no is null
+      ON CONFLICT (no) 
+      DO
+          UPDATE
+          SET deleted_on = extract(epoch from now())::bigint,
+              last_modified = extract(epoch from now())::bigint;
+      "#,
+        schema, board
+    )
+}
+
+/// This will find an already existing post
+pub fn update_hash(board: YotsubaBoard, no: u64, hash_type: &str) -> String {
+    format!(
+        r#"
+      UPDATE "{0}"
+      SET last_modified = extract(epoch from now())::bigint,
+                  "{2}" = $1
+      WHERE
+        no = {1};
+      "#,
+        board, no, hash_type
+    )
+}
+
+pub fn update_metadata(schema: &str, column: YotsubaEndpoint) -> String {
+    format!(
+        r#"
+      INSERT INTO "{0}".metadata(board, {1})
+          VALUES ($1, $2::jsonb)
+          ON CONFLICT (board)
+          DO UPDATE
+              SET {1} = $2::jsonb;
+      "#,
+        schema, column
+    )
+}
+
+pub fn medias(schema: &str, board: YotsubaBoard) -> String {
+    format!(
+        r#"
+      SELECT * FROM "{0}"."{1}"
+      WHERE (no=$1 OR resto=$1) AND (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL)
+      ORDER BY no;
+      "#,
+        schema, board
+    )
+}
+
+pub fn threads_modified(schema: &str, endpoint: YotsubaEndpoint) -> String {
+    format!(
+        r#"
+      SELECT (
+        CASE WHEN new_hash IS DISTINCT FROM prev_hash THEN
+        (
+          SELECT jsonb_agg({1}) from
+          (select jsonb_array_elements({2}) as prev from "{0}".metadata where board = $1)x
+          full JOIN
+          (select jsonb_array_elements({3}) as newv)z
+          ON {4}
+          where newv is null or prev is null {5}
+        ) END
+      ) FROM 
+      (SELECT sha256(decode({6} #>> '{{}}', 'escape')) as prev_hash from "{0}".metadata where board=$1) w
+        FULL JOIN
+      (SELECT sha256(decode($2::jsonb #>> '{{}}', 'escape')) as new_hash) q
+      ON TRUE;
+      "#,
+        schema,
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"COALESCE(newv->'no',prev->'no')"#
+        } else {
+            "coalesce(newv,prev)"
+        },
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"jsonb_array_elements(threads)->'threads'"#
+        } else {
+            "archive"
+        },
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"jsonb_array_elements($2::jsonb)->'threads'"#
+        } else {
+            "$2::jsonb"
+        },
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"prev->'no' = (newv -> 'no')"#
+        } else {
+            "prev = newv"
+        },
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"#
+        } else {
+            ""
+        },
+        if endpoint == YotsubaEndpoint::Threads { "threads" } else { "archive" }
+    )
+}
+
+pub fn threads<'a>() -> &'a str {
+    "SELECT jsonb_agg(newv->'no')
+  FROM
+  (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
+}
+
+pub fn metadata(schema: &str, column: YotsubaEndpoint) -> String {
+    format!(
+        r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
+        schema, column
+    )
+}
+
+pub fn threads_combined(schema: &str, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String {
+    format!(
+        r#"
+      select jsonb_agg(c) from (
+          SELECT coalesce {2} as c from
+              (select jsonb_array_elements({3}) as prev from "{0}".metadata where board = $1)x
+          full JOIN
+              (select jsonb_array_elements({4}) as newv)z
+          ON {5}
+      )q
+      left join
+          (select no as nno from "{0}"."{1}" where resto=0 and (archived_on is not null or deleted_on is not null))w
+      ON c = nno
+      where nno is null;
+      "#,
+        schema,
+        board,
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"(prev->'no', newv->'no')::bigint"#
+        } else {
+            "(newv, prev)::bigint"
+        },
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"jsonb_array_elements(threads)->'threads'"#
+        } else {
+            "archive"
+        },
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"jsonb_array_elements($2::jsonb)->'threads'"#
+        } else {
+            "$2::jsonb"
+        },
+        if endpoint == YotsubaEndpoint::Threads {
+            r#"prev->'no' = (newv -> 'no')"#
+        } else {
+            "prev = newv"
+        }
+    )
+}
+
+pub fn init_board(board: YotsubaBoard, schema: &str) -> String {
     format!(
         r#"
         CREATE TABLE IF NOT EXISTS "{0}"."{1}" (
@@ -81,12 +636,12 @@ pub fn init_board(schema: &str, board: &str) -> String {
     )
 }
 
-pub fn init_type<'a>() -> &'a str {
-    r#"
+pub fn init_type(schema: &str) -> String {
+    format!(r#"
         DO $$
         BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'schema_4chan') THEN
-                CREATE TYPE "schema_4chan" AS (
+            IF NOT EXISTS (SELECT typname FROM pg_type WHERE typname = 'schema_4chan') THEN
+                CREATE TYPE "{}"."schema_4chan" AS (
                     no bigint,
                     sticky smallint,
                     closed smallint,
@@ -128,10 +683,10 @@ pub fn init_type<'a>() -> &'a str {
             END IF;
         END
         $$;
-    "#
+    "#, schema)
 }
 
-pub fn init_views(schema: &str, board: &str) -> String {
+pub fn init_views(schema: &str, board: YotsubaBoard) -> String {
     let safe_create_view = |n, stmt| {
         format!(
             r#"
@@ -358,65 +913,7 @@ pub fn init_views(schema: &str, board: &str) -> String {
     )
 }
 
-pub fn upsert_deleted(schema: &str, board: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's
-    // ok to only select no
-    format!(
-        r#"
-      INSERT INTO "{0}"."{1}" (no, time, resto)
-          SELECT no, time, resto FROM "{0}"."{1}" WHERE no = $1
-          --SELECT * FROM "{0}"."{1}" WHERE no = $1
-      ON CONFLICT (no)
-      DO
-          UPDATE
-          SET last_modified = extract(epoch from now())::bigint,
-              deleted_on = extract(epoch from now())::bigint;
-      "#,
-        schema, board
-    )
-}
-
-pub fn upsert_deleteds(schema: &str, board: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's
-    // ok to only select no
-    format!(
-        r#"
-      INSERT INTO "{0}"."{1}" (no, time, resto)
-          SELECT x.* FROM
-              (SELECT no, time, resto FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
-              --(SELECT * FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
-          FULL JOIN
-              (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
-              --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
-          ON x.no = z.no
-          WHERE z.no is null
-      ON CONFLICT (no) 
-      DO
-          UPDATE
-          SET last_modified = extract(epoch from now())::bigint,
-              deleted_on = extract(epoch from now())::bigint;
-      "#,
-        schema, board
-    )
-}
-
-pub fn upsert_hash(schema: &str, board: &str, no: u64, hash_type: &str) -> String {
-    // This will find an already existing post due to the WHERE clause, meaning it's
-    // ok to only select no
-    format!(
-        r#"
-      INSERT INTO "{0}"."{1}" (no, time, resto)
-          SELECT no, time, resto FROM "{0}"."{1}" WHERE no = {2}
-          --SELECT * FROM "{0}"."{1}" WHERE no = {2}
-      ON CONFLICT (no) DO UPDATE
-          SET last_modified = extract(epoch from now())::bigint,
-              "{3}" = $1;
-      "#,
-        schema, board, no, hash_type
-    )
-}
-
-pub fn upsert_thread(schema: &str, board: &str) -> String {
+pub fn update_thread(schema: &str, board: YotsubaBoard) -> String {
     format!(
         r#"
       INSERT INTO "{0}"."{1}" (
@@ -552,104 +1049,9 @@ pub fn upsert_thread(schema: &str, board: &str) -> String {
     )
 }
 
-pub fn upsert_metadata(schema: &str, column: YotsubaType) -> String {
-    format!(
-        r#"
-      INSERT INTO "{0}".metadata(board, {1})
-          VALUES ($1, $2::jsonb)
-          ON CONFLICT (board)
-          DO UPDATE
-              SET {1} = $2::jsonb;
-      "#,
-        schema, column
-    )
-}
-
-pub fn media_posts(schema: &str, board: &str) -> String {
-    format!(
-        r#"
-      SELECT * FROM "{0}"."{1}"
-      WHERE (no=$1 OR resto=$1) AND (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL)
-      ORDER BY no;
-      "#,
-        schema, board
-    )
-}
-
-pub fn deleted_and_modified_threads(schema: &str, is_threads: bool) -> String {
-    format!(
-        r#"
-      SELECT (
-          CASE WHEN new_hash IS DISTINCT FROM prev_hash THEN
-          (
-              SELECT jsonb_agg({1}) from
-              (select jsonb_array_elements({2}) as prev from "{0}".metadata where board = $1)x
-              full JOIN
-              (select jsonb_array_elements({3}) as newv)z
-              ON {4}
-              where newv is null or prev is null {5}
-          )
-          END
-      ) FROM 
-      (SELECT sha256(decode({6} #>> '{{}}', 'escape')) as prev_hash from "{0}".metadata where board=$1)w
-      FULL JOIN
-      (SELECT sha256(decode($2::jsonb #>> '{{}}', 'escape')) as new_hash)q
-      ON TRUE;
-      "#,
-        schema,
-        if is_threads { r#"COALESCE(newv->'no',prev->'no')"# } else { "coalesce(newv,prev)" },
-        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
-        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
-        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" },
-        if is_threads {
-            r#"or not prev->'last_modified' <@ (newv -> 'last_modified')"#
-        } else {
-            ""
-        },
-        if is_threads { r#"threads"# } else { "archive" }
-    )
-}
-
-pub fn threads_list<'a>() -> &'a str {
-    "SELECT jsonb_agg(newv->'no')
-  FROM
-  (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
-}
-
-pub fn check_metadata_col(schema: &str, column: YotsubaType) -> String {
-    format!(
-        r#"select CASE WHEN {1} is not null THEN true ELSE false END from "{0}".metadata where board = $1"#,
-        schema, column
-    )
-}
-
-pub fn combined_threads(schema: &str, board: &str, is_threads: bool) -> String {
-    format!(
-        r#"
-      select jsonb_agg(c) from (
-          SELECT coalesce {2} as c from
-              (select jsonb_array_elements({3}) as prev from "{0}".metadata where board = $1)x
-          full JOIN
-              (select jsonb_array_elements({4}) as newv)z
-          ON {5}
-      )q
-      left join
-          (select no as nno from "{0}"."{1}" where resto=0 and (archived_on is not null or deleted_on is not null))w
-      ON c = nno
-      where nno is null;
-      "#,
-        schema,
-        board,
-        if is_threads { r#"(prev->'no', newv->'no')::bigint"# } else { "(newv, prev)::bigint" },
-        if is_threads { r#"jsonb_array_elements(threads)->'threads'"# } else { "archive" },
-        if is_threads { r#"jsonb_array_elements($2::jsonb)->'threads'"# } else { "$2::jsonb" },
-        if is_threads { r#"prev->'no' = (newv -> 'no')"# } else { "prev = newv" }
-    )
-}
-
 /*
 #[allow(dead_code)]
-pub fn create_asagi_tables(schema: &str, board: &str) -> String {
+pub fn create_asagi_tables(schema: &str, board: YotsubaBoard) -> String {
     format!(
         r#"
         CREATE TABLE IF NOT EXISTS "{0}"."{1}_threads" (
@@ -726,7 +1128,7 @@ pub fn create_asagi_tables(schema: &str, board: &str) -> String {
 }
 
 #[allow(dead_code)]
-pub fn create_asagi_triggers(schema: &str, board: &str, board_name_main: &str) -> String {
+pub fn create_asagi_triggers(schema: &str, board: YotsubaBoard, board_name_main: &str) -> String {
     format!(
         r#"
         CREATE OR REPLACE FUNCTION "{1}_update_thread"(n_row "{0}"."{2}") RETURNS void AS $$

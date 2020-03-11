@@ -14,7 +14,6 @@
     "mediaUrl": "http://i.4cdn.org"
   },
   "boardSettings": {
-    "board": "",
     "retryAttempts": 3,
     "refreshDelay": 20,
     "throttleMillisec": 500,
@@ -25,7 +24,6 @@
   },
   "boards": [
     { "board": "po" },
-    { "board": "n" },
-    { "board": "tg" }
+    { "board": "n" }
   ]
 }

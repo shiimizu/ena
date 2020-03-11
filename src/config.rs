@@ -1,3 +1,4 @@
+use crate::YotsubaBoard;
 use serde::{self, Deserialize, Serialize};
 use std::env::var;
 
@@ -6,7 +7,7 @@ use std::env::var;
 #[serde(default)] // https://github.com/serde-rs/serde/pull/780
 pub struct Config {
     pub settings: Settings,
-    pub board_settings: BoardSettings, //pub boards: Vec<BoardSettings>
+    pub board_settings: BoardSettings,
     pub boards: Vec<BoardSettings>
 }
 
@@ -43,14 +44,16 @@ impl Default for Settings {
         Self {
             engine: var("ENA_DATABASE").unwrap_or("postgresql".into()),
             database: var("ENA_DATABASE_NAME").unwrap_or("archive_ena".into()),
-            schema: var("ENA_DATABASE_SCHEMA").unwrap_or("public".into()),
+            schema: var("ENA_DATABASE_SCHEMA")
+                .ok()
+                .filter(|s| !String::is_empty(s))
+                .unwrap_or("public".into()),
             host: var("ENA_DATABASE_HOST").unwrap_or("localhost".into()),
             port: var("ENA_DATABASE_PORT")
                 .ok()
                 .map(|a| a.parse::<u32>().ok())
                 .flatten()
                 .unwrap_or(5432),
-            // port: var("ENA_DATABASE_PORT").map_or(|| 5432_u32, |v| 1u32),
             username: var("ENA_DATABASE_USERNAME").unwrap_or("postgres".into()),
             password: var("ENA_DATABASE_PASSWORD").unwrap_or("pass".into()),
             charset: var("ENA_DATABASE_CHARSET").unwrap_or("utf8".into()),
@@ -82,7 +85,7 @@ pub fn default_headers(
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct BoardSettings {
-    pub board: String,
+    pub board: YotsubaBoard,
     pub retry_attempts: u16,
     pub refresh_delay: u16,
     pub throttle_millisec: u32,
@@ -94,7 +97,7 @@ pub struct BoardSettings {
 impl Default for BoardSettings {
     fn default() -> Self {
         Self {
-            board: "".into(),
+            board: YotsubaBoard::None,
             retry_attempts: 3,
             refresh_delay: 20,
             throttle_millisec: 1000,
@@ -105,6 +108,20 @@ impl Default for BoardSettings {
         }
     }
 }
+/// Reads a config file
+pub fn read_config(config_path: &str) -> (Config, String) {
+    let config: Config = read_json(config_path).unwrap_or_default();
+    let conn_url = format!(
+        "{engine}://{username}:{password}@{host}:{port}/{database}",
+        engine = &config.settings.engine,
+        username = &config.settings.username,
+        password = &config.settings.password,
+        host = &config.settings.host,
+        port = &config.settings.port,
+        database = &config.settings.database
+    );
+    (config, conn_url)
+}
 
 /// Reads a json file
 pub fn read_json<T>(path: &str) -> Option<T>
@@ -114,4 +131,11 @@ where T: serde::de::DeserializeOwned {
         .ok()
         .and_then(|reader| serde_json::from_reader(reader).ok())
         .flatten()
+}
+#[allow(dead_code)]
+pub fn read_json2<T>(path: &str) -> T
+where T: serde::de::DeserializeOwned {
+    let file = std::fs::File::open(path).unwrap();
+    let reader = std::io::BufReader::new(file);
+    serde_json::from_reader(reader).unwrap()
 }
