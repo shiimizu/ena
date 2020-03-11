@@ -11,19 +11,20 @@
     "path": "./archive",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0",
     "apiUrl": "http://a.4cdn.org",
-    "mediaUrl": "http://i.4cdn.org"
+    "mediaUrl": "http://i.4cdn.org",
+    "asagiMode": false
   },
   "boardSettings": {
     "retryAttempts": 3,
     "refreshDelay": 20,
-    "throttleMillisec": 500,
+    "throttleMillisec": 1000,
     "downloadMedia": false,
     "downloadThumbnails": true,
     "keepMedia": false,
     "keepThumbnails": false
   },
   "boards": [
-    { "board": "po" },
+    { "board": "po"},
     { "board": "n" }
   ]
 }
