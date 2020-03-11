@@ -185,70 +185,20 @@ pub trait SchemaTrait {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct YotsubaSchema<T: SchemaTrait> {
-    impl_schema: T
+pub struct YotsubaSchema<T: SchemaTrait>(T);
+
+impl<T> YotsubaSchema<T> where T: SchemaTrait {
+    pub fn new(x: T) -> Self {
+        Self(x)
+    }
 }
 
-#[allow(dead_code)]
-impl<T> YotsubaSchema<T> where T: SchemaTrait {
-    pub fn new(input: T) -> Self {
-        Self { impl_schema: input }
-    }
+/// Defining Our Own Smart Pointer by Implementing the Deref Trait
+/// https://is.gd/62jW5Z
+impl<T> std::ops::Deref for YotsubaSchema<T> where T: SchemaTrait {
+    type Target = T;
 
-    pub fn init_metadata(&self) -> String {
-        self.impl_schema.init_metadata()
-    }
-
-    pub fn delete(&self, schema: &str, board: YotsubaBoard) -> String {
-        self.impl_schema.delete(schema, board)
-    }
-
-    pub fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String {
-        self.impl_schema.update_deleteds(schema, board)
-    }
-
-    pub fn update_hash(&self, board: YotsubaBoard, no: u64, hash_type: &str) -> String {
-        self.impl_schema.update_hash(board, no, hash_type)
-    }
-
-    pub fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
-        self.impl_schema.update_metadata(schema, column)
-    }
-
-    pub fn medias(&self, schema: &str, board: YotsubaBoard) -> String {
-        self.impl_schema.medias(schema, board)
-    }
-
-    pub fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String {
-        self.impl_schema.threads_modified(schema, endpoint)
-    }
-
-    pub fn threads<'a>(&self) -> &'a str {
-        self.impl_schema.threads()
-    }
-
-    pub fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
-        self.impl_schema.metadata(schema, column)
-    }
-
-    pub fn threads_combined(&self, schema: &str, board: YotsubaBoard, endpoint: YotsubaEndpoint)
-                            -> String {
-        self.impl_schema.threads_combined(schema, board, endpoint)
-    }
-
-    pub fn init_board(&self, board: YotsubaBoard, schema: &str) -> String {
-        self.impl_schema.init_board(board, schema)
-    }
-
-    pub fn init_type(&self, schema: &str) -> String {
-        self.impl_schema.init_type(schema)
-    }
-
-    pub fn init_views(&self, schema: &str, board: YotsubaBoard) -> String {
-        self.impl_schema.init_views(schema, board)
-    }
-
-    pub fn update_thread(&self, schema: &str, board: YotsubaBoard) -> String {
-        self.impl_schema.update_thread(schema, board)
+    fn deref(&self) -> &T {
+        &self.0
     }
 }
