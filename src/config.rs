@@ -1,5 +1,5 @@
 use crate::{sql::Database, YotsubaBoard};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use enum_iterator::IntoEnumIterator;
 use serde::{self, Deserialize, Serialize};
 use std::env::var;
@@ -40,7 +40,8 @@ pub struct Settings {
     pub path:       String,
     pub user_agent: String,
     pub api_url:    String,
-    pub media_url:  String
+    pub media_url:  String,
+    pub asagi_mode: bool
 }
 
 impl Default for Settings {
@@ -73,7 +74,11 @@ impl Default for Settings {
                                    var("CARGO_PKG_NAME").unwrap_or("ena".into()),
                                    var("CARGO_PKG_VERSION").unwrap_or("0.0.0".into())),
                api_url:    var("ENA_API_URL").unwrap_or("http://a.4cdn.org".into()),
-               media_url:  var("ENA_MEDIA_URL").unwrap_or("http://i.4cdn.org".into()) }
+               media_url:  var("ENA_MEDIA_URL").unwrap_or("http://i.4cdn.org".into()),
+               asagi_mode: var("ENA_ASAGI_MODE").ok()
+                                                .map(|a| a.parse::<bool>().ok())
+                                                .flatten()
+                                                .unwrap_or(false) }
     }
 }
 
