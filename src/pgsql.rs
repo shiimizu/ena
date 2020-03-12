@@ -219,7 +219,7 @@ impl SchemaTrait for Schema {
       SET deleted_on    = extract(epoch from now())::bigint,
           last_modified = extract(epoch from now())::bigint
       WHERE
-        no = $1;
+        no = $1 AND deleted_on is NULL;
       "#,
                 schema, board
         )
@@ -243,7 +243,9 @@ impl SchemaTrait for Schema {
       DO
           UPDATE
           SET deleted_on = extract(epoch from now())::bigint,
-              last_modified = extract(epoch from now())::bigint;
+              last_modified = extract(epoch from now())::bigint
+          WHERE
+            "{0}"."{1}".deleted_on is NULL;
       "#,
                 schema, board
         )
