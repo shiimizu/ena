@@ -80,16 +80,31 @@ fn main() {
 #[allow(unused_mut)]
 async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     let (config, conn_url) = config::read_config("ena_config.json");
-    // debug!("{}", serde_json::to_string_pretty(&config).unwrap());
-    // debug!("{} {:#?}",
-    // &config.board_settings.board,&config.board_settings.board);
-    // return Ok(0);;
+
+    // Find duplicate boards
+    for a in &config.boards {
+        let c = &config.boards.iter().filter(|&n| n.board == a.board).count();
+        if *c > 1 {
+            panic!("Multiple occurrences of `{}` found :: {}", a.board, c);
+        }
+    }
+
+    if config.settings.asagi_mode && config.settings.engine != Database::MySQL {
+        unimplemented!("Asagi mode outside of MySQL. Found {:?}", &config.settings.engine)
+    }
+
+    // info!("{}", config.pretty());
+    // TODO
+    // Asagi
+    // https://rust-cli.github.io/book/tutorial/index.html
+    // https://doc.rust-lang.org/edition-guide/rust-2018/trait-system/impl-trait-for-returning-complex-types-with-ease.html
+    // debug!("{} {:#?}", &config.board_settings.board,&config.board_settings.board);
+    // return Ok(0);
 
     // let pool = mysql_async::Pool::new(&conn_url);
     // let yb = YotsubaDatabase::new(pool);
     // let conn = yb.get_conn().await.unwrap();
 
-    // // let conn: mysql_async::Conn = pool.get_conn().await.unwrap();
     // let stmt = conn.prepare("select ?, ?").await.unwrap();
     // stmt.execute((1u8, 2u8))
     //     .await
@@ -102,7 +117,7 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     //     .await
     //     .unwrap();
     // yb.0.disconnect().await.unwrap();
-    // pool.disconnect().await.unwrap();
+    // info!("Connected with:\t{}", conn_url);
     // return Ok(1);
 
     let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
@@ -115,8 +130,6 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
             error!("Connection error: {}", e);
         }
     });
-    
-    info!("Connected with:\t{}", conn_url);
 
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
@@ -139,17 +152,6 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
 
     let mut boards: &Vec<BoardSettings> = &archiver.config.boards;
 
-    // Find duplicate boards
-    for a in boards {
-        if a.board == YotsubaBoard::None {
-            panic!("Empty board. Please check your settings");
-        }
-        let c = boards.iter().filter(|&n| n.board == a.board).count();
-        if c > 1 {
-            panic!("Multiple occurrences of `{}` found :: {}", a.board, c);
-        }
-    }
-
     // Push each board to queue to be run concurrently
     let archiver_ref = &archiver;
     let mut fut2 = FuturesUnordered::new();
@@ -158,7 +160,12 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
         archiver_ref.query.init_views(board.board, &archiver_ref.config.settings.schema).await;
 
         let (mut tx, mut _rx) = mpsc::unbounded_channel();
-        fut2.push(archiver_ref.compute(YotsubaEndpoint::Archive, board, Some(tx.clone()), None));
+        if board.download_archives {
+            fut2.push(archiver_ref.compute(YotsubaEndpoint::Archive,
+                                           board,
+                                           Some(tx.clone()),
+                                           None));
+        }
         fut2.push(archiver_ref.compute(YotsubaEndpoint::Threads, board, Some(tx.clone()), None));
         // fut2.push(archiver_ref.compute(YotsubaEndpoint::Media, board, None,
         // Some(_rx)));

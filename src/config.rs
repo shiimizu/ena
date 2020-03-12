@@ -16,6 +16,13 @@ pub struct Config {
     pub board_settings: BoardSettings,
     pub boards:         Vec<BoardSettings>
 }
+
+impl Config {
+    pub fn pretty(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
+    }
+}
+
 /// This is for patching user boards
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +122,7 @@ struct BoardSettingsInner {
     retry_attempts:      u16,
     refresh_delay:       u16,
     throttle_millisec:   u32,
+    download_archives:   bool,
     download_media:      bool,
     download_thumbnails: bool,
     keep_media:          bool,
@@ -129,6 +137,7 @@ pub struct BoardSettings {
     pub retry_attempts:      u16,
     pub refresh_delay:       u16,
     pub throttle_millisec:   u32,
+    pub download_archives:   bool,
     pub download_media:      bool,
     pub download_thumbnails: bool,
     pub keep_media:          bool,
@@ -142,6 +151,7 @@ impl Default for BoardSettings {
                         retry_attempts:      b.retry_attempts,
                         refresh_delay:       b.refresh_delay,
                         throttle_millisec:   b.throttle_millisec,
+                        download_archives:   b.download_archives,
                         download_media:      b.download_media,
                         download_thumbnails: b.download_thumbnails,
                         keep_media:          b.keep_media,
@@ -155,6 +165,7 @@ impl Default for BoardSettingsInner {
                retry_attempts:      3,
                refresh_delay:       20,
                throttle_millisec:   1000,
+               download_archives:   true,
                download_media:      false,
                download_thumbnails: false,
                keep_media:          false,
