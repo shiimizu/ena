@@ -32,6 +32,7 @@ use core::sync::atomic::Ordering;
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
 use log::*;
+use mysql_async::prelude::*;
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
 // use ctrlc;
@@ -75,13 +76,34 @@ fn main() {
           start_time.to_rfc2822(),
           Local::now().to_rfc2822());
 }
+
 #[allow(unused_mut)]
 async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     let (config, conn_url) = config::read_config("ena_config.json");
     // debug!("{}", serde_json::to_string_pretty(&config).unwrap());
     // debug!("{} {:#?}",
     // &config.board_settings.board,&config.board_settings.board);
-    // return Ok(0);
+    // return Ok(0);;
+
+    // let pool = mysql_async::Pool::new(&conn_url);
+    // let yb = YotsubaDatabase::new(pool);
+    // let conn = yb.get_conn().await.unwrap();
+
+    // // let conn: mysql_async::Conn = pool.get_conn().await.unwrap();
+    // let stmt = conn.prepare("select ?, ?").await.unwrap();
+    // stmt.execute((1u8, 2u8))
+    //     .await
+    //     .unwrap()
+    //     .for_each(|row| {
+    //         let z: u8 = row.get(0).unwrap();
+    //         let x: u8 = row.get(1).unwrap();
+    //         println!("{} {}", z, x);
+    //     })
+    //     .await
+    //     .unwrap();
+    // yb.0.disconnect().await.unwrap();
+    // pool.disconnect().await.unwrap();
+    // return Ok(1);
 
     let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
         .await
@@ -93,7 +115,7 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
             error!("Connection error: {}", e);
         }
     });
-
+    
     info!("Connected with:\t{}", conn_url);
 
     let http_client = reqwest::ClientBuilder::new()
@@ -118,10 +140,10 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     let mut boards: &Vec<BoardSettings> = &archiver.config.boards;
 
     // Find duplicate boards
-    // TODO: Fix boards not inheritiing from above exxample in json
     for a in boards {
-        let mut default: BoardSettings = archiver.config.board_settings.to_owned();
-        default.board = a.board;
+        if a.board == YotsubaBoard::None {
+            panic!("Empty board. Please check your settings");
+        }
         let c = boards.iter().filter(|&n| n.board == a.board).count();
         if c > 1 {
             panic!("Multiple occurrences of `{}` found :: {}", a.board, c);
@@ -202,84 +224,148 @@ impl<H, S> YotsubaArchiver<H, S>
                                    match statement {
                                        YotsubaStatement::UpdateMetadata =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .update_metadata(self.schema(),
-                                                                                   endpoint)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::TEXT,
-                                                                tokio_postgres::types::Type::JSONB])
+                                               .prepare(self.sql
+                                                            .update_metadata(self.schema(),
+                                                                             endpoint)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql
+                                       //                           .update_metadata(self.schema(),
+                                       //                                            endpoint)
+                                       //                           .as_str(),
+                                       //                       &[tokio_postgres::types::Type::TEXT,
+                                       //
+                                       // tokio_postgres::types::Type::JSONB])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::UpdateThread =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .update_thread(self.schema(),
-                                                                                 board)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::JSONB])
+                                               .prepare(self.sql
+                                                            .update_thread(self.schema(), board)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql
+                                       //                           .update_thread(self.schema(),
+                                       //                                          board)
+                                       //                           .as_str(),
+                                       //
+                                       // &[tokio_postgres::types::Type::JSONB])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::Delete =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .delete(self.schema(), board)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::INT8])
+                                               .prepare(self.sql
+                                                            .delete(self.schema(), board)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql
+                                       //                           .delete(self.schema(), board)
+                                       //                           .as_str(),
+                                       //
+                                       // &[tokio_postgres::types::Type::INT8])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::UpdateDeleteds =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .update_deleteds(self.schema(),
-                                                                                   board)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::JSONB,
-                                                                tokio_postgres::types::Type::INT8])
+                                               .prepare(self.sql
+                                                            .update_deleteds(self.schema(), board)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql
+                                       //                           .update_deleteds(self.schema(),
+                                       //                                            board)
+                                       //                           .as_str(),
+                                       //
+                                       // &[tokio_postgres::types::Type::JSONB,
+                                       //
+                                       // tokio_postgres::types::Type::INT8])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::Medias =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .medias(self.schema(), board)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::INT8])
+                                               .prepare(self.sql
+                                                            .medias(self.schema(), board)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql
+                                       //                           .medias(self.schema(), board)
+                                       //                           .as_str(),
+                                       //
+                                       // &[tokio_postgres::types::Type::INT8])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::Threads =>
-                                           self.query
-                                               .prepare_typed(self.sql.threads(),
-                                                              &[tokio_postgres::types::Type::JSONB])
-                                               .await
-                                               .unwrap(),
+                                           self.query.prepare(self.sql.threads()).await.unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql.threads(),
+                                       //
+                                       // &[tokio_postgres::types::Type::JSONB])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::ThreadsModified =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .threads_modified(self.schema(),
-                                                                                    endpoint)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::TEXT,
-                                                                tokio_postgres::types::Type::JSONB])
+                                               .prepare(self.sql
+                                                            .threads_modified(self.schema(),
+                                                                              endpoint)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql
+                                       //                           .threads_modified(self.schema(),
+                                       //                                             endpoint)
+                                       //                           .as_str(),
+                                       //                       &[tokio_postgres::types::Type::TEXT,
+                                       //
+                                       // tokio_postgres::types::Type::JSONB])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::ThreadsCombined =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .threads_combined(self.schema(),
-                                                                                    board,
-                                                                                    endpoint)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::TEXT,
-                                                                tokio_postgres::types::Type::JSONB])
+                                               .prepare(self.sql
+                                                            .threads_combined(self.schema(),
+                                                                              board,
+                                                                              endpoint)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       //    self.query
+                                       //        .prepare_typed(self.sql
+                                       //                           .threads_combined(self.schema(),
+                                       //                                             board,
+                                       //                                             endpoint)
+                                       //                           .as_str(),
+                                       //                       &[tokio_postgres::types::Type::TEXT,
+                                       //
+                                       // tokio_postgres::types::Type::JSONB])
+                                       //        .await
+                                       //        .unwrap(),
                                        YotsubaStatement::Metadata =>
                                            self.query
-                                               .prepare_typed(self.sql
-                                                                  .metadata(self.schema(), endpoint)
-                                                                  .as_str(),
-                                                              &[tokio_postgres::types::Type::TEXT])
+                                               .prepare(self.sql
+                                                            .metadata(self.schema(), endpoint)
+                                                            .as_str())
                                                .await
                                                .unwrap(),
+                                       /*    self.query
+                                        *        .prepare_typed(self.sql
+                                        *                           .metadata(self.schema(),
+                                        * endpoint)
+                                        *                           .as_str(),
+                                        *
+                                        * &[tokio_postgres::types::Type::TEXT])
+                                        *        .await
+                                        *        .unwrap(), */
                                    });
         }
         statement_store
@@ -324,11 +410,13 @@ impl<H, S> YotsubaArchiver<H, S>
         if !(info.download_media || info.download_thumbnails) {
             return;
         }
-        let ms = self.query
-                     .prepare_typed(self.sql.medias(self.schema(), info.board).as_str(),
-                                    &[tokio_postgres::types::Type::INT8])
-                     .await
-                     .unwrap();
+        let ms =
+            self.query.prepare(self.sql.medias(self.schema(), info.board).as_str()).await.unwrap();
+        // self.query
+        //  .prepare_typed(self.sql.medias(self.schema(), info.board).as_str(),
+        //                 &[tokio_postgres::types::Type::INT8])
+        //  .await
+        //  .unwrap();
         match self.query.medias(thread, &ms).await {
             Ok(media_list) => {
                 let mut fut = FuturesUnordered::new();

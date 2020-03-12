@@ -1,12 +1,31 @@
 use crate::{sql::*, YotsubaBoard, YotsubaEndpoint, YotsubaIdentifier};
-
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::{collections::VecDeque, convert::TryFrom};
 use tokio_postgres::Statement;
 
+/// PostgreSQL version of the schema. This is also the default one used.  
+/// If another schema is thought of, feel free to use the `SchemaTrait` implement it.
+#[derive(Debug, Copy, Clone)]
+pub struct Schema;
+
+impl Schema {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+/// PostgreSQL version is using tokio_postgres
 #[async_trait]
 impl SqlQueries for tokio_postgres::Client {
+    // async fn prepare(&self, query: &str) -> Result<Statement, tokio_postgres::error::Error> {
+    //   self.prepare(query).await
+    // }
+
+    // async fn prepare<R>(&self, query: &str) -> Result<PrepareStatment<R>> {
+    //   Ok(self.prepare(query).await.map(|z| PrepareStatment::PostgreSQL(z))?)
+    // }
+
     async fn init_type(&self, schema: &str) -> Result<u64, tokio_postgres::error::Error> {
         self.execute(Schema::new().init_type(schema).as_str(), &[]).await
     }
@@ -176,17 +195,6 @@ impl SqlQueries for tokio_postgres::Client {
     }
 }
 
-/// PostgreSQL version of the schema. This is also the default one used.
-/// If another schema is thought of, feel free to use the `SchemaTrait` implement it.
-
-#[derive(Debug, Copy, Clone)]
-pub struct Schema;
-
-impl Schema {
-    pub fn new() -> Self {
-        Schema {}
-    }
-}
 impl SchemaTrait for Schema {
     fn init_metadata(&self) -> String {
         format!(

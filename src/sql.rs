@@ -1,7 +1,8 @@
 // #![cold]
-
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
 use crate::{YotsubaBoard, YotsubaEndpoint, YotsubaIdentifier};
-
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use enum_iterator::IntoEnumIterator;
@@ -10,6 +11,8 @@ use std::{collections::{HashMap, VecDeque},
           fmt,
           ops::Add};
 use tokio_postgres::Statement;
+// use mysql_async::prelude::*;
+use mysql_async::Stmt;
 
 pub type StatementStore = HashMap<YotsubaIdentifier, Statement>;
 #[derive(Debug,
@@ -26,6 +29,7 @@ pub enum Database {
     PostgreSQL,
     MySQL
 }
+
 impl fmt::Display for Database {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -34,11 +38,16 @@ impl fmt::Display for Database {
         }
     }
 }
+
+/// Implement `into`.
+/// Help taken from this [blog](https://is.gd/94QtP0)
+/// [archive](http://archive.is/vIW5Y)
 impl Into<String> for Database {
     fn into(self) -> String {
         self.to_string()
     }
 }
+
 impl Into<Database> for String {
     fn into(self) -> Database {
         if let Some(found) =
@@ -85,9 +94,11 @@ impl Add for YotsubaStatement {
         (self as u8) + (other as u8)
     }
 }
-
+/// Executors for all SQL queries
 #[async_trait]
 pub trait SqlQueries {
+    // async fn prepare(&self, query: &str) -> Result<Statement, tokio_postgres::error::Error>;
+
     /// Creates the 4chan schema as a type to be easily referenced
     async fn init_type(&self, schema: &str) -> Result<u64, tokio_postgres::error::Error>;
 
@@ -129,7 +140,6 @@ pub trait SqlQueries {
     async fn delete(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
                     board: YotsubaBoard, no: u32);
 
-    // TODO: Check if new-new threads re-update the deleteds -> Add a check for
     // deleted before updating. PgSQL needs to do this >_>..
     /// Compares between the thread in db and the one fetched and marks any
     /// posts missing in the fetched thread as deleted
@@ -166,6 +176,7 @@ pub trait SqlQueries {
                       -> bool;
 }
 
+/// List of all SQL queries to use
 pub trait SchemaTrait {
     fn init_metadata(&self) -> String;
     fn delete(&self, schema: &str, board: YotsubaBoard) -> String;
@@ -184,6 +195,7 @@ pub trait SchemaTrait {
     fn update_thread(&self, schema: &str, board: YotsubaBoard) -> String;
 }
 
+/// A wrapper to contain all SQL queries. Modularity with schema and databases.
 #[derive(Debug, Copy, Clone)]
 pub struct YotsubaSchema<T: SchemaTrait>(T);
 
@@ -196,6 +208,47 @@ impl<T> YotsubaSchema<T> where T: SchemaTrait {
 /// Defining Our Own Smart Pointer by Implementing the Deref Trait
 /// https://is.gd/62jW5Z
 impl<T> std::ops::Deref for YotsubaSchema<T> where T: SchemaTrait {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+pub enum Stuff<T> {
+    Client { db: Database, inner_client: T }
+}
+
+#[async_trait]
+pub trait DatabaseTrait {}
+impl DatabaseTrait for tokio_postgres::Client {}
+impl DatabaseTrait for mysql_async::Pool {}
+// pub enum Yb{
+//     PostgreSQL(tokio_postgres::Client),
+//     MySQL(mysql_async::Pool)
+// }
+
+// pub struct YotsubaDatabase(Yb)
+
+// impl YotsubaDatabase {
+//     pub fn new(db: T) -> Self {
+//         Self(db)
+//     }
+//     pub fn query() {
+
+//     }
+// }
+
+#[derive(Debug, Copy, Clone)]
+pub struct YotsubaDatabase<T: DatabaseTrait>(pub T);
+
+impl<T> YotsubaDatabase<T> where T: DatabaseTrait {
+    pub fn new(x: T) -> Self {
+        Self(x)
+    }
+}
+
+impl<T> std::ops::Deref for YotsubaDatabase<T> where T: DatabaseTrait {
     type Target = T;
 
     fn deref(&self) -> &T {
