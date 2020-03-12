@@ -5,7 +5,7 @@ cache
 Cargo.lock
 
 # Local stuff
-src/hex.rs
+src/other
 docker
 json
 archive
@@ -21,7 +21,6 @@ img/*
 *.json
 *.zip
 *.7z
-*m*.rs
 *.log
 justfile
 changes.log
