@@ -16,6 +16,23 @@ pub struct Config {
     pub board_settings: BoardSettings,
     pub boards:         Vec<BoardSettings>
 }
+/// This is for patching user boards
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)] // https://github.com/serde-rs/serde/pull/780
+struct ConfigInner {
+    settings:       Settings,
+    board_settings: BoardSettingsInner,
+    boards:         Vec<BoardSettingsInner>
+}
+
+impl Default for ConfigInner {
+    fn default() -> Self {
+        Self { settings:       Settings::default(),
+               board_settings: BoardSettingsInner::default(),
+               boards:         vec![] }
+    }
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -93,6 +110,20 @@ pub fn default_headers(
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
+struct BoardSettingsInner {
+    board:               YotsubaBoard,
+    retry_attempts:      u16,
+    refresh_delay:       u16,
+    throttle_millisec:   u32,
+    download_media:      bool,
+    download_thumbnails: bool,
+    keep_media:          bool,
+    keep_thumbnails:     bool
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct BoardSettings {
     pub board:               YotsubaBoard,
     pub retry_attempts:      u16,
@@ -105,6 +136,21 @@ pub struct BoardSettings {
 }
 impl Default for BoardSettings {
     fn default() -> Self {
+        let config: ConfigInner = read_json2("ena_config.json");
+        let b = config.board_settings;
+        BoardSettings { board:               b.board,
+                        retry_attempts:      b.retry_attempts,
+                        refresh_delay:       b.refresh_delay,
+                        throttle_millisec:   b.throttle_millisec,
+                        download_media:      b.download_media,
+                        download_thumbnails: b.download_thumbnails,
+                        keep_media:          b.keep_media,
+                        keep_thumbnails:     b.keep_thumbnails }
+    }
+}
+
+impl Default for BoardSettingsInner {
+    fn default() -> Self {
         Self { board:               YotsubaBoard::None,
                retry_attempts:      3,
                refresh_delay:       20,
@@ -115,6 +161,7 @@ impl Default for BoardSettings {
                keep_thumbnails:     false }
     }
 }
+
 /// Reads a config file
 pub fn read_config(config_path: &str) -> (Config, String) {
     let config: Config = read_json2(config_path);
