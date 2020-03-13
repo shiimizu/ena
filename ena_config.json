@@ -18,13 +18,14 @@
     "retryAttempts": 3,
     "refreshDelay": 20,
     "throttleMillisec": 1000,
+    "downloadArchives": false,
     "downloadMedia": false,
     "downloadThumbnails": true,
     "keepMedia": false,
     "keepThumbnails": false
   },
   "boards": [
-    { "board": "po"},
+    { "board": "po" },
     { "board": "n" }
   ]
 }
