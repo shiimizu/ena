@@ -23,7 +23,6 @@ use std::{collections::{HashMap, VecDeque},
           sync::{atomic::AtomicBool, Arc}};
 
 use tokio::{runtime::Builder,
-            sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
             time::{delay_for as sleep, Duration}};
 
 use anyhow::{anyhow, Context, Result};
@@ -35,9 +34,6 @@ use log::*;
 use mysql_async::prelude::*;
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
-// use ctrlc;
-// use pretty_env_logger;
-// use serde_json;
 
 fn main() {
     println!(
@@ -71,6 +67,7 @@ fn main() {
                                   }),
         Err(e) => error!("{}", e)
     }
+    //runner2();
 
     info!("\nStarted on:\t{}\nFinished on:\t{}",
           start_time.to_rfc2822(),
@@ -101,24 +98,28 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     // debug!("{} {:#?}", &config.board_settings.board,&config.board_settings.board);
     // return Ok(0);
 
-    // let pool = mysql_async::Pool::new(&conn_url);
-    // let yb = YotsubaDatabase::new(pool);
-    // let conn = yb.get_conn().await.unwrap();
+    // if config.settings.engine == Database::MySQL {
+    //     info!("Connected with:\t{}", conn_url);
+    //     let pool = mysql_async::Pool::new(&conn_url);
+    //     let yb = YotsubaDatabase::new(pool);
+    //     let conn = yb.get_conn().await.unwrap();
+    //     let q = r#"UPDATE ? SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ?
+    // AND subnum = 0"#.to_string();
 
-    // let stmt = conn.prepare("select ?, ?").await.unwrap();
-    // stmt.execute((1u8, 2u8))
-    //     .await
-    //     .unwrap()
-    //     .for_each(|row| {
-    //         let z: u8 = row.get(0).unwrap();
-    //         let x: u8 = row.get(1).unwrap();
-    //         println!("{} {}", z, x);
-    //     })
-    //     .await
-    //     .unwrap();
-    // yb.0.disconnect().await.unwrap();
-    // info!("Connected with:\t{}", conn_url);
-    // return Ok(1);
+    //     let stmt = conn.prepare(&q).await.unwrap();
+    //     stmt.execute(("3", 518668))
+    //         .await
+    //         .unwrap()/*
+    //         .for_each(|row| {
+    //             let z: u8 = row.get(0).unwrap();
+    //             let x: u8 = row.get(1).unwrap();
+    //             println!("{} {}", z, x);
+    //         })
+    //         .await
+    //         .unwrap()*/;
+    //     yb.0.disconnect().await.unwrap();
+    //     return Ok(1);
+    // }
 
     let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
         .await
@@ -130,6 +131,7 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
             error!("Connection error: {}", e);
         }
     });
+    info!("Connected with:\t{}", conn_url);
 
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
@@ -148,34 +150,9 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     //     println!("{:?}", no)
     // }
 
-    sleep(Duration::from_millis(1200)).await;
-
-    let mut boards: &Vec<BoardSettings> = &archiver.config.boards;
-
-    // Push each board to queue to be run concurrently
-    let archiver_ref = &archiver;
-    let mut fut2 = FuturesUnordered::new();
-    for board in boards.iter() {
-        archiver_ref.query.init_board(board.board, &archiver_ref.config.settings.schema).await;
-        archiver_ref.query.init_views(board.board, &archiver_ref.config.settings.schema).await;
-
-        let (mut tx, mut _rx) = mpsc::unbounded_channel();
-        if board.download_archives {
-            fut2.push(archiver_ref.compute(YotsubaEndpoint::Archive,
-                                           board,
-                                           Some(tx.clone()),
-                                           None));
-        }
-        fut2.push(archiver_ref.compute(YotsubaEndpoint::Threads, board, Some(tx.clone()), None));
-        // fut2.push(archiver_ref.compute(YotsubaEndpoint::Media, board, None,
-        // Some(_rx)));
-    }
-
-    // Waiting for this task causes a loop that's intended.
-    // Run each task concurrently
-    while let Some(_) = fut2.next().await {}
-
-    Ok(0)
+    sleep(Duration::from_millis(1100)).await;
+    archiver.run().await;
+    return Ok(0);
 }
 
 /// A struct to store variables without using global statics.
@@ -198,6 +175,27 @@ impl<H, S> YotsubaArchiver<H, S>
                config,
                sql: sql::YotsubaSchema::new(_sql),
                finished: Arc::new(AtomicBool::new(false)) }
+    }
+
+    async fn run(&self) {
+        let mut fut = FuturesUnordered::new();
+        let mut i: u8 = 0;
+        for board in self.config.boards.iter() {
+            self.query.init_board(board.board, &self.config.settings.schema).await;
+            self.query.init_views(board.board, &self.config.settings.schema).await;
+
+            if board.download_archives {
+                fut.push(self.compute(YotsubaEndpoint::Archive, board, None));
+            }
+
+            if i == 0 && (board.download_thumbnails || board.download_media) {
+                fut.push(self.compute(YotsubaEndpoint::Media, board, Some(&self.config)));
+            }
+
+            fut.push(self.compute(YotsubaEndpoint::Threads, board, None));
+            i += 1;
+        }
+        while let Some(_) = fut.next().await {}
     }
 
     fn schema(&self) -> &str {
@@ -226,6 +224,55 @@ impl<H, S> YotsubaArchiver<H, S>
             YotsubaIdentifier::Statement(v) => {},
             YotsubaIdentifier::Board(v) => {},
         }*/
+        if endpoint == YotsubaEndpoint::Media {
+            statement_store.insert(YotsubaIdentifier { endpoint,
+                                                       board,
+                                                       statement: YotsubaStatement::Medias },
+                                   self.query
+                                       .prepare(self.sql.medias(board).as_str())
+                                       .await
+                                       .unwrap());
+
+            statement_store.insert(
+                                   YotsubaIdentifier { endpoint,
+                                                       board,
+                                                       statement:
+                                                           YotsubaStatement::UpdateHashMedia },
+                                   self.query
+                                       .prepare(format!(
+                r#"
+                     UPDATE "{0}"
+                     SET last_modified = extract(epoch from now())::bigint,
+                             "sha256" = $2
+                     WHERE
+                     no = $1 AND "sha256" IS NULL;
+                     "#,
+                board
+            ).as_str())
+                                       .await
+                                       .unwrap()
+            );
+            statement_store.insert(
+                                   YotsubaIdentifier { endpoint,
+                                                       board,
+                                                       statement:
+                                                           YotsubaStatement::UpdateHashThumbs },
+                                   self.query
+                                       .prepare(format!(
+                r#"
+                                UPDATE "{0}"
+                                SET last_modified = extract(epoch from now())::bigint,
+                                        "sha256t" = $2
+                                WHERE
+                                no = $1 AND "sha256t" IS NULL;
+                                "#,
+                board
+            ).as_str())
+                                       .await
+                                       .unwrap()
+            );
+            return statement_store;
+        }
         for statement in statements {
             statement_store.insert(YotsubaIdentifier { endpoint, board, statement },
                                    match statement {
@@ -237,16 +284,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql
-                                       //                           .update_metadata(self.schema(),
-                                       //                                            endpoint)
-                                       //                           .as_str(),
-                                       //                       &[tokio_postgres::types::Type::TEXT,
-                                       //
-                                       // tokio_postgres::types::Type::JSONB])
-                                       //        .await
-                                       //        .unwrap(),
                                        YotsubaStatement::UpdateThread =>
                                            self.query
                                                .prepare(self.sql
@@ -254,15 +291,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql
-                                       //                           .update_thread(self.schema(),
-                                       //                                          board)
-                                       //                           .as_str(),
-                                       //
-                                       // &[tokio_postgres::types::Type::JSONB])
-                                       //        .await
-                                       //        .unwrap(),
                                        YotsubaStatement::Delete =>
                                            self.query
                                                .prepare(self.sql
@@ -270,14 +298,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql
-                                       //                           .delete(self.schema(), board)
-                                       //                           .as_str(),
-                                       //
-                                       // &[tokio_postgres::types::Type::INT8])
-                                       //        .await
-                                       //        .unwrap(),
                                        YotsubaStatement::UpdateDeleteds =>
                                            self.query
                                                .prepare(self.sql
@@ -285,40 +305,15 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql
-                                       //                           .update_deleteds(self.schema(),
-                                       //                                            board)
-                                       //                           .as_str(),
-                                       //
-                                       // &[tokio_postgres::types::Type::JSONB,
-                                       //
-                                       // tokio_postgres::types::Type::INT8])
-                                       //        .await
-                                       //        .unwrap(),
+                                       YotsubaStatement::UpdateHashMedia => unimplemented!(),
+                                       YotsubaStatement::UpdateHashThumbs => unimplemented!(),
                                        YotsubaStatement::Medias =>
                                            self.query
-                                               .prepare(self.sql
-                                                            .medias(self.schema(), board)
-                                                            .as_str())
+                                               .prepare(self.sql.medias(board).as_str())
                                                .await
                                                .unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql
-                                       //                           .medias(self.schema(), board)
-                                       //                           .as_str(),
-                                       //
-                                       // &[tokio_postgres::types::Type::INT8])
-                                       //        .await
-                                       //        .unwrap(),
                                        YotsubaStatement::Threads =>
                                            self.query.prepare(self.sql.threads()).await.unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql.threads(),
-                                       //
-                                       // &[tokio_postgres::types::Type::JSONB])
-                                       //        .await
-                                       //        .unwrap(),
                                        YotsubaStatement::ThreadsModified =>
                                            self.query
                                                .prepare(self.sql
@@ -327,16 +322,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql
-                                       //                           .threads_modified(self.schema(),
-                                       //                                             endpoint)
-                                       //                           .as_str(),
-                                       //                       &[tokio_postgres::types::Type::TEXT,
-                                       //
-                                       // tokio_postgres::types::Type::JSONB])
-                                       //        .await
-                                       //        .unwrap(),
                                        YotsubaStatement::ThreadsCombined =>
                                            self.query
                                                .prepare(self.sql
@@ -346,17 +331,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       //    self.query
-                                       //        .prepare_typed(self.sql
-                                       //                           .threads_combined(self.schema(),
-                                       //                                             board,
-                                       //                                             endpoint)
-                                       //                           .as_str(),
-                                       //                       &[tokio_postgres::types::Type::TEXT,
-                                       //
-                                       // tokio_postgres::types::Type::JSONB])
-                                       //        .await
-                                       //        .unwrap(),
                                        YotsubaStatement::Metadata =>
                                            self.query
                                                .prepare(self.sql
@@ -364,150 +338,55 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       /*    self.query
-                                        *        .prepare_typed(self.sql
-                                        *                           .metadata(self.schema(),
-                                        * endpoint)
-                                        *                           .as_str(),
-                                        *
-                                        * &[tokio_postgres::types::Type::TEXT])
-                                        *        .await
-                                        *        .unwrap(), */
                                    });
         }
         statement_store
     }
 
     #[allow(unused_mut)]
-    async fn compute(&self,
-                     endpoint: YotsubaEndpoint,
-                     board_settings: &BoardSettings,
-                     // media_statement: &tokio_postgres::Statement,
-                     mut tx: Option<UnboundedSender<u32>>,
-                     mut rx: Option<UnboundedReceiver<u32>>)
+    async fn compute(&self, endpoint: YotsubaEndpoint, info: &BoardSettings,
+                     config: Option<&Config>)
     {
         match endpoint {
-            YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
-                if let Some(t) = tx {
-                    // loop {
-                    let bs = board_settings.clone();
-                    if self.fetch_board(endpoint, bs, &t).await.is_some() {};
-                    // }
-                }
-            }
             YotsubaEndpoint::Media => {
-                if let Some(mut r) = rx {
-                    loop {
-                        while let Some(thread) = r.recv().await {
-                            // let bs = board_settings.clone();
-                            self.fetch_media(board_settings, thread).await;
-                        }
+                sleep(Duration::from_secs(2)).await;
+
+                let rd = info.refresh_delay.into();
+                let dur = Duration::from_millis(250);
+                let board_settings = config.unwrap().boards.to_owned();
+                loop {
+                    let now = tokio::time::Instant::now();
+
+                    // Sequential to prevent client congestion and errors
+                    for i in board_settings.iter() {
                         if self.finished.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        sleep(Duration::from_millis(250)).await;
-                    }
-                }
-            }
-        }
-    }
-
-    async fn fetch_media(&self, info: &BoardSettings, thread: u32) {
-        // FETCH MEDIA
-        if !(info.download_media || info.download_thumbnails) {
-            return;
-        }
-        let ms =
-            self.query.prepare(self.sql.medias(self.schema(), info.board).as_str()).await.unwrap();
-        // self.query
-        //  .prepare_typed(self.sql.medias(self.schema(), info.board).as_str(),
-        //                 &[tokio_postgres::types::Type::INT8])
-        //  .await
-        //  .unwrap();
-        match self.query.medias(thread, &ms).await {
-            Ok(media_list) => {
-                let mut fut = FuturesUnordered::new();
-                // let client = &self.client;
-                let mut has_media = false;
-                for row in media_list.iter() {
-                    has_media = true;
-                    // let no: i64 = row.get("no");
-
-                    // Preliminary checks before downloading
-                    let sha256: Option<Vec<u8>> = row.get("sha256");
-                    let sha256t: Option<Vec<u8>> = row.get("sha256t");
-                    let mut dl_media = false;
-                    if info.download_media {
-                        match sha256 {
-                            Some(h) => {
-                                // Improper sha, re-dl
-                                if h.len() < (65 / 2) {
-                                    dl_media = true;
-                                }
-                            }
-                            None => {
-                                // No thumbs, proceed to dl
-                                dl_media = true;
-                            }
-                        }
-                        if dl_media {
-                            fut.push(self.dl_media_post2(row, info, thread, false));
-                        }
-                    }
-                    let mut dl_thumb = false;
-                    if info.download_thumbnails {
-                        match sha256t {
-                            Some(h) => {
-                                // Improper sha, re-dl
-                                if h.len() < (65 / 2) {
-                                    dl_thumb = true;
-                                }
-                            }
-                            None => {
-                                // No thumbs, proceed to dl
-                                dl_thumb = true;
-                            }
-                        }
-                        if dl_thumb {
-                            fut.push(self.dl_media_post2(row, info, thread, true));
-                        }
-                    }
-                }
-                if has_media {
-                    let s = &self;
-                    while let Some(hh) = fut.next().await {
-                        if let Some((no, hashsum, thumb)) = hh {
-                            if let Some(hsum) = hashsum {
-                                // Media info
-                                // if !thumb {
-                                //     info!(
-                                //         "{}/{} Upserting sha256: ({})",
-                                //         &info.board,
-                                //         no,
-                                //         if thumb { "thumb" } else { "media" }
-                                //     );
-                                // }
-
-                                s.query
-                                 .update_hash(info.board,
-                                              no,
-                                              if thumb { "sha256t" } else { "sha256" },
-                                              hsum)
-                                 .await;
-                            } else {
-                                error!("Error unwrapping hashsum");
-                            }
+                            info!("({})\tStopping media fetching...", endpoint);
+                            return;
                         } else {
-                            error!("Error running hashsum function");
+                            info!("({})\t/{}/\tChecking media", endpoint, i.board);
                         }
-                        // // Listen to CTRL-C
-                        // if self.finished.load(Ordering::Relaxed) {
-                        //     return;
-                        // }
+                        let st = self.create_statements(endpoint, i.board).await;
+                        self.fetch_media(i, &st, endpoint).await;
+                    }
+
+                    while now.elapsed().as_secs() < rd {
+                        if self.finished.load(Ordering::Relaxed) {
+                            info!("({})\tStopping media fetching...", endpoint);
+                            return;
+                        }
+                        sleep(dur).await;
+                    }
+
+                    // If it somehow goes beyond
+                    if self.finished.load(Ordering::Relaxed) {
+                        info!("({})\tStopping media fetching...", endpoint);
+                        return;
                     }
                 }
             }
-            Err(e) => error!("/{}/{}\tError getting missing media -> {}", info.board, thread, e)
+            YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
+                if self.fetch_board(endpoint, info).await.is_some() {};
+            }
         }
     }
 
@@ -663,7 +542,7 @@ impl<H, S> YotsubaArchiver<H, S>
                             }
                         }
                         StatusCode::NOT_MODIFIED =>
-                            info!("({})\t/{}/\t<{}>", endpoint, current_board, status),
+                            info!("({})\t/{}/\t\t<{}>", endpoint, current_board, status),
                         StatusCode::NOT_FOUND => {
                             error!("({})\t/{}/\t<{}> No {} found! {}",
                                    endpoint,
@@ -696,11 +575,7 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     /// Manages a single board
-    async fn fetch_board(&self, endpoint: YotsubaEndpoint, bs: BoardSettings,
-                         _t: &UnboundedSender<u32> /* not used because the 3rd thread for
-                                                    * media dl is not used */)
-                         -> Option<()>
-    {
+    async fn fetch_board(&self, endpoint: YotsubaEndpoint, bs: &BoardSettings) -> Option<()> {
         // This function is only called by fetch_board so it'll never be media.
 
         let current_board = bs.board;
@@ -753,9 +628,9 @@ impl<H, S> YotsubaArchiver<H, S>
 
                 // Send to download full media
                 // if bs.download_media {
-                // t.send(thread).unwrap();
+                // _t.send(thread).unwrap();
                 // tokio::spawn(async move {
-                self.fetch_media(&bs, thread).await;
+                // self.fetch_media(&bs, thread, &statements, endpoint).await;
                 // });
                 // }
 
@@ -845,15 +720,134 @@ impl<H, S> YotsubaArchiver<H, S>
         }
     }
 
+    /// FETCH MEDIA
+
+    async fn fetch_media(&self, info: &BoardSettings, statements: &StatementStore,
+                         endpoint: YotsubaEndpoint)
+    {
+        // if !(info.download_media || info.download_thumbnails) {
+        //     return;
+        // }
+        // let ms = self.query.prepare(self.sql.medias(self.schema(),
+        // info.board).as_str()).await.unwrap(); self.query
+        //  .prepare_typed(self.sql.medias(self.schema(), info.board).as_str(),
+        //                 &[tokio_postgres::types::Type::INT8])
+        //  .await
+        //  .unwrap();
+        match self.query.medias(statements, endpoint, info.board).await {
+            Err(e) =>
+                error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
+            Ok(media_list) => {
+                let mut fut = FuturesUnordered::new();
+                // let client = &self.client;
+                let mut has_media = false;
+                let dur = Duration::from_millis(250);
+                for chunks in media_list.as_slice().chunks(20) {
+                    for row in chunks {
+                        if self.finished.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        has_media = true;
+                        // let no: i64 = row.get("no");
+
+                        // Preliminary checks before downloading
+                        let sha256: Option<Vec<u8>> = row.get("sha256");
+                        let sha256t: Option<Vec<u8>> = row.get("sha256t");
+                        let mut dl_media = false;
+                        if info.download_media {
+                            match sha256 {
+                                Some(h) => {
+                                    // Improper sha, re-dl
+                                    if h.len() < (65 / 2) {
+                                        dl_media = true;
+                                    }
+                                }
+                                None => {
+                                    // No thumbs, proceed to dl
+                                    dl_media = true;
+                                }
+                            }
+                            if dl_media {
+                                fut.push(self.dl_media_post2(row, info, false));
+                            }
+                        }
+                        let mut dl_thumb = false;
+                        if info.download_thumbnails {
+                            match sha256t {
+                                Some(h) => {
+                                    // Improper sha, re-dl
+                                    if h.len() < (65 / 2) {
+                                        dl_thumb = true;
+                                    }
+                                }
+                                None => {
+                                    // No thumbs, proceed to dl
+                                    dl_thumb = true;
+                                }
+                            }
+                            if dl_thumb {
+                                fut.push(self.dl_media_post2(row, info, true));
+                            }
+                        }
+                    }
+                    sleep(dur).await;
+                    if self.finished.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    if has_media {
+                        while let Some(hh) = fut.next().await {
+                            if let Some((no, hashsum, thumb)) = hh {
+                                if let Some(hsum) = hashsum {
+                                    // Media info
+                                    // info!(
+                                    //     "({})\t/{}/{}#{} Creating string hashsum{} {}",
+                                    //     if thumb { "thumb" } else { "media" },
+                                    //     &info.board,
+                                    //     thread,
+                                    //     no,
+                                    //     if thumb { "t" } else { "" },
+                                    //     &hsum
+                                    // );
+
+                                    self.query
+                                        .update_hash(statements,
+                                                     endpoint,
+                                                     info.board,
+                                                     no,
+                                                     if thumb {
+                                                         YotsubaStatement::UpdateHashThumbs
+                                                     } else {
+                                                         YotsubaStatement::UpdateHashMedia
+                                                     },
+                                                     hsum)
+                                        .await;
+                                    if self.finished.load(Ordering::Relaxed) {
+                                        return;
+                                    }
+                                } else {
+                                    error!("Error getting hashsum");
+                                }
+                            } else {
+                                error!("Error running hashsum function");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Downloads any missing media from a thread
     async fn dl_media_post2(&self, row: &tokio_postgres::row::Row, bs: &BoardSettings,
-                            thread: u32, thumb: bool)
+                            thumb: bool)
                             -> Option<(u64, Option<Vec<u8>>, bool)>
     {
         let no: i64 = row.get("no");
         let tim: i64 = row.get("tim");
         let ext: String = row.get("ext");
+        let resto: i64 = row.get("resto");
         let path = self.get_path();
+        let thread = (if resto == 0 { no } else { resto }) as u32;
 
         let mut hashsum: Option<Vec<u8>> = None;
         let domain = &self.config.settings.media_url;
@@ -865,8 +859,13 @@ impl<H, S> YotsubaArchiver<H, S>
                           tim,
                           if thumb { "s" } else { "" },
                           if thumb { ".jpg" } else { &ext });
+        // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
         for _ in 0..(bs.retry_attempts + 1) {
             match self.client.get(&url, None).await {
+                Err(e) => {
+                    error!("/{}/{}\tFetching media: {}", board, thread, e);
+                    sleep(Duration::from_secs(1)).await;
+                }
                 Ok((_, status, body)) => match status {
                     StatusCode::OK => {
                         if body.is_empty() {
@@ -874,11 +873,13 @@ impl<H, S> YotsubaArchiver<H, S>
                                    board, thread, status);
                             sleep(Duration::from_secs(1)).await;
                         } else {
+                            // info!("(some)\t/{}/{}#{}\t HASHING", board, thread, no);
                             let mut hasher = Sha256::new();
                             hasher.input(&body);
                             let hash_bytes = hasher.result();
                             let temp_path = format!("{}/tmp/{}_{}{}", path, no, tim, ext);
                             hashsum = Some(hash_bytes.as_slice().to_vec());
+                            // hashsum = Some(format!("{:x}", hash_bytes));
 
                             // Clippy lint
                             // if (bs.keep_media && !thumb)
@@ -938,10 +939,6 @@ impl<H, S> YotsubaArchiver<H, S>
                         error!("/{}/{}\t<{}> {}", board, no, status, &url);
                         sleep(Duration::from_secs(1)).await;
                     }
-                },
-                Err(e) => {
-                    error!("/{}/{}\tError fetching thread {}", board, thread, e);
-                    sleep(Duration::from_secs(1)).await;
                 }
             }
         }

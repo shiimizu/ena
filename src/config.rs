@@ -17,6 +17,7 @@ pub struct Config {
     pub boards:         Vec<BoardSettings>
 }
 
+#[allow(dead_code)]
 impl Config {
     pub fn pretty(&self) -> String {
         serde_json::to_string_pretty(self).unwrap()
@@ -129,7 +130,7 @@ struct BoardSettingsInner {
     keep_thumbnails:     bool
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct BoardSettings {

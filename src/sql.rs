@@ -72,6 +72,8 @@ pub enum YotsubaStatement {
     UpdateThread,
     Delete,
     UpdateDeleteds,
+    UpdateHashMedia,
+    UpdateHashThumbs,
     Medias,
     Threads,
     ThreadsModified,
@@ -148,10 +150,13 @@ pub trait SqlQueries {
                              -> Result<u64>;
 
     /// Upserts a media hash to a post
-    async fn update_hash(&self, board: YotsubaBoard, no: u64, hash_type: &str, hashsum: Vec<u8>);
+    async fn update_hash(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
+                         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement,
+                         hashsum: Vec<u8>);
 
     /// Gets the list of posts in a thread that have media
-    async fn medias(&self, thread: u32, statement: &Statement)
+    async fn medias(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
+                    board: YotsubaBoard)
                     -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>;
 
     /// Gets a list of threads from the corresponding endpoint
@@ -177,13 +182,14 @@ pub trait SqlQueries {
 }
 
 /// List of all SQL queries to use
-pub trait SchemaTrait {
+pub trait SchemaTrait: Sync + Send {
+    fn init_schema(&self, schema: &str) -> String;
     fn init_metadata(&self) -> String;
     fn delete(&self, schema: &str, board: YotsubaBoard) -> String;
     fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String;
     fn update_hash(&self, board: YotsubaBoard, no: u64, hash_type: &str) -> String;
     fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;
-    fn medias(&self, schema: &str, board: YotsubaBoard) -> String;
+    fn medias(&self, board: YotsubaBoard) -> String;
     fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String;
     fn threads<'a>(&self) -> &'a str;
     fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;

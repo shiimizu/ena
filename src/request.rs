@@ -4,7 +4,7 @@ use reqwest::{self,
               IntoUrl, StatusCode};
 
 #[async_trait]
-pub trait HttpClient {
+pub trait HttpClient: Sync + Send {
     async fn get<U: IntoUrl + Send>(&self, url: U, last_modified: Option<&str>)
                                     -> Result<(String, StatusCode, Vec<u8>), reqwest::Error>;
 }

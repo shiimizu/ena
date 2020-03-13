@@ -31,13 +31,7 @@ impl SqlQueries for tokio_postgres::Client {
     }
 
     async fn init_schema(&self, schema: &str) {
-        self.batch_execute(format!(
-            r#"
-      CREATE SCHEMA IF NOT EXISTS "{0}";
-      SET search_path TO "{0}";
-      "#,
-            schema
-        ).as_str())
+        self.batch_execute(&Schema::new().init_schema(schema).as_str())
             .await
             .expect(&format!("Err creating schema: {}", schema));
     }
@@ -69,13 +63,24 @@ impl SqlQueries for tokio_postgres::Client {
                .await?)
     }
 
-    async fn medias(&self, thread: u32, statement: &Statement)
-                    -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error> {
-        self.query(statement, &[&i64::try_from(thread).unwrap()]).await
+    async fn medias(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
+                    board: YotsubaBoard)
+                    -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>
+    {
+        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
+        let statement = statements.get(&id).unwrap();
+        self.query(statement, &[]).await
     }
 
-    async fn update_hash(&self, board: YotsubaBoard, no: u64, hash_type: &str, hashsum: Vec<u8>) {
-        self.execute(Schema::new().update_hash(board, no, hash_type).as_str(), &[&hashsum])
+    async fn update_hash(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
+                         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement,
+                         hashsum: Vec<u8>)
+    {
+        // info!("Creating Identifier");
+        let id = YotsubaIdentifier { endpoint, board, statement: hash_type };
+        let statement = statements.get(&id).unwrap();
+        // info!("Executing");
+        self.execute(statement, &[&(no as i64), &hashsum])
             .await
             .expect("Err executing sql: update_hash");
     }
@@ -196,6 +201,16 @@ impl SqlQueries for tokio_postgres::Client {
 }
 
 impl SchemaTrait for Schema {
+    fn init_schema(&self, schema: &str) -> String {
+        format!(
+                r#"
+    CREATE SCHEMA IF NOT EXISTS "{0}";
+    SET search_path TO "{0}";
+    "#,
+                schema
+        )
+    }
+
     fn init_metadata(&self) -> String {
         format!(
                 r#"
@@ -215,12 +230,12 @@ impl SchemaTrait for Schema {
     fn delete(&self, schema: &str, board: YotsubaBoard) -> String {
         format!(
                 r#"
-      UPDATE "{0}"."{1}"
-      SET deleted_on    = extract(epoch from now())::bigint,
-          last_modified = extract(epoch from now())::bigint
-      WHERE
-        no = $1 AND deleted_on is NULL;
-      "#,
+          UPDATE "{0}"."{1}"
+          SET deleted_on    = extract(epoch from now())::bigint,
+              last_modified = extract(epoch from now())::bigint
+          WHERE
+            no = $1 AND deleted_on is NULL;
+          "#,
                 schema, board
         )
     }
@@ -259,7 +274,7 @@ impl SchemaTrait for Schema {
       SET last_modified = extract(epoch from now())::bigint,
                   "{2}" = $1
       WHERE
-        no = {1};
+        no = {1} AND "{2}" IS NULL;
       "#,
                 board, no, hash_type
         )
@@ -278,15 +293,12 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn medias(&self, schema: &str, board: YotsubaBoard) -> String {
-        format!(
-                r#"
-      SELECT * FROM "{0}"."{1}"
-      WHERE (no=$1 OR resto=$1) AND (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL)
-      ORDER BY no;
-      "#,
-                schema, board
-        )
+    fn medias(&self, board: YotsubaBoard) -> String {
+        format!(r#"
+                SELECT * FROM "{0}"
+                WHERE (md5 is not null) AND (sha256 IS NULL OR sha256t IS NULL) AND filedeleted IS NULL
+                ORDER BY no desc;"#,
+                board)
     }
 
     fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String {
