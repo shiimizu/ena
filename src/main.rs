@@ -67,7 +67,6 @@ fn main() {
                                   }),
         Err(e) => error!("{}", e)
     }
-    //runner2();
 
     info!("\nStarted on:\t{}\nFinished on:\t{}",
           start_time.to_rfc2822(),
@@ -628,9 +627,15 @@ impl<H, S> YotsubaArchiver<H, S>
         let statements =
             self.create_statements(endpoint, current_board, YotsubaStatement::Medias).await;
 
-        let rd = bs.refresh_delay.into();
         let dur = Duration::from_millis(250);
         let ratel = Duration::from_millis(bs.throttle_millisec.into());
+
+        // This block is all to respect ratelimit by incrementing by 5 each time.
+        let base : Vec<u16> = (bs.refresh_delay..).step_by(5).take(10).collect();
+        let last = &base[base.len()-1..];
+        let repeat = last.iter().cycle();
+        let original_ratelimit = base.iter().chain(repeat.clone());
+        let mut ratelimit = base.iter().chain(repeat);
 
         loop {
             let now = tokio::time::Instant::now();
@@ -653,6 +658,7 @@ impl<H, S> YotsubaArchiver<H, S>
             if threads_len > 0 {
                 info!("({})\t/{}/\t\tTotal new/modified threads: {}",
                       endpoint, current_board, threads_len);
+                ratelimit = original_ratelimit.clone();
             }
 
             // Download each thread
@@ -696,11 +702,12 @@ impl<H, S> YotsubaArchiver<H, S>
                 }
             }
             //  Board refresh delay ratelimit
-            while now.elapsed().as_secs() < rd {
+            let newrt = (*ratelimit.next().unwrap()).into();
+            while now.elapsed().as_secs() < newrt {
                 if self.finished.load(Ordering::Relaxed) {
                     break;
                 }
-                if now.elapsed().as_secs() > rd {
+                if now.elapsed().as_secs() > newrt {
                     break;
                 }
                 sleep(dur).await;
@@ -784,7 +791,7 @@ impl<H, S> YotsubaArchiver<H, S>
 
                 // Chunk to prevent client congestion and errors
                 // That way the client doesn't have to run 1000+ requests all at the same time
-                for chunks in media_list.as_slice().chunks(30) {
+                for chunks in media_list.as_slice().chunks(20) {
                     for row in chunks {
                         if self.finished.load(Ordering::Relaxed) {
                             return;
@@ -903,16 +910,20 @@ impl<H, S> YotsubaArchiver<H, S>
                           if thumb { "s" } else { "" },
                           if thumb { ".jpg" } else { &ext });
         // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
-        for _ in 0..(info.retry_attempts + 1) {
+        for ra in 0..(info.retry_attempts + 1) {
             match self.client.get(&url, None).await {
                 Err(e) => {
-                    error!("/{}/{}\tFetching media: {}", board, thread, e);
+                    error!("(media)\t/{}/{}\tFetching media: {} {}",
+                           board,
+                           thread,
+                           e,
+                           if ra > 0 { format!("Attempt #{}", ra) } else { "".into() });
                     sleep(Duration::from_secs(1)).await;
                 }
                 Ok((_, status, body)) => match status {
                     StatusCode::OK => {
                         if body.is_empty() {
-                            error!("/{}/{}\t<{}> Body was found to be empty!",
+                            error!("(media)\t/{}/{}\t<{}> Body was found to be empty!",
                                    board, thread, status);
                             sleep(Duration::from_secs(1)).await;
                         } else {
@@ -976,7 +987,7 @@ impl<H, S> YotsubaArchiver<H, S>
                         }
                     }
                     StatusCode::NOT_FOUND => {
-                        error!("/{}/{}\t<{}> {}", board, no, status, &url);
+                        error!("(media)\t/{}/{}\t<{}> {}", board, no, status, &url);
                         self.query
                             .delete_media(statements,
                                           YotsubaEndpoint::Media,
