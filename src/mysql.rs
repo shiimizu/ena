@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-use crate::{sql::*, YotsubaBoard, YotsubaEndpoint, YotsubaIdentifier};
+use crate::{sql::*, YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use mysql_async::prelude::*;
@@ -39,11 +39,16 @@ impl SchemaTrait for Schema {
         r#"UPDATE `?` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0"#.to_string()
     }
 
+    fn delete_media(&self, board: YotsubaBoard) -> String {
+        unimplemented!()
+    }
+
     fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String {
         unimplemented!()
     }
 
-    fn update_hash(&self, board: YotsubaBoard, no: u64, hash_type: &str) -> String {
+    fn update_hash(&self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement)
+                   -> String {
         unimplemented!()
     }
 
@@ -51,7 +56,7 @@ impl SchemaTrait for Schema {
         unimplemented!()
     }
 
-    fn medias(&self, board: YotsubaBoard) -> String {
+    fn medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String {
         unimplemented!()
     }
 

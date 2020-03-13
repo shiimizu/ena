@@ -12,12 +12,19 @@ pub enum YotsubaEndpoint {
     Threads,
     Media
 }
-#[derive(Clone, Copy, PartialEq)]
-pub enum YostsubaHash {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum YotsubaHash {
     Sha256,
     Blake3
 }
-
+impl fmt::Display for YotsubaHash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Self::Sha256 => write!(f, "sha256"),
+            Self::Blake3 => write!(f, "blake3")
+        }
+    }
+}
 impl fmt::Display for YotsubaEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {

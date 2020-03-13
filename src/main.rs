@@ -179,7 +179,11 @@ impl<H, S> YotsubaArchiver<H, S>
 
     async fn run(&self) {
         let mut fut = FuturesUnordered::new();
-        let mut i: u8 = 0;
+
+        fut.push(self.compute(YotsubaEndpoint::Media,
+                              &self.config.board_settings,
+                              Some(&self.config)));
+
         for board in self.config.boards.iter() {
             self.query.init_board(board.board, &self.config.settings.schema).await;
             self.query.init_views(board.board, &self.config.settings.schema).await;
@@ -188,12 +192,7 @@ impl<H, S> YotsubaArchiver<H, S>
                 fut.push(self.compute(YotsubaEndpoint::Archive, board, None));
             }
 
-            if i == 0 && (board.download_thumbnails || board.download_media) {
-                fut.push(self.compute(YotsubaEndpoint::Media, board, Some(&self.config)));
-            }
-
             fut.push(self.compute(YotsubaEndpoint::Threads, board, None));
-            i += 1;
         }
         while let Some(_) = fut.next().await {}
     }
@@ -213,8 +212,10 @@ impl<H, S> YotsubaArchiver<H, S>
         }).expect("Error setting Ctrl-C handler");
     }
 
-    async fn create_statements(&self, endpoint: YotsubaEndpoint, board: YotsubaBoard)
-                               -> StatementStore {
+    async fn create_statements(&self, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+                               thumb: YotsubaStatement)
+                               -> StatementStore
+    {
         // This function is only called by fetch_board so it'll never be media.
         let mut statement_store: StatementStore = HashMap::new();
         let statements: Vec<_> = YotsubaStatement::into_enum_iter().collect();
@@ -229,7 +230,14 @@ impl<H, S> YotsubaArchiver<H, S>
                                                        board,
                                                        statement: YotsubaStatement::Medias },
                                    self.query
-                                       .prepare(self.sql.medias(board).as_str())
+                                       .prepare(self.sql.medias(board, thumb).as_str())
+                                       .await
+                                       .unwrap());
+            statement_store.insert(YotsubaIdentifier { endpoint,
+                                                       board,
+                                                       statement: YotsubaStatement::DeleteMedia },
+                                   self.query
+                                       .prepare(self.sql.delete_media(board).as_str())
                                        .await
                                        .unwrap());
 
@@ -298,6 +306,12 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
+                                       YotsubaStatement::DeleteMedia => self.query
+                                       .prepare(self.sql
+                                                    .delete_media(board)
+                                                    .as_str())
+                                       .await
+                                       .unwrap(),
                                        YotsubaStatement::UpdateDeleteds =>
                                            self.query
                                                .prepare(self.sql
@@ -305,11 +319,21 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       YotsubaStatement::UpdateHashMedia => unimplemented!(),
-                                       YotsubaStatement::UpdateHashThumbs => unimplemented!(),
+                                       YotsubaStatement::UpdateHashMedia => self.query
+                                       .prepare(self.sql
+                                                    .update_hash(board, YotsubaHash::Sha256, YotsubaStatement::UpdateHashMedia)
+                                                    .as_str())
+                                       .await
+                                       .unwrap(),
+                                       YotsubaStatement::UpdateHashThumbs => self.query
+                                       .prepare(self.sql
+                                                    .update_hash(board, YotsubaHash::Sha256, YotsubaStatement::UpdateHashThumbs)
+                                                    .as_str())
+                                       .await
+                                       .unwrap(),
                                        YotsubaStatement::Medias =>
                                            self.query
-                                               .prepare(self.sql.medias(board).as_str())
+                                               .prepare(self.sql.medias(board, YotsubaStatement::Medias).as_str())
                                                .await
                                                .unwrap(),
                                        YotsubaStatement::Threads =>
@@ -351,7 +375,7 @@ impl<H, S> YotsubaArchiver<H, S>
             YotsubaEndpoint::Media => {
                 sleep(Duration::from_secs(2)).await;
 
-                let rd = info.refresh_delay.into();
+                // let rd = info.refresh_delay.into();
                 let dur = Duration::from_millis(250);
                 let board_settings = config.unwrap().boards.to_owned();
                 loop {
@@ -362,22 +386,36 @@ impl<H, S> YotsubaArchiver<H, S>
                         if self.finished.load(Ordering::Relaxed) {
                             info!("({})\tStopping media fetching...", endpoint);
                             return;
-                        } else {
-                            info!("({})\t/{}/\tChecking media", endpoint, i.board);
                         }
-                        let st = self.create_statements(endpoint, i.board).await;
-                        self.fetch_media(i, &st, endpoint).await;
+                        let what = if i.download_media && i.download_thumbnails {
+                            YotsubaStatement::Medias
+                        } else if i.download_media {
+                            YotsubaStatement::UpdateHashMedia
+                        } else if i.download_thumbnails {
+                            YotsubaStatement::UpdateHashThumbs
+                        } else {
+                            // No media downloading
+                            continue;
+                        };
+                        if i.download_thumbnails || i.download_media {
+                            let st = self.create_statements(endpoint, i.board, what).await;
+                            self.fetch_media(i, &st, endpoint).await;
+                        }
                     }
 
-                    while now.elapsed().as_secs() < rd {
+                    // Recheck after every n seconds has passed
+                    while now.elapsed().as_secs() < 1 {
                         if self.finished.load(Ordering::Relaxed) {
                             info!("({})\tStopping media fetching...", endpoint);
                             return;
                         }
+                        if now.elapsed().as_secs() > 1 {
+                            break;
+                        }
                         sleep(dur).await;
                     }
 
-                    // If it somehow goes beyond
+                    // If it somehow goes beyond the while loop
                     if self.finished.load(Ordering::Relaxed) {
                         info!("({})\tStopping media fetching...", endpoint);
                         return;
@@ -414,7 +452,7 @@ impl<H, S> YotsubaArchiver<H, S>
             {
                 Ok((last_modified_new, status, body)) => {
                     if last_modified_new.is_empty() {
-                        error!("({})\t/{}/\t<{}> An error has occurred getting the last_modified date",
+                        error!("({})\t/{}/\t\t<{}> An error has occurred getting the last_modified date",
                                endpoint, current_board, status);
                     } else if *last_modified != last_modified_new {
                         last_modified.clear();
@@ -423,10 +461,11 @@ impl<H, S> YotsubaArchiver<H, S>
                     match status {
                         StatusCode::OK => {
                             if body.is_empty() {
-                                error!("({})\t/{}/\t<{}> Fetched threads was found to be empty!",
+                                error!("({})\t/{}/\t\t<{}> Fetched threads was found to be empty!",
                                        endpoint, current_board, status);
                             } else {
-                                info!("({})\t/{}/\tReceived new threads", endpoint, current_board);
+                                info!("({})\t/{}/\t\tReceived new threads",
+                                      endpoint, current_board);
                                 *fetched_threads = Some(body.to_owned());
 
                                 // Check if there's an entry in the metadata
@@ -463,7 +502,7 @@ impl<H, S> YotsubaArchiver<H, S>
                                         {
                                             local_threads_list.append(&mut list);
                                         } else {
-                                            info!("({})\t/{}/\tSeems like there was no modified threads at startup..",
+                                            info!("({})\t/{}/\t\tSeems like there was no modified threads at startup..",
                                                   endpoint, current_board);
                                         }
 
@@ -491,7 +530,7 @@ impl<H, S> YotsubaArchiver<H, S>
                                                 {
                                                     local_threads_list.append(&mut list);
                                                 } else {
-                                                    info!("({})\t/{}/\tSeems like there was no modified threads..",
+                                                    info!("({})\t/{}/\t\tSeems like there was no modified threads..",
                                                           endpoint, current_board)
                                                 }
                                             }
@@ -535,7 +574,7 @@ impl<H, S> YotsubaArchiver<H, S>
                                           } {
                                         Ok(mut list) => local_threads_list.append(&mut list),
                                         Err(e) =>
-                                            warn!("({})\t/{}/\tSeems like there was no modified threads in the beginning?.. {}",
+                                            warn!("({})\t/{}/\t\tSeems like there was no modified threads in the beginning?.. {}",
                                                   endpoint, current_board, e),
                                     }
                                 }
@@ -544,7 +583,7 @@ impl<H, S> YotsubaArchiver<H, S>
                         StatusCode::NOT_MODIFIED =>
                             info!("({})\t/{}/\t\t<{}>", endpoint, current_board, status),
                         StatusCode::NOT_FOUND => {
-                            error!("({})\t/{}/\t<{}> No {} found! {}",
+                            error!("({})\t/{}/\t\t<{}> No {} found! {}",
                                    endpoint,
                                    current_board,
                                    status,
@@ -560,11 +599,11 @@ impl<H, S> YotsubaArchiver<H, S>
                             }
                             continue;
                         }
-                        _ => error!("({})\t/{}/\t<{}> An unforeseen event has occurred!",
+                        _ => error!("({})\t/{}/\t\t<{}> An unforeseen event has occurred!",
                                     endpoint, current_board, status)
                     };
                 }
-                Err(e) => error!("({})\t/{}/\tError fetching the {}.json.\t{}",
+                Err(e) => error!("({})\t/{}/\t\tFetching {}.json: {}",
                                  endpoint, current_board, endpoint, e)
             }
             if endpoint == YotsubaEndpoint::Archive {
@@ -584,7 +623,10 @@ impl<H, S> YotsubaArchiver<H, S>
         let mut update_metadata = false;
         let mut init = true;
         let mut has_archives = true;
-        let statements = self.create_statements(endpoint, current_board).await;
+
+        // Default statements
+        let statements =
+            self.create_statements(endpoint, current_board, YotsubaStatement::Medias).await;
 
         let rd = bs.refresh_delay.into();
         let dur = Duration::from_millis(250);
@@ -609,7 +651,7 @@ impl<H, S> YotsubaArchiver<H, S>
             // Display length of new fetched threads
             let threads_len = local_threads_list.len();
             if threads_len > 0 {
-                info!("({})\t/{}/\tTotal new/modified threads: {}",
+                info!("({})\t/{}/\t\tTotal new/modified threads: {}",
                       endpoint, current_board, threads_len);
             }
 
@@ -656,7 +698,10 @@ impl<H, S> YotsubaArchiver<H, S>
             //  Board refresh delay ratelimit
             while now.elapsed().as_secs() < rd {
                 if self.finished.load(Ordering::Relaxed) {
-                    return Some(());
+                    break;
+                }
+                if now.elapsed().as_secs() > rd {
+                    break;
                 }
                 sleep(dur).await;
             }
@@ -713,7 +758,7 @@ impl<H, S> YotsubaArchiver<H, S>
                     _e => {}
                 },
                 Err(e) => {
-                    error!("({})\t/{}/{}\tError fetching thread {}", endpoint, board, thread, e);
+                    error!("({})\t/{}/{}\tFetching thread: {}", endpoint, board, thread, e);
                     sleep(Duration::from_secs(1)).await;
                 }
             }
@@ -725,30 +770,26 @@ impl<H, S> YotsubaArchiver<H, S>
     async fn fetch_media(&self, info: &BoardSettings, statements: &StatementStore,
                          endpoint: YotsubaEndpoint)
     {
-        // if !(info.download_media || info.download_thumbnails) {
-        //     return;
-        // }
-        // let ms = self.query.prepare(self.sql.medias(self.schema(),
-        // info.board).as_str()).await.unwrap(); self.query
-        //  .prepare_typed(self.sql.medias(self.schema(), info.board).as_str(),
-        //                 &[tokio_postgres::types::Type::INT8])
-        //  .await
-        //  .unwrap();
         match self.query.medias(statements, endpoint, info.board).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
                 let mut fut = FuturesUnordered::new();
-                // let client = &self.client;
                 let mut has_media = false;
-                let dur = Duration::from_millis(250);
-                for chunks in media_list.as_slice().chunks(20) {
+                let dur = Duration::from_millis(200);
+                let len = media_list.len();
+                if len > 0 {
+                    info!("({})\t/{}/\t\tNew media :: {}", endpoint, info.board, len);
+                }
+
+                // Chunk to prevent client congestion and errors
+                // That way the client doesn't have to run 1000+ requests all at the same time
+                for chunks in media_list.as_slice().chunks(30) {
                     for row in chunks {
                         if self.finished.load(Ordering::Relaxed) {
                             return;
                         }
                         has_media = true;
-                        // let no: i64 = row.get("no");
 
                         // Preliminary checks before downloading
                         let sha256: Option<Vec<u8>> = row.get("sha256");
@@ -768,7 +809,7 @@ impl<H, S> YotsubaArchiver<H, S>
                                 }
                             }
                             if dl_media {
-                                fut.push(self.dl_media_post2(row, info, false));
+                                fut.push(self.dl_media_post2(row, statements, info, false));
                             }
                         }
                         let mut dl_thumb = false;
@@ -786,13 +827,9 @@ impl<H, S> YotsubaArchiver<H, S>
                                 }
                             }
                             if dl_thumb {
-                                fut.push(self.dl_media_post2(row, info, true));
+                                fut.push(self.dl_media_post2(row, statements, info, true));
                             }
                         }
-                    }
-                    sleep(dur).await;
-                    if self.finished.load(Ordering::Relaxed) {
-                        return;
                     }
                     if has_media {
                         while let Some(hh) = fut.next().await {
@@ -824,13 +861,19 @@ impl<H, S> YotsubaArchiver<H, S>
                                     if self.finished.load(Ordering::Relaxed) {
                                         return;
                                     }
-                                } else {
-                                    error!("Error getting hashsum");
                                 }
+                            // This is usually due to 404. We are already notified of that.
+                            // else {
+                            //     error!("Error getting hashsum");
+                            // }
                             } else {
                                 error!("Error running hashsum function");
                             }
                         }
+                    }
+                    sleep(dur).await;
+                    if self.finished.load(Ordering::Relaxed) {
+                        return;
                     }
                 }
             }
@@ -838,8 +881,8 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     // Downloads any missing media from a thread
-    async fn dl_media_post2(&self, row: &tokio_postgres::row::Row, bs: &BoardSettings,
-                            thumb: bool)
+    async fn dl_media_post2(&self, row: &tokio_postgres::row::Row, statements: &StatementStore,
+                            info: &BoardSettings, thumb: bool)
                             -> Option<(u64, Option<Vec<u8>>, bool)>
     {
         let no: i64 = row.get("no");
@@ -851,7 +894,7 @@ impl<H, S> YotsubaArchiver<H, S>
 
         let mut hashsum: Option<Vec<u8>> = None;
         let domain = &self.config.settings.media_url;
-        let board = &bs.board;
+        let board = &info.board;
 
         let url = format!("{}/{}/{}{}{}",
                           domain,
@@ -860,7 +903,7 @@ impl<H, S> YotsubaArchiver<H, S>
                           if thumb { "s" } else { "" },
                           if thumb { ".jpg" } else { &ext });
         // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
-        for _ in 0..(bs.retry_attempts + 1) {
+        for _ in 0..(info.retry_attempts + 1) {
             match self.client.get(&url, None).await {
                 Err(e) => {
                     error!("/{}/{}\tFetching media: {}", board, thread, e);
@@ -882,10 +925,11 @@ impl<H, S> YotsubaArchiver<H, S>
                             // hashsum = Some(format!("{:x}", hash_bytes));
 
                             // Clippy lint
-                            // if (bs.keep_media && !thumb)
-                            //     || (bs.keep_thumbnails && thumb)
-                            //     || ((bs.keep_media && !thumb) && (bs.keep_thumbnails && thumb))
-                            if (bs.keep_thumbnails || !thumb) && (thumb || bs.keep_media) {
+                            // if (info.keep_media && !thumb)
+                            //     || (info.keep_thumbnails && thumb)
+                            //     || ((info.keep_media && !thumb) && (info.keep_thumbnails &&
+                            // thumb))
+                            if (info.keep_thumbnails || !thumb) && (thumb || info.keep_media) {
                                 if let Ok(mut dest) = std::fs::File::create(&temp_path) {
                                     if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {
                                         // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
@@ -933,6 +977,12 @@ impl<H, S> YotsubaArchiver<H, S>
                     }
                     StatusCode::NOT_FOUND => {
                         error!("/{}/{}\t<{}> {}", board, no, status, &url);
+                        self.query
+                            .delete_media(statements,
+                                          YotsubaEndpoint::Media,
+                                          board.to_owned(),
+                                          no as u32)
+                            .await;
                         break;
                     }
                     _e => {
