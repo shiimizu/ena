@@ -12,7 +12,8 @@
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0",
     "apiUrl": "http://a.4cdn.org",
     "mediaUrl": "http://i.4cdn.org",
-    "asagiMode": false
+    "asagiMode": false,
+    "strictMode": true
   },
   "boardSettings": {
     "retryAttempts": 3,

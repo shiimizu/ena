@@ -54,56 +54,61 @@ impl Default for Config {
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Settings {
-    pub engine:     Database,
-    pub database:   String,
-    pub schema:     String,
-    pub host:       String,
-    pub port:       u32,
-    pub username:   String,
-    pub password:   String,
-    pub charset:    String,
-    pub path:       String,
-    pub user_agent: String,
-    pub api_url:    String,
-    pub media_url:  String,
-    pub asagi_mode: bool
+    pub engine:      Database,
+    pub database:    String,
+    pub schema:      String,
+    pub host:        String,
+    pub port:        u32,
+    pub username:    String,
+    pub password:    String,
+    pub charset:     String,
+    pub path:        String,
+    pub user_agent:  String,
+    pub api_url:     String,
+    pub media_url:   String,
+    pub asagi_mode:  bool,
+    pub strict_mode: bool
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { engine:     var("ENA_DATABASE").ok()
-                                              .filter(|s| {
-                                                  Database::into_enum_iter().any(|z| {
-                                                                                z.to_string() == *s
-                                                                            })
-                                              })
-                                              .unwrap_or(Database::PostgreSQL.into())
-                                              .into(),
-               database:   var("ENA_DATABASE_NAME").unwrap_or("archive_ena".into()),
-               schema:     var("ENA_DATABASE_SCHEMA").ok()
-                                                     .filter(|s| !String::is_empty(s))
-                                                     .unwrap_or("public".into()),
-               host:       var("ENA_DATABASE_HOST").unwrap_or("localhost".into()),
-               port:       var("ENA_DATABASE_PORT").ok()
-                                                   .map(|a| a.parse::<u32>().ok())
-                                                   .flatten()
-                                                   .unwrap_or(5432),
-               username:   var("ENA_DATABASE_USERNAME").unwrap_or("postgres".into()),
-               password:   var("ENA_DATABASE_PASSWORD").unwrap_or("pass".into()),
-               charset:    var("ENA_DATABASE_CHARSET").unwrap_or("utf8".into()),
-               path:       var("ENA_PATH").unwrap_or("./archive".into())
-                                          .trim_end_matches('/')
-                                          .trim_end_matches('\\')
-                                          .into(),
-               user_agent: format!("{}/{}",
-                                   var("CARGO_PKG_NAME").unwrap_or("ena".into()),
-                                   var("CARGO_PKG_VERSION").unwrap_or("0.0.0".into())),
-               api_url:    var("ENA_API_URL").unwrap_or("http://a.4cdn.org".into()),
-               media_url:  var("ENA_MEDIA_URL").unwrap_or("http://i.4cdn.org".into()),
-               asagi_mode: var("ENA_ASAGI_MODE").ok()
-                                                .map(|a| a.parse::<bool>().ok())
-                                                .flatten()
-                                                .unwrap_or(false) }
+        Self { engine:      var("ENA_DATABASE").ok()
+                                               .filter(|s| {
+                                                   Database::into_enum_iter().any(|z| {
+                                                                                 z.to_string() == *s
+                                                                             })
+                                               })
+                                               .unwrap_or(Database::PostgreSQL.into())
+                                               .into(),
+               database:    var("ENA_DATABASE_NAME").unwrap_or("archive_ena".into()),
+               schema:      var("ENA_DATABASE_SCHEMA").ok()
+                                                      .filter(|s| !String::is_empty(s))
+                                                      .unwrap_or("public".into()),
+               host:        var("ENA_DATABASE_HOST").unwrap_or("localhost".into()),
+               port:        var("ENA_DATABASE_PORT").ok()
+                                                    .map(|a| a.parse::<u32>().ok())
+                                                    .flatten()
+                                                    .unwrap_or(5432),
+               username:    var("ENA_DATABASE_USERNAME").unwrap_or("postgres".into()),
+               password:    var("ENA_DATABASE_PASSWORD").unwrap_or("pass".into()),
+               charset:     var("ENA_DATABASE_CHARSET").unwrap_or("utf8".into()),
+               path:        var("ENA_PATH").unwrap_or("./archive".into())
+                                           .trim_end_matches('/')
+                                           .trim_end_matches('\\')
+                                           .into(),
+               user_agent:  format!("{}/{}",
+                                    var("CARGO_PKG_NAME").unwrap_or("ena".into()),
+                                    var("CARGO_PKG_VERSION").unwrap_or("0.0.0".into())),
+               api_url:     var("ENA_API_URL").unwrap_or("http://a.4cdn.org".into()),
+               media_url:   var("ENA_MEDIA_URL").unwrap_or("http://i.4cdn.org".into()),
+               asagi_mode:  var("ENA_ASAGI_MODE").ok()
+                                                 .map(|a| a.parse::<bool>().ok())
+                                                 .flatten()
+                                                 .unwrap_or(false),
+               strict_mode: var("ENA_STRICT_MODE").ok()
+                                                  .map(|a| a.parse::<bool>().ok())
+                                                  .flatten()
+                                                  .unwrap_or(true) }
     }
 }
 

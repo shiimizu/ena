@@ -34,7 +34,7 @@ use log::*;
 use mysql_async::prelude::*;
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
-
+use tokio::sync::Semaphore;
 fn main() {
     println!(
              r#"
@@ -178,20 +178,25 @@ impl<H, S> YotsubaArchiver<H, S>
 
     async fn run(&self) {
         let mut fut = FuturesUnordered::new();
-
+        let semaphore = Arc::new(Semaphore::new(1));
         fut.push(self.compute(YotsubaEndpoint::Media,
                               &self.config.board_settings,
-                              Some(&self.config)));
+                              Some(&self.config),
+                              semaphore.clone()));
 
         for board in self.config.boards.iter() {
             self.query.init_board(board.board, &self.config.settings.schema).await;
             self.query.init_views(board.board, &self.config.settings.schema).await;
 
             if board.download_archives {
-                fut.push(self.compute(YotsubaEndpoint::Archive, board, None));
+                fut.push(self.compute(YotsubaEndpoint::Archive, board, None, semaphore.clone()));
             }
 
-            fut.push(self.compute(YotsubaEndpoint::Threads, board, None));
+            fut.push(self.compute(YotsubaEndpoint::Threads, board, None, semaphore.clone()));
+        }
+
+        if semaphore.available_permits() < 1 {
+            semaphore.add_permits(1);
         }
         while let Some(_) = fut.next().await {}
     }
@@ -215,15 +220,8 @@ impl<H, S> YotsubaArchiver<H, S>
                                thumb: YotsubaStatement)
                                -> StatementStore
     {
-        // This function is only called by fetch_board so it'll never be media.
         let mut statement_store: StatementStore = HashMap::new();
         let statements: Vec<_> = YotsubaStatement::into_enum_iter().collect();
-        /*let y = YotsubaIdentifier::Board(YotsubaBoard::a);
-        match y {
-            YotsubaIdentifier::Endpoint(v) => {},
-            YotsubaIdentifier::Statement(v) => {},
-            YotsubaIdentifier::Board(v) => {},
-        }*/
         if endpoint == YotsubaEndpoint::Media {
             statement_store.insert(YotsubaIdentifier { endpoint,
                                                        board,
@@ -368,9 +366,12 @@ impl<H, S> YotsubaArchiver<H, S>
 
     #[allow(unused_mut)]
     async fn compute(&self, endpoint: YotsubaEndpoint, info: &BoardSettings,
-                     config: Option<&Config>)
+                     config: Option<&Config>, semaphore: Arc<Semaphore>)
     {
         match endpoint {
+            YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
+                if self.fetch_board(endpoint, info, semaphore).await.is_some() {};
+            }
             YotsubaEndpoint::Media => {
                 sleep(Duration::from_secs(2)).await;
 
@@ -408,9 +409,6 @@ impl<H, S> YotsubaArchiver<H, S>
                             info!("({})\tStopping media fetching...", endpoint);
                             return;
                         }
-                        if now.elapsed().as_secs() > 1 {
-                            break;
-                        }
                         sleep(dur).await;
                     }
 
@@ -420,9 +418,6 @@ impl<H, S> YotsubaArchiver<H, S>
                         return;
                     }
                 }
-            }
-            YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
-                if self.fetch_board(endpoint, info).await.is_some() {};
             }
         }
     }
@@ -458,6 +453,25 @@ impl<H, S> YotsubaArchiver<H, S>
                         last_modified.push_str(&last_modified_new);
                     }
                     match status {
+                        StatusCode::NOT_MODIFIED =>
+                            info!("({})\t/{}/\t\t<{}>", endpoint, current_board, status),
+                        StatusCode::NOT_FOUND => {
+                            error!("({})\t/{}/\t\t<{}> No {} found! {}",
+                                   endpoint,
+                                   current_board,
+                                   status,
+                                   endpoint,
+                                   if retry_attempt == 0 {
+                                       "".into()
+                                   } else {
+                                       format!("Attempt: #{}", retry_attempt)
+                                   });
+                            sleep(Duration::from_secs(1)).await;
+                            if endpoint == YotsubaEndpoint::Archive {
+                                *has_archives = false;
+                            }
+                            continue;
+                        }
                         StatusCode::OK => {
                             if body.is_empty() {
                                 error!("({})\t/{}/\t\t<{}> Fetched threads was found to be empty!",
@@ -579,25 +593,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                 }
                             }
                         }
-                        StatusCode::NOT_MODIFIED =>
-                            info!("({})\t/{}/\t\t<{}>", endpoint, current_board, status),
-                        StatusCode::NOT_FOUND => {
-                            error!("({})\t/{}/\t\t<{}> No {} found! {}",
-                                   endpoint,
-                                   current_board,
-                                   status,
-                                   endpoint,
-                                   if retry_attempt == 0 {
-                                       "".into()
-                                   } else {
-                                       format!("Retry attempt: #{}", retry_attempt)
-                                   });
-                            sleep(Duration::from_secs(1)).await;
-                            if endpoint == YotsubaEndpoint::Archive {
-                                *has_archives = false;
-                            }
-                            continue;
-                        }
                         _ => error!("({})\t/{}/\t\t<{}> An unforeseen event has occurred!",
                                     endpoint, current_board, status)
                     };
@@ -613,14 +608,16 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     /// Manages a single board
-    async fn fetch_board(&self, endpoint: YotsubaEndpoint, bs: &BoardSettings) -> Option<()> {
-        // This function is only called by fetch_board so it'll never be media.
-
+    async fn fetch_board(&self, endpoint: YotsubaEndpoint, bs: &BoardSettings,
+                         semaphore: Arc<Semaphore>)
+                         -> Option<()>
+    {
         let current_board = bs.board;
         let mut threads_last_modified = String::new();
         let mut local_threads_list: VecDeque<u32> = VecDeque::new();
         let mut update_metadata = false;
         let mut init = true;
+        let mut init_semaphore = true;
         let mut has_archives = true;
 
         // Default statements
@@ -631,8 +628,8 @@ impl<H, S> YotsubaArchiver<H, S>
         let ratel = Duration::from_millis(bs.throttle_millisec.into());
 
         // This block is all to respect ratelimit by incrementing by 5 each time.
-        let base : Vec<u16> = (bs.refresh_delay..).step_by(5).take(10).collect();
-        let last = &base[base.len()-1..];
+        let base: Vec<u16> = (bs.refresh_delay..).step_by(5).take(10).collect();
+        let last = &base[base.len() - 1..];
         let repeat = last.iter().cycle();
         let original_ratelimit = base.iter().chain(repeat.clone());
         let mut ratelimit = base.iter().chain(repeat);
@@ -640,8 +637,25 @@ impl<H, S> YotsubaArchiver<H, S>
         loop {
             let now = tokio::time::Instant::now();
 
+            // Semaphore START
+            // 1 board acquires the semaphore. Since this function is run concurrently, the other
+            // boards also try to acquire the semaphore but only 1 is allowed. This
+            // board will release the semaphore after 1 or no thread is fetched, then the other
+            // boards acquire the semaphore and do the same,
+            if self.config.settings.strict_mode {
+                if !self.finished.load(Ordering::Relaxed) {
+                    semaphore.acquire().await.forget();
+                } else {
+                    if semaphore.available_permits() < 1 {
+                        semaphore.add_permits(1);
+                    }
+                    return Some(());
+                }
+            }
+
             // Download threads.json / archive.json
             let mut fetched_threads: Option<Vec<u8>> = None;
+            let now_endpoint = tokio::time::Instant::now();
             self.get_generic_thread(endpoint,
                                     &bs,
                                     &mut threads_last_modified,
@@ -659,11 +673,44 @@ impl<H, S> YotsubaArchiver<H, S>
                 info!("({})\t/{}/\t\tTotal new/modified threads: {}",
                       endpoint, current_board, threads_len);
                 ratelimit = original_ratelimit.clone();
+
+                // Ratelimit after fetching endpoint
+                // This delay is still run concurrently so all boards run this at the same time.
+                // When threads are available and strictMode is enabled, this is run sequentially
+                // because the above acquires the semaphore, prevent others to run their board, so
+                // this delay appears to be sequentially.
+                tokio::time::delay_until(now_endpoint + ratel).await;
+            } else {
+                // Semaphore END
+                // If there was no threads, the while loop below won't run so we have to release the
+                // semaphore
+                if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
+                    semaphore.add_permits(1);
+                }
             }
 
             // Download each thread
             let mut position = 1_u32;
             while let Some(thread) = local_threads_list.pop_front() {
+                // Semaphore START
+                if self.config.settings.strict_mode {
+                    // Listen to CTRL-C
+                    if self.finished.load(Ordering::Relaxed) {
+                        // Reset semaphore when exiting to prevent hangs
+                        if semaphore.available_permits() < 1 {
+                            semaphore.add_permits(1);
+                        }
+                        return Some(());
+                    } else {
+                        // Dont acquire on init because it was already acquired before
+                        if init_semaphore {
+                            init_semaphore = false;
+                        } else {
+                            semaphore.acquire().await.forget();
+                        }
+                    }
+                }
+
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, endpoint, thread, position, threads_len, &statements)
                     .await;
@@ -682,12 +729,25 @@ impl<H, S> YotsubaArchiver<H, S>
                 // });
                 // }
 
+                // Semaphore END
                 if self.finished.load(Ordering::Relaxed) {
+                    if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
+                        semaphore.add_permits(1);
+                    }
                     return Some(());
                 }
-                // ratelimit
+                // Ratelimit
                 tokio::time::delay_until(now_thread + ratel).await;
+                if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
+                    semaphore.add_permits(1);
+                }
             }
+
+            // Reset the semaphore
+            if threads_len > 0 {
+                init_semaphore = true;
+            }
+
             // Update the cache at the end so that if the program was stopped while
             // processing threads, when it restarts it'll use the same
             // list of threads it was processing before + new ones.
@@ -705,14 +765,19 @@ impl<H, S> YotsubaArchiver<H, S>
             let newrt = (*ratelimit.next().unwrap()).into();
             while now.elapsed().as_secs() < newrt {
                 if self.finished.load(Ordering::Relaxed) {
-                    break;
-                }
-                if now.elapsed().as_secs() > newrt {
+                    if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
+                        semaphore.add_permits(1);
+                    }
                     break;
                 }
                 sleep(dur).await;
             }
+
+            // If the while loop was somehow passed
             if self.finished.load(Ordering::Relaxed) {
+                if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
+                    semaphore.add_permits(1);
+                }
                 break;
             }
         }
@@ -758,7 +823,7 @@ impl<H, S> YotsubaArchiver<H, S>
                         },
                     StatusCode::NOT_FOUND => {
                         self.query.delete(statements, endpoint, board, thread).await;
-                        warn!("({})\t/{}/{}\t[{}/{}]\t<DELETED>",
+                        warn!("({})\t/{}/{}\t[{}/{}] <DELETED>",
                               endpoint, board, thread, position, length);
                         break;
                     }
