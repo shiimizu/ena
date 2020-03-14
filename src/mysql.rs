@@ -39,42 +39,38 @@ impl SchemaTrait for Schema {
         r#"UPDATE `?` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0"#.to_string()
     }
 
-    fn delete_media(&self, board: YotsubaBoard) -> String {
-        unimplemented!()
-    }
-
     fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn update_hash(&self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement)
                    -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn threads<'a>(&self) -> &'a str {
-        unimplemented!()
+        todo!()
     }
 
     fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn threads_combined(&self, schema: &str, board: YotsubaBoard, endpoint: YotsubaEndpoint)
                         -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn init_board(&self, board: YotsubaBoard, schema: &str) -> String {
@@ -130,14 +126,14 @@ impl SchemaTrait for Schema {
     }
 
     fn init_type(&self, schema: &str) -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn init_views(&self, schema: &str, board: YotsubaBoard) -> String {
-        unimplemented!()
+        todo!()
     }
 
     fn update_thread(&self, schema: &str, board: YotsubaBoard) -> String {
-        unimplemented!()
+        todo!()
     }
 }

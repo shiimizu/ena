@@ -30,23 +30,22 @@ use chrono::Local;
 use core::sync::atomic::Ordering;
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
-use futures_intrusive::{channel::LocalUnbufferedChannel, sync::LocalSemaphore};
 use log::*;
 use mysql_async::prelude::*;
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
-use tokio::sync::Semaphore;
-
+use tokio::sync::{mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+                  Semaphore};
 fn main() {
     println!(
              r#"
     ⣿⠟⣽⣿⣿⣿⣿⣿⢣⠟⠋⡜⠄⢸⣿⣿⡟⣬⢁⠠⠁⣤⠄⢰⠄⠇⢻⢸
     ⢏⣾⣿⣿⣿⠿⣟⢁⡴⡀⡜⣠⣶⢸⣿⣿⢃⡇⠂⢁⣶⣦⣅⠈⠇⠄⢸⢸
-    ⣹⣿⣿⣿⡗⣾⡟⡜⣵⠃⣴⣿⣿⢸⣿⣿⢸⠘⢰⣿⣿⣿⣿⡀⢱⠄⠨⢸       ____ 
+    ⣹⣿⣿⣿⡗⣾⡟⡜⣵⠃⣴⣿⣿⢸⣿⣿⢸⠘⢰⣿⣿⣿⣿⡀⢱⠄⠨⢸       ____
     ⣿⣿⣿⣿⡇⣿⢁⣾⣿⣾⣿⣿⣿⣿⣸⣿⡎⠐⠒⠚⠛⠛⠿⢧⠄⠄⢠⣼      /\  _`\
-    ⣿⣿⣿⣿⠃⠿⢸⡿⠭⠭⢽⣿⣿⣿⢂⣿⠃⣤⠄⠄⠄⠄⠄⠄⠄⠄⣿⡾      \ \ \L\_     ___      __  
+    ⣿⣿⣿⣿⠃⠿⢸⡿⠭⠭⢽⣿⣿⣿⢂⣿⠃⣤⠄⠄⠄⠄⠄⠄⠄⠄⣿⡾      \ \ \L\_     ___      __
     ⣼⠏⣿⡏⠄⠄⢠⣤⣶⣶⣾⣿⣿⣟⣾⣾⣼⣿⠒⠄⠄⠄⡠⣴⡄⢠⣿⣵       \ \  __\  /' _ `\  /'__`\
-    ⣳⠄⣿⠄⠄⢣⠸⣹⣿⡟⣻⣿⣿⣿⣿⣿⣿⡿⡻⡖⠦⢤⣔⣯⡅⣼⡿⣹        \ \ \___\/\ \/\ \/\ \L\.\_ 
+    ⣳⠄⣿⠄⠄⢣⠸⣹⣿⡟⣻⣿⣿⣿⣿⣿⣿⡿⡻⡖⠦⢤⣔⣯⡅⣼⡿⣹        \ \ \___\/\ \/\ \/\ \L\.\_
     ⡿⣼⢸⠄⠄⣷⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣕⡜⡌⡝⡸⠙⣼⠟⢱⠏         \ \____/\ \_\ \_\ \__/.\_\
     ⡇⣿⣧⡰⡄⣿⣿⣿⣿⡿⠿⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣋⣪⣥⢠⠏⠄          \/___/  \/_/\/_/\/__/\/_/   v{}
     ⣧⢻⣿⣷⣧⢻⣿⣿⣿⡇⠄⢀⣀⣀⡙⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠂⠄⠄
@@ -132,7 +131,7 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
             error!("Connection error: {}", e);
         }
     });
-    info!("Connected with:\t{}", conn_url);
+    info!("Connected with:\t\t{}", conn_url);
 
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
@@ -180,23 +179,34 @@ impl<H, S> YotsubaArchiver<H, S>
 
     async fn run(&self) {
         let mut fut = FuturesUnordered::new();
-        // let semaphore = Arc::new(Semaphore::new(1));
-        let semaphore = Arc::new(LocalSemaphore::new(true, 1));
-        let channel = LocalUnbufferedChannel::<usize>::new();
+        let semaphore = Arc::new(Semaphore::new(1));
+        let (tx, rx) = unbounded_channel::<(BoardSettings, StatementStore, u32)>();
         fut.push(self.compute(YotsubaEndpoint::Media,
                               &self.config.board_settings,
                               Some(&self.config),
-                              semaphore.clone()));
+                              semaphore.clone(),
+                              None,
+                              Some(rx)));
 
         for board in self.config.boards.iter() {
             self.query.init_board(board.board, &self.config.settings.schema).await;
             self.query.init_views(board.board, &self.config.settings.schema).await;
 
             if board.download_archives {
-                fut.push(self.compute(YotsubaEndpoint::Archive, board, None, semaphore.clone()));
+                fut.push(self.compute(YotsubaEndpoint::Archive,
+                                      board,
+                                      None,
+                                      semaphore.clone(),
+                                      Some(tx.clone()),
+                                      None));
             }
 
-            fut.push(self.compute(YotsubaEndpoint::Threads, board, None, semaphore.clone()));
+            fut.push(self.compute(YotsubaEndpoint::Threads,
+                                  board,
+                                  None,
+                                  semaphore.clone(),
+                                  Some(tx.clone()),
+                                  None));
         }
 
         while let Some(_) = fut.next().await {}
@@ -218,7 +228,7 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     async fn create_statements(&self, endpoint: YotsubaEndpoint, board: YotsubaBoard,
-                               thumb: YotsubaStatement)
+                               media_mode: YotsubaStatement)
                                -> StatementStore
     {
         let mut statement_store: StatementStore = HashMap::new();
@@ -228,55 +238,34 @@ impl<H, S> YotsubaArchiver<H, S>
                                                        board,
                                                        statement: YotsubaStatement::Medias },
                                    self.query
-                                       .prepare(self.sql.medias(board, thumb).as_str())
-                                       .await
-                                       .unwrap());
-            statement_store.insert(YotsubaIdentifier { endpoint,
-                                                       board,
-                                                       statement: YotsubaStatement::DeleteMedia },
-                                   self.query
-                                       .prepare(self.sql.delete_media(board).as_str())
+                                       .prepare(self.sql.medias(board, media_mode).as_str())
                                        .await
                                        .unwrap());
 
-            statement_store.insert(
-                                   YotsubaIdentifier { endpoint,
+            statement_store.insert(YotsubaIdentifier { endpoint,
                                                        board,
                                                        statement:
                                                            YotsubaStatement::UpdateHashMedia },
                                    self.query
-                                       .prepare(format!(
-                r#"
-                     UPDATE "{0}"
-                     SET last_modified = extract(epoch from now())::bigint,
-                             "sha256" = $2
-                     WHERE
-                     no = $1 AND "sha256" IS NULL;
-                     "#,
-                board
-            ).as_str())
+                                       .prepare(self.sql
+                                                    .update_hash(board,
+                                                                 YotsubaHash::Sha256,
+                                                                 YotsubaStatement::UpdateHashMedia)
+                                                    .as_str())
                                        .await
-                                       .unwrap()
-            );
-            statement_store.insert(
-                                   YotsubaIdentifier { endpoint,
+                                       .unwrap());
+            statement_store.insert(YotsubaIdentifier { endpoint,
                                                        board,
                                                        statement:
                                                            YotsubaStatement::UpdateHashThumbs },
                                    self.query
-                                       .prepare(format!(
-                r#"
-                                UPDATE "{0}"
-                                SET last_modified = extract(epoch from now())::bigint,
-                                        "sha256t" = $2
-                                WHERE
-                                no = $1 AND "sha256t" IS NULL;
-                                "#,
-                board
-            ).as_str())
+                                       .prepare(self.sql
+                                                    .update_hash(board,
+                                                                 YotsubaHash::Sha256,
+                                                                 YotsubaStatement::UpdateHashThumbs)
+                                                    .as_str())
                                        .await
-                                       .unwrap()
-            );
+                                       .unwrap());
             return statement_store;
         }
         for statement in statements {
@@ -304,12 +293,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                                             .as_str())
                                                .await
                                                .unwrap(),
-                                       YotsubaStatement::DeleteMedia => self.query
-                                       .prepare(self.sql
-                                                    .delete_media(board)
-                                                    .as_str())
-                                       .await
-                                       .unwrap(),
                                        YotsubaStatement::UpdateDeleteds =>
                                            self.query
                                                .prepare(self.sql
@@ -367,57 +350,46 @@ impl<H, S> YotsubaArchiver<H, S>
 
     #[allow(unused_mut)]
     async fn compute(&self, endpoint: YotsubaEndpoint, info: &BoardSettings,
-                     config: Option<&Config>, semaphore: Arc<LocalSemaphore>)
+                     config: Option<&Config>, semaphore: Arc<Semaphore>,
+                     tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
+                     rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>)
     {
         match endpoint {
             YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
-                if self.fetch_board(endpoint, info, semaphore).await.is_some() {};
+                if self.fetch_board(endpoint, info, semaphore, tx, rx).await.is_some() {};
             }
             YotsubaEndpoint::Media => {
                 sleep(Duration::from_secs(2)).await;
 
-                // let rd = info.refresh_delay.into();
                 let dur = Duration::from_millis(250);
-                let board_settings = config.unwrap().boards.to_owned();
+                let mut r = rx.unwrap();
+                let mut downloading = YotsubaEndpoint::Media;
                 loop {
-                    let now = tokio::time::Instant::now();
-
+                    // > This is useful for a flavor of "optimistic check" before deciding to block
+                    // on a receiver. This is much faster that recv() because we
+                    // manually state when to check. recv() checks every 1s.
                     // Sequential to prevent client congestion and errors
-                    for i in board_settings.iter() {
-                        if self.finished.load(Ordering::Relaxed) {
+                    while let Ok(received) = r.try_recv() {
+                        if self.finished.load(Ordering::Relaxed)
+                           && downloading == YotsubaEndpoint::Media
+                        {
                             info!("({})\tStopping media fetching...", endpoint);
-                            return;
+                            downloading = YotsubaEndpoint::Threads;
                         }
-                        let what = if i.download_media && i.download_thumbnails {
-                            YotsubaStatement::Medias
-                        } else if i.download_media {
-                            YotsubaStatement::UpdateHashMedia
-                        } else if i.download_thumbnails {
-                            YotsubaStatement::UpdateHashThumbs
-                        } else {
-                            // No media downloading
-                            continue;
-                        };
-                        if i.download_thumbnails || i.download_media {
-                            let st = self.create_statements(endpoint, i.board, what).await;
-                            self.fetch_media(i, &st, endpoint).await;
+                        let media_info = received.0;
+                        if media_info.download_thumbnails || media_info.download_media {
+                            self.fetch_media(&media_info, &received.1, endpoint, received.2).await;
                         }
                     }
 
-                    // Recheck after every n seconds has passed
-                    while now.elapsed().as_secs() < 1 {
-                        if self.finished.load(Ordering::Relaxed) {
-                            info!("({})\tStopping media fetching...", endpoint);
-                            return;
-                        }
-                        sleep(dur).await;
-                    }
-
-                    // If it somehow goes beyond the while loop
+                    sleep(dur).await;
                     if self.finished.load(Ordering::Relaxed) {
-                        info!("({})\tStopping media fetching...", endpoint);
-                        return;
+                        break;
                     }
+                }
+                r.close();
+                if self.finished.load(Ordering::Relaxed) {
+                    return;
                 }
             }
         }
@@ -484,11 +456,7 @@ impl<H, S> YotsubaArchiver<H, S>
 
                                 // Check if there's an entry in the metadata
                                 if self.query.metadata(&statements, endpoint, current_board).await {
-                                    let ena_resume =
-                                        env::var("ENA_RESUME").ok()
-                                                              .map(|a| a.parse::<bool>().ok())
-                                                              .flatten()
-                                                              .unwrap_or(false);
+                                    let ena_resume = config::ena_resume();
 
                                     // if there's cache
                                     // if this is a first startup
@@ -610,7 +578,9 @@ impl<H, S> YotsubaArchiver<H, S>
 
     /// Manages a single board
     async fn fetch_board(&self, endpoint: YotsubaEndpoint, bs: &BoardSettings,
-                         semaphore: Arc<LocalSemaphore>)
+                         semaphore: Arc<Semaphore>,
+                         tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
+                         rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>)
                          -> Option<()>
     {
         let current_board = bs.board;
@@ -624,10 +594,25 @@ impl<H, S> YotsubaArchiver<H, S>
         let statements =
             self.create_statements(endpoint, current_board, YotsubaStatement::Medias).await;
 
+        let file_setting = if bs.download_media && bs.download_thumbnails {
+            YotsubaStatement::Medias
+        } else if bs.download_media {
+            YotsubaStatement::UpdateHashMedia
+        } else if bs.download_thumbnails {
+            YotsubaStatement::UpdateHashThumbs
+        } else {
+            // No media downloading at all
+            // Set this to any. Before downloading media, the board settings is checked
+            // So this is fine
+            YotsubaStatement::Threads
+        };
+        let statements_media =
+            self.create_statements(YotsubaEndpoint::Media, current_board, file_setting).await;
+
         let dur = Duration::from_millis(250);
         let ratel = Duration::from_millis(bs.throttle_millisec.into());
 
-        // This block is all to respect ratelimit by incrementing by 5 each time.
+        // This block is mimics the thread refresh rate
         let base: Vec<u16> = (bs.refresh_delay..).step_by(5).take(10).collect();
         let last = &base[base.len() - 1..];
         let repeat = last.iter().cycle();
@@ -644,7 +629,10 @@ impl<H, S> YotsubaArchiver<H, S>
             // boards acquire the semaphore and do the same,
             let mut _sem = None;
             if self.config.settings.strict_mode {
-                _sem = Some(semaphore.acquire(1).await);
+                _sem = Some(semaphore.acquire().await);
+            }
+            if self.finished.load(Ordering::Relaxed) {
+                break;
             }
 
             // Download threads.json / archive.json
@@ -675,28 +663,38 @@ impl<H, S> YotsubaArchiver<H, S>
                 // this delay appears to be sequentially.
                 tokio::time::delay_until(now_endpoint + ratel).await;
             }
-            
+
             drop(_sem);
-            
+
             // Download each thread
             let mut position = 1_u32;
+            let copy_threads = local_threads_list.clone();
+            let _t = tx.clone().unwrap();
             while let Some(thread) = local_threads_list.pop_front() {
                 // Semaphore
                 let mut _sem_thread = None;
                 if self.config.settings.strict_mode {
-                    _sem_thread = Some(semaphore.acquire(1).await);
+                    _sem_thread = Some(semaphore.acquire().await);
+                }
+                if self.finished.load(Ordering::Relaxed) {
+                    break;
                 }
 
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, endpoint, thread, position, threads_len, &statements)
                     .await;
+                let t = tx.clone().unwrap();
+                if let Err(e) = t.send((bs.clone(), statements_media.clone(), thread)) {
+                    error!("(media)\t{}", e);
+                }
                 position += 1;
 
-                if self.finished.load(Ordering::Relaxed) {
-                    return Some(());
-                }
                 // Ratelimit
                 tokio::time::delay_until(now_thread + ratel).await;
+            }
+
+            if self.finished.load(Ordering::Relaxed) {
+                break;
             }
 
             // Update the cache at the end so that if the program was stopped while
@@ -726,6 +724,7 @@ impl<H, S> YotsubaArchiver<H, S>
                 break;
             }
         }
+        // channel.close();
         Some(())
     }
 
@@ -783,11 +782,12 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     /// FETCH MEDIA
-
     async fn fetch_media(&self, info: &BoardSettings, statements: &StatementStore,
-                         endpoint: YotsubaEndpoint)
+                         endpoint: YotsubaEndpoint, no: u32)
     {
-        match self.query.medias(statements, endpoint, info.board).await {
+        // All media for a particular thread should finish downloading to prevent missing media in
+        // the database CTRL-C does not apply here
+        match self.query.medias(statements, endpoint, info.board, no).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
@@ -796,16 +796,13 @@ impl<H, S> YotsubaArchiver<H, S>
                 let dur = Duration::from_millis(200);
                 let len = media_list.len();
                 if len > 0 {
-                    info!("({})\t/{}/\t\tNew media :: {}", endpoint, info.board, len);
+                    debug!("({})\t/{}/{}\tNew media :: {}", endpoint, info.board, no, len);
                 }
 
                 // Chunk to prevent client congestion and errors
                 // That way the client doesn't have to run 1000+ requests all at the same time
                 for chunks in media_list.as_slice().chunks(20) {
                     for row in chunks {
-                        if self.finished.load(Ordering::Relaxed) {
-                            return;
-                        }
                         has_media = true;
 
                         // Preliminary checks before downloading
@@ -875,9 +872,6 @@ impl<H, S> YotsubaArchiver<H, S>
                                                      },
                                                      hsum)
                                         .await;
-                                    if self.finished.load(Ordering::Relaxed) {
-                                        return;
-                                    }
                                 }
                             // This is usually due to 404. We are already notified of that.
                             // else {
@@ -889,9 +883,6 @@ impl<H, S> YotsubaArchiver<H, S>
                         }
                     }
                     sleep(dur).await;
-                    if self.finished.load(Ordering::Relaxed) {
-                        return;
-                    }
                 }
             }
         }
@@ -998,12 +989,6 @@ impl<H, S> YotsubaArchiver<H, S>
                     }
                     StatusCode::NOT_FOUND => {
                         error!("(media)\t/{}/{}\t<{}> {}", board, no, status, &url);
-                        self.query
-                            .delete_media(statements,
-                                          YotsubaEndpoint::Media,
-                                          board.to_owned(),
-                                          no as u32)
-                            .await;
                         break;
                     }
                     _e => {

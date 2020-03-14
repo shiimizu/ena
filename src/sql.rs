@@ -71,7 +71,6 @@ pub enum YotsubaStatement {
     UpdateMetadata = 1,
     UpdateThread,
     Delete,
-    DeleteMedia,
     UpdateDeleteds,
     UpdateHashMedia,
     UpdateHashThumbs,
@@ -143,10 +142,6 @@ pub trait SqlQueries {
     async fn delete(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
                     board: YotsubaBoard, no: u32);
 
-    /// Marks a post's media as deleted
-    async fn delete_media(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                          board: YotsubaBoard, no: u32);
-
     // deleted before updating. PgSQL needs to do this >_>..
     /// Compares between the thread in db and the one fetched and marks any
     /// posts missing in the fetched thread as deleted
@@ -161,7 +156,7 @@ pub trait SqlQueries {
 
     /// Gets the list of posts in a thread that have media
     async fn medias(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                    board: YotsubaBoard)
+                    board: YotsubaBoard, no: u32)
                     -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>;
 
     /// Gets a list of threads from the corresponding endpoint
@@ -191,12 +186,11 @@ pub trait SchemaTrait: Sync + Send {
     fn init_schema(&self, schema: &str) -> String;
     fn init_metadata(&self) -> String;
     fn delete(&self, schema: &str, board: YotsubaBoard) -> String;
-    fn delete_media(&self, board: YotsubaBoard) -> String;
     fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String;
     fn update_hash(&self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement)
                    -> String;
     fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;
-    fn medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String;
+    fn medias(&self, board: YotsubaBoard, media_mode: YotsubaStatement) -> String;
     fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String;
     fn threads<'a>(&self) -> &'a str;
     fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;

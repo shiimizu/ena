@@ -8,6 +8,10 @@ pub fn version() -> String {
     option_env!("CARGO_PKG_VERSION").unwrap_or("?.?.?").to_string()
 }
 
+pub fn ena_resume() -> bool {
+    var("ENA_RESUME").ok().map(|a| a.parse::<bool>().ok()).flatten().unwrap_or(false)
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)] // https://github.com/serde-rs/serde/pull/780

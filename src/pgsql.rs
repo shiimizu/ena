@@ -64,12 +64,12 @@ impl SqlQueries for tokio_postgres::Client {
     }
 
     async fn medias(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                    board: YotsubaBoard)
+                    board: YotsubaBoard, no: u32)
                     -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>
     {
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
         let statement = statements.get(&id).unwrap();
-        self.query(statement, &[]).await
+        self.query(statement, &[&(no as i64)]).await
     }
 
     async fn update_hash(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
@@ -90,17 +90,6 @@ impl SqlQueries for tokio_postgres::Client {
                     board: YotsubaBoard, no: u32)
     {
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Delete };
-        let statement = statements.get(&id).unwrap();
-        self.execute(statement, &[&i64::try_from(no).unwrap()])
-            .await
-            .expect("Err executing sql: delete");
-    }
-
-    /// Mark a single post's media as deleted.
-    async fn delete_media(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                          board: YotsubaBoard, no: u32)
-    {
-        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::DeleteMedia };
         let statement = statements.get(&id).unwrap();
         self.execute(statement, &[&i64::try_from(no).unwrap()])
             .await
@@ -251,19 +240,6 @@ impl SchemaTrait for Schema {
         )
     }
 
-    /// This will find an already existing post
-    fn delete_media(&self, board: YotsubaBoard) -> String {
-        format!(
-                r#"
-        UPDATE "{}"
-        SET deleted_media    = true
-        WHERE
-          no = $1 AND deleted_media is NULL;
-        "#,
-                board
-        )
-    }
-
     fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String {
         // This will find an already existing post due to the WHERE clause, meaning it's
         // ok to only select no
@@ -323,13 +299,13 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String {
+    fn medias(&self, board: YotsubaBoard, media_mode: YotsubaStatement) -> String {
         format!(r#"
                 SELECT * FROM "{0}"
-                WHERE (md5 is not null) {1} AND filedeleted IS NULL AND deleted_media IS NULL
+                WHERE (md5 is not null) {1} AND filedeleted IS NULL AND (no=$1 or resto=$1)
                 ORDER BY no desc;"#,
                 board,
-                match thumb {
+                match media_mode {
                     YotsubaStatement::UpdateHashThumbs => "AND (sha256t IS NULL)",
                     YotsubaStatement::UpdateHashMedia => "AND (sha256 IS NULL)",
                     _ => "AND (sha256 IS NULL OR sha256t IS NULL)"
@@ -462,7 +438,6 @@ impl SchemaTrait for Schema {
             sticky boolean,
             closed boolean,
             filedeleted boolean,
-            deleted_media boolean,
             spoiler boolean,
             m_img boolean,
             bumplimit boolean,
