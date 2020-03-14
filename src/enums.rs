@@ -94,6 +94,19 @@ impl Serialize for YotsubaBoard {
         serializer.serialize_str(&self.to_string())
     }
 }
+
+pub trait StringExt {
+    fn capitalize(&self) -> Self;
+}
+
+impl StringExt for String {
+    fn capitalize(&self) -> Self {
+        self.chars()
+            .enumerate()
+            .map(|(i, c)| if i == 0 { c.to_uppercase().to_string() } else { c.to_string() })
+            .collect::<String>()
+    }
+}
 #[allow(non_camel_case_types)]
 #[derive(Debug,
            Copy,

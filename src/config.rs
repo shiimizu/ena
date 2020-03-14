@@ -1,8 +1,9 @@
-use crate::{sql::Database, YotsubaBoard};
+use crate::{enums::StringExt, sql::Database, YotsubaBoard};
 use anyhow::{Context, Result};
 use enum_iterator::IntoEnumIterator;
 use serde::{self, Deserialize, Serialize};
-use std::env::var;
+use std::{env::var,
+          iter::{Chain, Repeat, StepBy, Take}};
 
 pub fn version() -> String {
     option_env!("CARGO_PKG_VERSION").unwrap_or("?.?.?").to_string()
@@ -12,6 +13,24 @@ pub fn ena_resume() -> bool {
     var("ENA_RESUME").ok().map(|a| a.parse::<bool>().ok()).flatten().unwrap_or(false)
 }
 
+pub fn display_full_version() {
+    println!("{} v{}-{}\n{}",
+             env!("CARGO_PKG_NAME").to_string().capitalize(),
+             env!("CARGO_PKG_VERSION"),
+             env!("VERGEN_SHA_SHORT"),
+             env!("CARGO_PKG_DESCRIPTION"));
+    println!("\nBuild info:\n{}", env!("VERGEN_TARGET_TRIPLE"));
+    println!("{}", env!("VERGEN_BUILD_TIMESTAMP"));
+    println!("{}", env!("VERGEN_SHA"));
+}
+
+pub fn refresh_rate(initial: u16, step_by: usize, take: usize)
+                    -> Chain<Take<StepBy<std::ops::RangeFrom<u16>>>, Repeat<u16>> {
+    let base = (initial..).step_by(step_by).take(take);
+    let repeat = std::iter::repeat(base.clone().last().unwrap());
+    let ratelimit = base.chain(repeat);
+    ratelimit
+}
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)] // https://github.com/serde-rs/serde/pull/780

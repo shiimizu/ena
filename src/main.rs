@@ -21,6 +21,7 @@ use std::{collections::{HashMap, VecDeque},
           env,
           path::Path,
           sync::{atomic::AtomicBool, Arc}};
+          use std::process::exit;
 
 use tokio::{runtime::Builder,
             time::{delay_for as sleep, Duration}};
@@ -37,6 +38,9 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
                   Semaphore};
 fn main() {
+    std::env::args().nth(1)
+                    .filter(|arg| matches!(arg.as_str(), "-v" | "--version"))
+                    .map(|_| {config::display_full_version(); exit(0)});
     println!(
              r#"
     ⣿⠟⣽⣿⣿⣿⣿⣿⢣⠟⠋⡜⠄⢸⣿⣿⡟⣬⢁⠠⠁⣤⠄⢰⠄⠇⢻⢸
@@ -612,12 +616,9 @@ impl<H, S> YotsubaArchiver<H, S>
         let dur = Duration::from_millis(250);
         let ratel = Duration::from_millis(bs.throttle_millisec.into());
 
-        // This block is mimics the thread refresh rate
-        let base: Vec<u16> = (bs.refresh_delay..).step_by(5).take(10).collect();
-        let last = &base[base.len() - 1..];
-        let repeat = last.iter().cycle();
-        let original_ratelimit = base.iter().chain(repeat.clone());
-        let mut ratelimit = base.iter().chain(repeat);
+        // This mimics the thread refresh rate
+        let original_ratelimit = config::refresh_rate(bs.refresh_delay, 5, 10);
+        let mut ratelimit = original_ratelimit.clone();
 
         loop {
             let now = tokio::time::Instant::now();
@@ -711,7 +712,7 @@ impl<H, S> YotsubaArchiver<H, S>
                 }
             }
             //  Board refresh delay ratelimit
-            let newrt = (*ratelimit.next().unwrap()).into();
+            let newrt = (ratelimit.next().unwrap()).into();
             while now.elapsed().as_secs() < newrt {
                 if self.finished.load(Ordering::Relaxed) {
                     break;
