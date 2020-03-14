@@ -30,11 +30,13 @@ use chrono::Local;
 use core::sync::atomic::Ordering;
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
+use futures_intrusive::{channel::LocalUnbufferedChannel, sync::LocalSemaphore};
 use log::*;
 use mysql_async::prelude::*;
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
+
 fn main() {
     println!(
              r#"
@@ -178,7 +180,9 @@ impl<H, S> YotsubaArchiver<H, S>
 
     async fn run(&self) {
         let mut fut = FuturesUnordered::new();
-        let semaphore = Arc::new(Semaphore::new(1));
+        // let semaphore = Arc::new(Semaphore::new(1));
+        let semaphore = Arc::new(LocalSemaphore::new(true, 1));
+        let channel = LocalUnbufferedChannel::<usize>::new();
         fut.push(self.compute(YotsubaEndpoint::Media,
                               &self.config.board_settings,
                               Some(&self.config),
@@ -195,9 +199,6 @@ impl<H, S> YotsubaArchiver<H, S>
             fut.push(self.compute(YotsubaEndpoint::Threads, board, None, semaphore.clone()));
         }
 
-        if semaphore.available_permits() < 1 {
-            semaphore.add_permits(1);
-        }
         while let Some(_) = fut.next().await {}
     }
 
@@ -366,7 +367,7 @@ impl<H, S> YotsubaArchiver<H, S>
 
     #[allow(unused_mut)]
     async fn compute(&self, endpoint: YotsubaEndpoint, info: &BoardSettings,
-                     config: Option<&Config>, semaphore: Arc<Semaphore>)
+                     config: Option<&Config>, semaphore: Arc<LocalSemaphore>)
     {
         match endpoint {
             YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
@@ -609,7 +610,7 @@ impl<H, S> YotsubaArchiver<H, S>
 
     /// Manages a single board
     async fn fetch_board(&self, endpoint: YotsubaEndpoint, bs: &BoardSettings,
-                         semaphore: Arc<Semaphore>)
+                         semaphore: Arc<LocalSemaphore>)
                          -> Option<()>
     {
         let current_board = bs.board;
@@ -617,7 +618,6 @@ impl<H, S> YotsubaArchiver<H, S>
         let mut local_threads_list: VecDeque<u32> = VecDeque::new();
         let mut update_metadata = false;
         let mut init = true;
-        let mut init_semaphore = true;
         let mut has_archives = true;
 
         // Default statements
@@ -637,20 +637,14 @@ impl<H, S> YotsubaArchiver<H, S>
         loop {
             let now = tokio::time::Instant::now();
 
-            // Semaphore START
+            // Semaphore. When the result of `acquire` is dropped, the semaphore is released.
             // 1 board acquires the semaphore. Since this function is run concurrently, the other
             // boards also try to acquire the semaphore but only 1 is allowed. This
             // board will release the semaphore after 1 or no thread is fetched, then the other
             // boards acquire the semaphore and do the same,
+            let mut _sem = None;
             if self.config.settings.strict_mode {
-                if !self.finished.load(Ordering::Relaxed) {
-                    semaphore.acquire().await.forget();
-                } else {
-                    if semaphore.available_permits() < 1 {
-                        semaphore.add_permits(1);
-                    }
-                    return Some(());
-                }
+                _sem = Some(semaphore.acquire(1).await);
             }
 
             // Download threads.json / archive.json
@@ -680,35 +674,17 @@ impl<H, S> YotsubaArchiver<H, S>
                 // because the above acquires the semaphore, prevent others to run their board, so
                 // this delay appears to be sequentially.
                 tokio::time::delay_until(now_endpoint + ratel).await;
-            } else {
-                // Semaphore END
-                // If there was no threads, the while loop below won't run so we have to release the
-                // semaphore
-                if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
-                    semaphore.add_permits(1);
-                }
             }
-
+            
+            drop(_sem);
+            
             // Download each thread
             let mut position = 1_u32;
             while let Some(thread) = local_threads_list.pop_front() {
-                // Semaphore START
+                // Semaphore
+                let mut _sem_thread = None;
                 if self.config.settings.strict_mode {
-                    // Listen to CTRL-C
-                    if self.finished.load(Ordering::Relaxed) {
-                        // Reset semaphore when exiting to prevent hangs
-                        if semaphore.available_permits() < 1 {
-                            semaphore.add_permits(1);
-                        }
-                        return Some(());
-                    } else {
-                        // Dont acquire on init because it was already acquired before
-                        if init_semaphore {
-                            init_semaphore = false;
-                        } else {
-                            semaphore.acquire().await.forget();
-                        }
-                    }
+                    _sem_thread = Some(semaphore.acquire(1).await);
                 }
 
                 let now_thread = tokio::time::Instant::now();
@@ -716,36 +692,11 @@ impl<H, S> YotsubaArchiver<H, S>
                     .await;
                 position += 1;
 
-                // Download thumbnails
-                // if bs.download_thumbnails {
-                // self.fetch_media(&bs, thread, false).await;
-                // }
-
-                // Send to download full media
-                // if bs.download_media {
-                // _t.send(thread).unwrap();
-                // tokio::spawn(async move {
-                // self.fetch_media(&bs, thread, &statements, endpoint).await;
-                // });
-                // }
-
-                // Semaphore END
                 if self.finished.load(Ordering::Relaxed) {
-                    if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
-                        semaphore.add_permits(1);
-                    }
                     return Some(());
                 }
                 // Ratelimit
                 tokio::time::delay_until(now_thread + ratel).await;
-                if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
-                    semaphore.add_permits(1);
-                }
-            }
-
-            // Reset the semaphore
-            if threads_len > 0 {
-                init_semaphore = true;
             }
 
             // Update the cache at the end so that if the program was stopped while
@@ -765,9 +716,6 @@ impl<H, S> YotsubaArchiver<H, S>
             let newrt = (*ratelimit.next().unwrap()).into();
             while now.elapsed().as_secs() < newrt {
                 if self.finished.load(Ordering::Relaxed) {
-                    if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
-                        semaphore.add_permits(1);
-                    }
                     break;
                 }
                 sleep(dur).await;
@@ -775,9 +723,6 @@ impl<H, S> YotsubaArchiver<H, S>
 
             // If the while loop was somehow passed
             if self.finished.load(Ordering::Relaxed) {
-                if self.config.settings.strict_mode && semaphore.available_permits() < 1 {
-                    semaphore.add_permits(1);
-                }
                 break;
             }
         }
