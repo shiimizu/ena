@@ -382,12 +382,11 @@ where
 
                 let dur = Duration::from_millis(250);
                 let mut r = rx.unwrap();
-                let mut downloading = YotsubaEndpoint::Media;
+                let mut downloading = endpoint;
+
+                // Use a custom poll rate instead of recv().await which polls at around 1s.
                 loop {
-                    // > This is useful for a flavor of "optimistic check" before deciding to block
-                    // on a receiver. This is much faster that recv() because we
-                    // manually state when to check. recv() checks every 1s.
-                    // Sequential to prevent client congestion and errors
+                    // Sequential fetching to prevent client congestion and errors
                     while let Ok(received) = r.try_recv() {
                         if self.finished.load(Ordering::Relaxed)
                             && downloading == YotsubaEndpoint::Media
@@ -395,9 +394,20 @@ where
                             info!("({})\tStopping media fetching...", endpoint);
                             downloading = YotsubaEndpoint::Threads;
                         }
+                        // The signal to stop is a thread no of: 0
+                        if received.2 == 0 {
+                            break;
+                        }
                         let media_info = received.0;
                         if media_info.download_thumbnails || media_info.download_media {
-                            self.fetch_media(&media_info, &received.1, endpoint, received.2).await;
+                            self.fetch_media(
+                                &media_info,
+                                &received.1,
+                                endpoint,
+                                received.2,
+                                downloading
+                            )
+                            .await;
                         }
                     }
 
@@ -662,7 +672,6 @@ where
         // This mimics the thread refresh rate
         let original_ratelimit = config::refresh_rate(bs.refresh_delay, 5, 10);
         let mut ratelimit = original_ratelimit.clone();
-
         loop {
             let now = tokio::time::Instant::now();
 
@@ -716,7 +725,7 @@ where
 
             // Download each thread
             let mut position = 1_u32;
-            let _t = tx.clone().unwrap();
+            let t = tx.clone().unwrap();
             while let Some(thread) = local_threads_list.pop_front() {
                 // Semaphore
                 let mut _sem_thread = None;
@@ -724,15 +733,20 @@ where
                     _sem_thread = Some(semaphore.acquire().await);
                 }
                 if self.finished.load(Ordering::Relaxed) {
+                    if let Err(e) = t.send((bs.clone(), statements_media.clone(), 0)) {
+                        error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
+                    }
                     break;
                 }
 
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, endpoint, thread, position, threads_len, &statements)
                     .await;
-                let t = tx.clone().unwrap();
                 if let Err(e) = t.send((bs.clone(), statements_media.clone(), thread)) {
-                    error!("(media)\t{}", e);
+                    error!(
+                        "(media)\t/{}/{}\t[{}/{}] {}",
+                        &bs.board, thread, position, threads_len, e
+                    );
                 }
                 position += 1;
 
@@ -844,26 +858,41 @@ where
     /// FETCH MEDIA
     async fn fetch_media(
         &self, info: &BoardSettings, statements: &StatementStore, endpoint: YotsubaEndpoint,
-        no: u32
+        no: u32, downloading: YotsubaEndpoint
     )
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
+
         match self.query.medias(statements, endpoint, info.board, no).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
+                let mut pg = None;
+                let mut ms = None;
+                match media_list {
+                    Rows::PostgreSQL(p) => {
+                        pg = Some(p);
+                    }
+                    Rows::MySQL(m) => {
+                        ms = Some(m);
+                    }
+                }
+                let ml = pg.unwrap();
                 let mut fut = FuturesUnordered::new();
                 let mut has_media = false;
                 let dur = Duration::from_millis(200);
-                let len = media_list.len();
-                if len > 0 {
-                    debug!("({})\t/{}/{}\tNew media :: {}", endpoint, info.board, no, len);
+                let len = ml.len();
+
+                // Display info on whatever threads have media to download before exiting the
+                // program
+                if len > 0 && downloading == YotsubaEndpoint::Threads {
+                    info!("({})\t/{}/{}\tNew media :: {}", endpoint, info.board, no, len);
                 }
 
                 // Chunk to prevent client congestion and errors
                 // That way the client doesn't have to run 1000+ requests all at the same time
-                for chunks in media_list.as_slice().chunks(20) {
+                for chunks in ml.as_slice().chunks(20) {
                     for row in chunks {
                         has_media = true;
 

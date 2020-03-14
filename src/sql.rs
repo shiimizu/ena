@@ -34,6 +34,11 @@ pub enum Database {
     MySQL
 }
 
+pub enum Rows {
+    PostgreSQL(Vec<tokio_postgres::row::Row>),
+    MySQL(Vec<mysql_async::Row>)
+}
+
 impl fmt::Display for Database {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -162,7 +167,7 @@ pub trait SqlQueries {
     /// Gets the list of posts in a thread that have media
     async fn medias(
         &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard, no: u32
-    ) -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>;
+    ) -> Result<Rows>;
 
     /// Gets a list of threads from the corresponding endpoint
     async fn threads(

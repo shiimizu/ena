@@ -5,7 +5,7 @@ use std::{collections::VecDeque, convert::TryFrom};
 use tokio_postgres::Statement;
 
 /// PostgreSQL version of the schema. This is also the default one used.  
-/// If another schema is thought of, feel free to use the `SchemaTrait` implement it.
+/// If another schema is thought of, feel free to use the `SchemaTrait` to implement it.
 #[derive(Debug, Copy, Clone)]
 pub struct Schema;
 
@@ -18,14 +18,6 @@ impl Schema {
 /// PostgreSQL version is using tokio_postgres
 #[async_trait]
 impl SqlQueries for tokio_postgres::Client {
-    // async fn prepare(&self, query: &str) -> Result<Statement, tokio_postgres::error::Error> {
-    //   self.prepare(query).await
-    // }
-
-    // async fn prepare<R>(&self, query: &str) -> Result<PrepareStatment<R>> {
-    //   Ok(self.prepare(query).await.map(|z| PrepareStatment::PostgreSQL(z))?)
-    // }
-
     async fn init_type(&self) {
         self.execute(Schema::new().init_type().as_str(), &[])
             .await
@@ -69,10 +61,10 @@ impl SqlQueries for tokio_postgres::Client {
 
     async fn medias(
         &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard, no: u32
-    ) -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error> {
+    ) -> Result<Rows> {
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
         let statement = statements.get(&id).unwrap();
-        self.query(statement, &[&(no as i64)]).await
+        Ok(Rows::PostgreSQL(self.query(statement, &[&(no as i64)]).await?))
     }
 
     async fn update_hash(
@@ -337,7 +329,7 @@ impl SchemaTrait for Schema {
           full JOIN
           (select jsonb_array_elements({}) as newv)z
           ON {}
-          where newv is null or prev is null {5}
+          where newv is null or prev is null {}
         ) END
       ) FROM 
       (SELECT sha256(decode({} #>> '{{}}', 'escape')) as prev_hash from metadata where board=$1) w
