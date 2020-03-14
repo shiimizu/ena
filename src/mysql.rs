@@ -24,7 +24,7 @@ impl SchemaTrait for Schema {
 
     fn init_metadata(&self) -> String {
         format!(
-                "
+            "
             CREATE TABLE IF NOT EXISTS metadata (
                 board VARCHAR(10) NOT NULL PRIMARY key UNIQUE,
                 `threads` json,
@@ -35,61 +35,68 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn delete(&self, schema: &str, board: YotsubaBoard) -> String {
-        format!("UPDATE `{}` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0",
-                board)
+    fn delete(&self, board: YotsubaBoard) -> String {
+        format!(
+            "UPDATE `{}` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0",
+            board
+        )
     }
 
-    fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String {
+    fn update_deleteds(&self, board: YotsubaBoard) -> String {
         // This simulates a FULL JOIN
-        format!(r#"
-                UPDATE `{0}`, (
+        format!(
+            r#"
+                UPDATE `{board}`, (
                     SELECT x.* FROM
-                        (SELECT num, `timestamp`, thread_num FROM `{0}` where num=:no or thread_num=:no order by num) x
+                        (SELECT num, `timestamp`, thread_num FROM `{board}` where num=:no or thread_num=:no order by num) x
                     LEFT OUTER JOIN
-                        ( {1} ) z
+                        ( {schema_4chan_query} ) z
                       ON x.num = z.no
                       UNION
                       
                     SELECT x.* FROM
-                        (SELECT num, `timestamp`, thread_num FROM `{0}` where num=:no or thread_num=:no order by num) x
+                        (SELECT num, `timestamp`, thread_num FROM `{board}` where num=:no or thread_num=:no order by num) x
                     RIGHT OUTER JOIN
-                        ( {1} ) z
+                        ( {schema_4chan_query} ) z
                       ON x.num = z.no
                     WHERE z.no is null
                 ) as `src`
-                SET `{0}`.deleted = 1;"#,
-                board,
-                self.init_type(""))
+                SET `{board}`.deleted = 1;"#,
+            board = board,
+            schema_4chan_query = self.init_type()
+        )
     }
 
-    fn update_hash(&self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement)
-                   -> String {
+    fn update_hash(
+        &self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement
+    ) -> String {
         unreachable!()
     }
 
-    fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
+    fn update_metadata(&self, column: YotsubaEndpoint) -> String {
         format!(
-                "INSERT INTO metadata(board, {0})
+            "INSERT INTO metadata(board, {0})
                   VALUES (:board, :json)
                   ON CONFLICT (board)
                   DO UPDATE
                       SET {0} = :json;
               ",
-                column
+            column
         )
     }
 
     fn medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String {
-        format!("SELECT * FROM `{0}`
+        format!(
+            "SELECT * FROM `{0}`
                 WHERE (media_hash is not null) AND (num=:no or thread_num=:no)
                 ORDER BY num desc;",
-                board)
+            board
+        )
     }
 
-    fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String {
+    fn threads_modified(&self, endpoint: YotsubaEndpoint) -> String {
         let thread = format!(
-                             r#"
+            r#"
         SELECT JSON_ARRAYAGG(coalesce (newv->'$.no', prev->'$.no')) from (
             SELECT * from metadata m2 ,
                 JSON_TABLE(threads, '$[*].threads[*]'
@@ -118,7 +125,7 @@ impl SchemaTrait for Schema {
         );
 
         let archive = format!(
-                              r#"
+            r#"
         SELECT JSON_ARRAYAGG(coalesce (newv,prev)) from (
             SELECT * from metadata m2 ,
                 JSON_TABLE( archive, '$[*]'
@@ -154,24 +161,25 @@ impl SchemaTrait for Schema {
 
     fn threads(&self) -> String {
         format!(
-                r#"
+            r#"
         SELECT JSON_ARRAYAGG(z.no)
         FROM
-        ( {} )z
+        ( {schema_4chan_query} )z
         "#,
-                self.init_type("")
+            schema_4chan_query = self.init_type()
         )
     }
 
-    fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
-        format!(r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = ?"#,
-                column)
+    fn metadata(&self, column: YotsubaEndpoint) -> String {
+        format!(
+            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = ?"#,
+            column
+        )
     }
 
-    fn threads_combined(&self, schema: &str, board: YotsubaBoard, endpoint: YotsubaEndpoint)
-                        -> String {
+    fn threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String {
         let thread = format!(
-                             r#"
+            r#"
         select JSON_ARRAYAGG(c) from (
             SELECT coalesce (newv->'$.no', prev->'$.no') as c from (
                 SELECT * from metadata m2 ,
@@ -201,11 +209,11 @@ impl SchemaTrait for Schema {
               ON c = nno
             where  nno is null;
         "#,
-                             board
+            board
         );
 
         let archive = format!(
-                              r#"
+            r#"
         select JSON_ARRAYAGG(c) from (
             SELECT coalesce (newv, prev) as c from (
                 SELECT * from metadata m2 ,
@@ -235,7 +243,7 @@ impl SchemaTrait for Schema {
               ON c = nno
             where  nno is null;
         "#,
-                              board
+            board
         );
         match endpoint {
             YotsubaEndpoint::Archive => archive,
@@ -243,7 +251,7 @@ impl SchemaTrait for Schema {
         }
     }
 
-    fn init_board(&self, board: YotsubaBoard, schema: &str) -> String {
+    fn init_board(&self, board: YotsubaBoard) -> String {
         r#"CREATE TABLE IF NOT EXISTS `?` (
             `doc_id` int unsigned NOT NULL auto_increment,
             `media_id` int unsigned NOT NULL DEFAULT '0',
@@ -292,12 +300,12 @@ impl SchemaTrait for Schema {
             INDEX poster_ip_index (`poster_ip`),
             INDEX timestamp_index (`timestamp`)
           ) engine=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;"#
-                                                                       .to_string()
+            .to_string()
     }
 
-    fn init_type(&self, schema: &str) -> String {
+    fn init_type(&self) -> String {
         format!(
-                r#"SELECT * FROM JSON_TABLE(?, "$.posts[*]" COLUMNS(
+            r#"SELECT * FROM JSON_TABLE(?, "$.posts[*]" COLUMNS(
             `no`				BIGINT		PATH "$.no",
             `sticky`			SMALLINT	PATH "$.sticky",
             `closed`			SMALLINT	PATH "$.closed",
@@ -340,13 +348,13 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn init_views(&self, schema: &str, board: YotsubaBoard) -> String {
+    fn init_views(&self, board: YotsubaBoard) -> String {
         unreachable!()
     }
 
-    fn update_thread(&self, schema: &str, board: YotsubaBoard) -> String {
+    fn update_thread(&self, board: YotsubaBoard) -> String {
         format!(
-                r#"
+            r#"
         INSERT INTO `{}`(`poster_ip`,`num`,`subnum`,`thread_num`,`op`,`timestamp`,`timestamp_expired`,`preview_orig`,`preview_w`,`preview_h`,`media_filename`,`media_w`,`media_h`,`media_size`,`media_hash`,`media_orig`,`spoiler`,`deleted`,`capcode`,`email`,`name`,`trip`,`title`,`comment`,`delpass`,`sticky`,`locked`,`poster_hash`,`poster_country`,`exif`)
         SELECT *
         FROM (SELECT
@@ -456,7 +464,7 @@ impl SchemaTrait for Schema {
                 `poster_country`	= values(`poster_country`),
                 `exif`				= values(`exif`);
         "#,
-                board
+            board
         )
     }
 }

@@ -7,23 +7,27 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use enum_iterator::IntoEnumIterator;
 use serde::{Deserialize, Serialize};
-use std::{collections::{HashMap, VecDeque},
-          fmt,
-          ops::Add};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    ops::Add
+};
 use tokio_postgres::Statement;
 // use mysql_async::prelude::*;
 use mysql_async::Stmt;
 
 pub type StatementStore = HashMap<YotsubaIdentifier, Statement>;
-#[derive(Debug,
-           Copy,
-           Clone,
-           std::hash::Hash,
-           PartialEq,
-           std::cmp::Eq,
-           enum_iterator::IntoEnumIterator,
-           Deserialize,
-           Serialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    std::hash::Hash,
+    PartialEq,
+    std::cmp::Eq,
+    enum_iterator::IntoEnumIterator,
+    Deserialize,
+    Serialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Database {
     PostgreSQL,
@@ -60,13 +64,9 @@ impl Into<Database> for String {
     }
 }
 
-#[derive(Debug,
-           Copy,
-           Clone,
-           std::hash::Hash,
-           PartialEq,
-           std::cmp::Eq,
-           enum_iterator::IntoEnumIterator)]
+#[derive(
+    Debug, Copy, Clone, std::hash::Hash, PartialEq, std::cmp::Eq, enum_iterator::IntoEnumIterator,
+)]
 pub enum YotsubaStatement {
     UpdateMetadata = 1,
     UpdateThread,
@@ -101,27 +101,28 @@ impl Add for YotsubaStatement {
 pub trait SqlQueries {
     // async fn prepare(&self, query: &str) -> Result<Statement, tokio_postgres::error::Error>;
 
-    /// Creates the 4chan schema as a type to be easily referenced
-    async fn init_type(&self, schema: &str) -> Result<u64, tokio_postgres::error::Error>;
-
-    /// Creates the schema if nonexistent
+    /// Creates the schema if nonexistent and uses it as the search_path
     async fn init_schema(&self, schema: &str);
+
+    /// Creates the 4chan schema as a type to be easily referenced
+    async fn init_type(&self);
 
     /// Creates the metadata if nonexistent to store the api endpoints' data
     async fn init_metadata(&self);
 
     /// Creates a table for the specified board
-    async fn init_board(&self, board: YotsubaBoard, schema: &str);
+    async fn init_board(&self, board: YotsubaBoard);
 
     /// Creates views for asagi
-    async fn init_views(&self, board: YotsubaBoard, schema: &str);
+    async fn init_views(&self, board: YotsubaBoard);
 
     /// Upserts an endpoint to the metadata
     ///
     /// Converts bytes to json object and feeds that into the query
-    async fn update_metadata(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                             board: YotsubaBoard, item: &[u8])
-                             -> Result<u64>;
+    async fn update_metadata(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<u64>;
 
     /// Upserts a thread
     ///
@@ -134,79 +135,87 @@ pub trait SqlQueries {
     ///
     /// 4chan inserts a backslash in their md5.
     /// https://stackoverflow.com/a/11449627
-    async fn update_thread(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                           board: YotsubaBoard, item: &[u8])
-                           -> Result<u64>;
+    async fn update_thread(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<u64>;
 
     /// Marks a post as deleted
-    async fn delete(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                    board: YotsubaBoard, no: u32);
+    async fn delete(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard, no: u32
+    );
 
     // deleted before updating. PgSQL needs to do this >_>..
     /// Compares between the thread in db and the one fetched and marks any
     /// posts missing in the fetched thread as deleted
-    async fn update_deleteds(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                             board: YotsubaBoard, thread: u32, item: &[u8])
-                             -> Result<u64>;
+    async fn update_deleteds(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+        thread: u32, item: &[u8]
+    ) -> Result<u64>;
 
     /// Upserts a media hash to a post
-    async fn update_hash(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement,
-                         hashsum: Vec<u8>);
+    async fn update_hash(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+        no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
+    );
 
     /// Gets the list of posts in a thread that have media
-    async fn medias(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                    board: YotsubaBoard, no: u32)
-                    -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>;
+    async fn medias(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard, no: u32
+    ) -> Result<Vec<tokio_postgres::row::Row>, tokio_postgres::error::Error>;
 
     /// Gets a list of threads from the corresponding endpoint
-    async fn threads(&self, statement: &StatementStore, endpoint: YotsubaEndpoint,
-                     board: YotsubaBoard, item: &[u8])
-                     -> Result<VecDeque<u32>>;
+    async fn threads(
+        &self, statement: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+        item: &[u8]
+    ) -> Result<VecDeque<u32>>;
 
     /// Gets only the deleted and modified threads when comparing the metadata
     /// and the fetched endpoint
-    async fn threads_modified(&self, board: YotsubaBoard, new_threads: &[u8],
-                              statement: &Statement)
-                              -> Result<VecDeque<u32>>;
+    async fn threads_modified(
+        &self, board: YotsubaBoard, new_threads: &[u8], statement: &Statement
+    ) -> Result<VecDeque<u32>>;
 
     /// Gets the list of threads from the one in the metadata + the fetched one
-    async fn threads_combined(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                              board: YotsubaBoard, new_threads: &[u8])
-                              -> Result<VecDeque<u32>>;
+    async fn threads_combined(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+        new_threads: &[u8]
+    ) -> Result<VecDeque<u32>>;
 
     /// Checks for the existence of an endpoint in the metadata
-    async fn metadata(&self, statements: &StatementStore, endpoint: YotsubaEndpoint,
-                      board: YotsubaBoard)
-                      -> bool;
+    async fn metadata(
+        &self, statements: &StatementStore, endpoint: YotsubaEndpoint, board: YotsubaBoard
+    ) -> bool;
 }
 
 /// List of all SQL queries to use
 pub trait SchemaTrait: Sync + Send {
     fn init_schema(&self, schema: &str) -> String;
     fn init_metadata(&self) -> String;
-    fn delete(&self, schema: &str, board: YotsubaBoard) -> String;
-    fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String;
-    fn update_hash(&self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement)
-                   -> String;
-    fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;
+    fn init_type(&self) -> String;
+    fn init_views(&self, board: YotsubaBoard) -> String;
+    fn delete(&self, board: YotsubaBoard) -> String;
+    fn update_deleteds(&self, board: YotsubaBoard) -> String;
+    fn update_hash(
+        &self, board: YotsubaBoard, hash_type: YotsubaHash, media_mode: YotsubaStatement
+    ) -> String;
+    fn update_metadata(&self, column: YotsubaEndpoint) -> String;
     fn medias(&self, board: YotsubaBoard, media_mode: YotsubaStatement) -> String;
-    fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String;
+    fn threads_modified(&self, endpoint: YotsubaEndpoint) -> String;
     fn threads(&self) -> String;
-    fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;
-    fn threads_combined(&self, schema: &str, board: YotsubaBoard, endpoint: YotsubaEndpoint)
-                        -> String;
-    fn init_board(&self, board: YotsubaBoard, schema: &str) -> String;
-    fn init_type(&self, schema: &str) -> String;
-    fn init_views(&self, schema: &str, board: YotsubaBoard) -> String;
-    fn update_thread(&self, schema: &str, board: YotsubaBoard) -> String;
+    fn metadata(&self, column: YotsubaEndpoint) -> String;
+    fn threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String;
+    fn init_board(&self, board: YotsubaBoard) -> String;
+    fn update_thread(&self, board: YotsubaBoard) -> String;
 }
 
 /// A wrapper to contain all SQL queries. Modularity with schema and databases.
 #[derive(Debug, Copy, Clone)]
 pub struct YotsubaSchema<T: SchemaTrait>(T);
 
-impl<T> YotsubaSchema<T> where T: SchemaTrait {
+impl<T> YotsubaSchema<T>
+where T: SchemaTrait
+{
     pub fn new(x: T) -> Self {
         Self(x)
     }
@@ -214,7 +223,9 @@ impl<T> YotsubaSchema<T> where T: SchemaTrait {
 
 /// Defining Our Own Smart Pointer by Implementing the Deref Trait
 /// https://is.gd/62jW5Z
-impl<T> std::ops::Deref for YotsubaSchema<T> where T: SchemaTrait {
+impl<T> std::ops::Deref for YotsubaSchema<T>
+where T: SchemaTrait
+{
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -249,13 +260,17 @@ impl DatabaseTrait for mysql_async::Pool {}
 #[derive(Debug, Copy, Clone)]
 pub struct YotsubaDatabase<T: DatabaseTrait>(pub T);
 
-impl<T> YotsubaDatabase<T> where T: DatabaseTrait {
+impl<T> YotsubaDatabase<T>
+where T: DatabaseTrait
+{
     pub fn new(x: T) -> Self {
         Self(x)
     }
 }
 
-impl<T> std::ops::Deref for YotsubaDatabase<T> where T: DatabaseTrait {
+impl<T> std::ops::Deref for YotsubaDatabase<T>
+where T: DatabaseTrait
+{
     type Target = T;
 
     fn deref(&self) -> &T {

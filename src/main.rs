@@ -11,19 +11,25 @@ mod pgsql;
 mod request;
 mod sql;
 
-use crate::{config::{BoardSettings, Config},
-            enums::*,
-            request::*,
-            sql::*};
+use crate::{
+    config::{BoardSettings, Config},
+    enums::*,
+    request::*,
+    sql::*
+};
 
-use std::{collections::{HashMap, VecDeque},
-          convert::TryFrom,
-          path::Path,
-          process::exit,
-          sync::{atomic::AtomicBool, Arc}};
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryFrom,
+    path::Path,
+    process::exit,
+    sync::{atomic::AtomicBool, Arc}
+};
 
-use tokio::{runtime::Builder,
-            time::{delay_for as sleep, Duration}};
+use tokio::{
+    runtime::Builder,
+    time::{delay_for as sleep, Duration}
+};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Local;
@@ -34,14 +40,17 @@ use log::*;
 use mysql_async::prelude::*;
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
-use tokio::sync::{mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-                  Semaphore};
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    Semaphore
+};
 fn main() {
-    std::env::args().nth(1)
-                    .filter(|arg| matches!(arg.as_str(), "-v" | "--version"))
-                    .map(|_| {config::display_full_version(); exit(0)});
+    std::env::args().nth(1).filter(|arg| matches!(arg.as_str(), "-v" | "--version")).map(|_| {
+        config::display_full_version();
+        exit(0)
+    });
     println!(
-             r#"
+        r#"
     ⣿⠟⣽⣿⣿⣿⣿⣿⢣⠟⠋⡜⠄⢸⣿⣿⡟⣬⢁⠠⠁⣤⠄⢰⠄⠇⢻⢸
     ⢏⣾⣿⣿⣿⠿⣟⢁⡴⡀⡜⣠⣶⢸⣿⣿⢃⡇⠂⢁⣶⣦⣅⠈⠇⠄⢸⢸
     ⣹⣿⣿⣿⡗⣾⡟⡜⣵⠃⣴⣿⣿⢸⣿⣿⢸⠘⢰⣿⣿⣿⣿⡀⢱⠄⠨⢸       ____
@@ -57,7 +66,7 @@ fn main() {
     ⣿⢰⣿⢹⢸⣿⣿⣿⣷⣝⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠉⠄⠄⣸⢰⡇
     ⣿⣾⣹⣏⢸⣿⣿⣿⣿⣿⣷⣍⡻⣛⣛⣛⡉⠁⠄⠄⠄⠄⠄⠄⢀⢇⡏⠄
     "#,
-             config::version()
+        config::version()
     );
 
     let start_time = Local::now();
@@ -65,20 +74,22 @@ fn main() {
 
     match Builder::new().enable_all().threaded_scheduler().build() {
         Ok(mut runtime) => runtime.block_on(async {
-                                      if let Err(e) = async_main().await {
-                                          error!("{}", e);
-                                      }
-                                  }),
+            if let Err(e) = async_main().await {
+                error!("{}", e);
+            }
+        }),
         Err(e) => error!("{}", e)
     }
 
-    info!("\nStarted on:\t{}\nFinished on:\t{}",
-          start_time.to_rfc2822(),
-          Local::now().to_rfc2822());
+    info!(
+        "\nStarted on:\t{}\nFinished on:\t{}",
+        start_time.to_rfc2822(),
+        Local::now().to_rfc2822()
+    );
 }
 
 #[allow(unused_mut)]
-async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
+async fn async_main() -> Result<u64> {
     let (config, conn_url) = config::read_config("ena_config.json");
 
     // Find duplicate boards
@@ -145,7 +156,7 @@ async fn async_main() -> Result<u64, tokio_postgres::error::Error> {
     let archiver = YotsubaArchiver::new(http_client, db_client, config, ss).await;
     archiver.listen_to_exit();
     archiver.query.init_schema(&archiver.config.settings.schema).await;
-    archiver.query.init_type(&archiver.config.settings.schema).await?;
+    archiver.query.init_type().await;
     archiver.query.init_metadata().await;
     // let q = archiver.query.query("SELECT * FROM pg_type WHERE typname =
     // 'schema_4chan';", &[]).await.unwrap(); for z in q.iter() {
@@ -168,48 +179,58 @@ pub struct YotsubaArchiver<H: request::HttpClient, S: sql::SchemaTrait> {
     finished: Arc<AtomicBool>
 }
 impl<H, S> YotsubaArchiver<H, S>
-    where H: request::HttpClient,
-          S: sql::SchemaTrait
+where
+    H: request::HttpClient,
+    S: sql::SchemaTrait
 {
-    async fn new(http_client: H, db_client: tokio_postgres::Client, config: Config, _sql: S)
-                 -> Self {
-        Self { client: YotsubaHttpClient::new(http_client),
-               query: db_client,
-               config,
-               sql: sql::YotsubaSchema::new(_sql),
-               finished: Arc::new(AtomicBool::new(false)) }
+    async fn new(
+        http_client: H, db_client: tokio_postgres::Client, config: Config, _sql: S
+    ) -> Self {
+        Self {
+            client: YotsubaHttpClient::new(http_client),
+            query: db_client,
+            config,
+            sql: sql::YotsubaSchema::new(_sql),
+            finished: Arc::new(AtomicBool::new(false))
+        }
     }
 
     async fn run(&self) {
         let mut fut = FuturesUnordered::new();
         let semaphore = Arc::new(Semaphore::new(1));
         let (tx, rx) = unbounded_channel::<(BoardSettings, StatementStore, u32)>();
-        fut.push(self.compute(YotsubaEndpoint::Media,
-                              &self.config.board_settings,
-                              Some(&self.config),
-                              semaphore.clone(),
-                              None,
-                              Some(rx)));
+        fut.push(self.compute(
+            YotsubaEndpoint::Media,
+            &self.config.board_settings,
+            Some(&self.config),
+            semaphore.clone(),
+            None,
+            Some(rx)
+        ));
 
         for board in self.config.boards.iter() {
-            self.query.init_board(board.board, &self.config.settings.schema).await;
-            self.query.init_views(board.board, &self.config.settings.schema).await;
+            self.query.init_board(board.board).await;
+            self.query.init_views(board.board).await;
 
             if board.download_archives {
-                fut.push(self.compute(YotsubaEndpoint::Archive,
-                                      board,
-                                      None,
-                                      semaphore.clone(),
-                                      Some(tx.clone()),
-                                      None));
+                fut.push(self.compute(
+                    YotsubaEndpoint::Archive,
+                    board,
+                    None,
+                    semaphore.clone(),
+                    Some(tx.clone()),
+                    None
+                ));
             }
 
-            fut.push(self.compute(YotsubaEndpoint::Threads,
-                                  board,
-                                  None,
-                                  semaphore.clone(),
-                                  Some(tx.clone()),
-                                  None));
+            fut.push(self.compute(
+                YotsubaEndpoint::Threads,
+                board,
+                None,
+                semaphore.clone(),
+                Some(tx.clone()),
+                None
+            ));
         }
 
         while let Some(_) = fut.next().await {}
@@ -227,135 +248,130 @@ impl<H, S> YotsubaArchiver<H, S>
         let finished_clone = Arc::clone(&self.finished);
         ctrlc::set_handler(move || {
             finished_clone.compare_and_swap(false, true, Ordering::Relaxed);
-        }).expect("Error setting Ctrl-C handler");
+        })
+        .expect("Error setting Ctrl-C handler");
     }
 
-    async fn create_statements(&self, endpoint: YotsubaEndpoint, board: YotsubaBoard,
-                               media_mode: YotsubaStatement)
-                               -> StatementStore
-    {
+    async fn create_statements(
+        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, media_mode: YotsubaStatement
+    ) -> StatementStore {
         let mut statement_store: StatementStore = HashMap::new();
         let statements: Vec<_> = YotsubaStatement::into_enum_iter().collect();
         if endpoint == YotsubaEndpoint::Media {
-            statement_store.insert(YotsubaIdentifier { endpoint,
-                                                       board,
-                                                       statement: YotsubaStatement::Medias },
-                                   self.query
-                                       .prepare(self.sql.medias(board, media_mode).as_str())
-                                       .await
-                                       .unwrap());
+            statement_store.insert(
+                YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias },
+                self.query.prepare(self.sql.medias(board, media_mode).as_str()).await.unwrap()
+            );
 
-            statement_store.insert(YotsubaIdentifier { endpoint,
-                                                       board,
-                                                       statement:
-                                                           YotsubaStatement::UpdateHashMedia },
-                                   self.query
-                                       .prepare(self.sql
-                                                    .update_hash(board,
-                                                                 YotsubaHash::Sha256,
-                                                                 YotsubaStatement::UpdateHashMedia)
-                                                    .as_str())
-                                       .await
-                                       .unwrap());
-            statement_store.insert(YotsubaIdentifier { endpoint,
-                                                       board,
-                                                       statement:
-                                                           YotsubaStatement::UpdateHashThumbs },
-                                   self.query
-                                       .prepare(self.sql
-                                                    .update_hash(board,
-                                                                 YotsubaHash::Sha256,
-                                                                 YotsubaStatement::UpdateHashThumbs)
-                                                    .as_str())
-                                       .await
-                                       .unwrap());
+            statement_store.insert(
+                YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateHashMedia },
+                self.query
+                    .prepare(
+                        self.sql
+                            .update_hash(
+                                board,
+                                YotsubaHash::Sha256,
+                                YotsubaStatement::UpdateHashMedia
+                            )
+                            .as_str()
+                    )
+                    .await
+                    .unwrap()
+            );
+            statement_store.insert(
+                YotsubaIdentifier {
+                    endpoint,
+                    board,
+                    statement: YotsubaStatement::UpdateHashThumbs
+                },
+                self.query
+                    .prepare(
+                        self.sql
+                            .update_hash(
+                                board,
+                                YotsubaHash::Sha256,
+                                YotsubaStatement::UpdateHashThumbs
+                            )
+                            .as_str()
+                    )
+                    .await
+                    .unwrap()
+            );
             return statement_store;
         }
         for statement in statements {
-            statement_store.insert(YotsubaIdentifier { endpoint, board, statement },
-                                   match statement {
-                                       YotsubaStatement::UpdateMetadata =>
-                                           self.query
-                                               .prepare(self.sql
-                                                            .update_metadata(self.schema(),
-                                                                             endpoint)
-                                                            .as_str())
-                                               .await
-                                               .unwrap(),
-                                       YotsubaStatement::UpdateThread =>
-                                           self.query
-                                               .prepare(self.sql
-                                                            .update_thread(self.schema(), board)
-                                                            .as_str())
-                                               .await
-                                               .unwrap(),
-                                       YotsubaStatement::Delete =>
-                                           self.query
-                                               .prepare(self.sql
-                                                            .delete(self.schema(), board)
-                                                            .as_str())
-                                               .await
-                                               .unwrap(),
-                                       YotsubaStatement::UpdateDeleteds =>
-                                           self.query
-                                               .prepare(self.sql
-                                                            .update_deleteds(self.schema(), board)
-                                                            .as_str())
-                                               .await
-                                               .unwrap(),
-                                       YotsubaStatement::UpdateHashMedia => self.query
-                                       .prepare(self.sql
-                                                    .update_hash(board, YotsubaHash::Sha256, YotsubaStatement::UpdateHashMedia)
-                                                    .as_str())
-                                       .await
-                                       .unwrap(),
-                                       YotsubaStatement::UpdateHashThumbs => self.query
-                                       .prepare(self.sql
-                                                    .update_hash(board, YotsubaHash::Sha256, YotsubaStatement::UpdateHashThumbs)
-                                                    .as_str())
-                                       .await
-                                       .unwrap(),
-                                       YotsubaStatement::Medias =>
-                                           self.query
-                                               .prepare(self.sql.medias(board, YotsubaStatement::Medias).as_str())
-                                               .await
-                                               .unwrap(),
-                                       YotsubaStatement::Threads =>
-                                           self.query.prepare(self.sql.threads().as_str()).await.unwrap(),
-                                       YotsubaStatement::ThreadsModified =>
-                                           self.query
-                                               .prepare(self.sql
-                                                            .threads_modified(self.schema(),
-                                                                              endpoint)
-                                                            .as_str())
-                                               .await
-                                               .unwrap(),
-                                       YotsubaStatement::ThreadsCombined =>
-                                           self.query
-                                               .prepare(self.sql
-                                                            .threads_combined(self.schema(),
-                                                                              board,
-                                                                              endpoint)
-                                                            .as_str())
-                                               .await
-                                               .unwrap(),
-                                       YotsubaStatement::Metadata =>
-                                           self.query
-                                               .prepare(self.sql
-                                                            .metadata(self.schema(), endpoint)
-                                                            .as_str())
-                                               .await
-                                               .unwrap(),
-                                   });
+            statement_store.insert(
+                YotsubaIdentifier { endpoint, board, statement },
+                match statement {
+                    YotsubaStatement::UpdateMetadata => self
+                        .query
+                        .prepare(self.sql.update_metadata(endpoint).as_str())
+                        .await
+                        .unwrap(),
+                    YotsubaStatement::UpdateThread =>
+                        self.query.prepare(self.sql.update_thread(board).as_str()).await.unwrap(),
+                    YotsubaStatement::Delete =>
+                        self.query.prepare(self.sql.delete(board).as_str()).await.unwrap(),
+                    YotsubaStatement::UpdateDeleteds =>
+                        self.query.prepare(self.sql.update_deleteds(board).as_str()).await.unwrap(),
+                    YotsubaStatement::UpdateHashMedia => self
+                        .query
+                        .prepare(
+                            self.sql
+                                .update_hash(
+                                    board,
+                                    YotsubaHash::Sha256,
+                                    YotsubaStatement::UpdateHashMedia
+                                )
+                                .as_str()
+                        )
+                        .await
+                        .unwrap(),
+                    YotsubaStatement::UpdateHashThumbs => self
+                        .query
+                        .prepare(
+                            self.sql
+                                .update_hash(
+                                    board,
+                                    YotsubaHash::Sha256,
+                                    YotsubaStatement::UpdateHashThumbs
+                                )
+                                .as_str()
+                        )
+                        .await
+                        .unwrap(),
+                    YotsubaStatement::Medias => self
+                        .query
+                        .prepare(self.sql.medias(board, YotsubaStatement::Medias).as_str())
+                        .await
+                        .unwrap(),
+                    YotsubaStatement::Threads =>
+                        self.query.prepare(self.sql.threads().as_str()).await.unwrap(),
+                    YotsubaStatement::ThreadsModified => self
+                        .query
+                        .prepare(self.sql.threads_modified(endpoint).as_str())
+                        .await
+                        .unwrap(),
+                    YotsubaStatement::ThreadsCombined => self
+                        .query
+                        .prepare(self.sql.threads_combined(board, endpoint).as_str())
+                        .await
+                        .unwrap(),
+                    YotsubaStatement::Metadata =>
+                        self.query.prepare(self.sql.metadata(endpoint).as_str()).await.unwrap(),
+                }
+            );
         }
         statement_store
     }
 
     #[allow(unused_mut)]
-    async fn compute(&self, endpoint: YotsubaEndpoint, info: &BoardSettings,
-                     config: Option<&Config>, semaphore: Arc<Semaphore>,
-                     tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
-                     rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>)
+    async fn compute(
+        &self, endpoint: YotsubaEndpoint, info: &BoardSettings, config: Option<&Config>,
+        semaphore: Arc<Semaphore>,
+        tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
+        rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>
+    )
     {
         match endpoint {
             YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
@@ -374,7 +390,7 @@ impl<H, S> YotsubaArchiver<H, S>
                     // Sequential to prevent client congestion and errors
                     while let Ok(received) = r.try_recv() {
                         if self.finished.load(Ordering::Relaxed)
-                           && downloading == YotsubaEndpoint::Media
+                            && downloading == YotsubaEndpoint::Media
                         {
                             info!("({})\tStopping media fetching...", endpoint);
                             downloading = YotsubaEndpoint::Threads;
@@ -399,12 +415,12 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     /// Downloads the endpoint threads
-    async fn get_generic_thread(&self, endpoint: YotsubaEndpoint, bs: &BoardSettings,
-                                last_modified: &mut String,
-                                fetched_threads: &mut Option<Vec<u8>>,
-                                local_threads_list: &mut VecDeque<u32>, init: &mut bool,
-                                update_metadata: &mut bool, has_archives: &mut bool,
-                                statements: &StatementStore)
+    async fn get_generic_thread(
+        &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, last_modified: &mut String,
+        fetched_threads: &mut Option<Vec<u8>>, local_threads_list: &mut VecDeque<u32>,
+        init: &mut bool, update_metadata: &mut bool, has_archives: &mut bool,
+        statements: &StatementStore
+    )
     {
         if endpoint == YotsubaEndpoint::Archive && !*has_archives {
             return;
@@ -412,18 +428,25 @@ impl<H, S> YotsubaArchiver<H, S>
 
         let current_board = bs.board;
         for retry_attempt in 0..(bs.retry_attempts + 1) {
-            match self.client
-                      .get(&format!("{domain}/{board}/{endpoint}.json",
-                                    domain = &self.config.settings.api_url,
-                                    board = current_board,
-                                    endpoint = endpoint),
-                           Some(last_modified))
-                      .await
+            match self
+                .client
+                .get(
+                    &format!(
+                        "{domain}/{board}/{endpoint}.json",
+                        domain = &self.config.settings.api_url,
+                        board = current_board,
+                        endpoint = endpoint
+                    ),
+                    Some(last_modified)
+                )
+                .await
             {
                 Ok((last_modified_new, status, body)) => {
                     if last_modified_new.is_empty() {
-                        error!("({})\t/{}/\t\t<{}> An error has occurred getting the last_modified date",
-                               endpoint, current_board, status);
+                        error!(
+                            "({})\t/{}/\t\t<{}> An error has occurred getting the last_modified date",
+                            endpoint, current_board, status
+                        );
                     } else if *last_modified != last_modified_new {
                         last_modified.clear();
                         last_modified.push_str(&last_modified_new);
@@ -432,16 +455,18 @@ impl<H, S> YotsubaArchiver<H, S>
                         StatusCode::NOT_MODIFIED =>
                             info!("({})\t/{}/\t\t<{}>", endpoint, current_board, status),
                         StatusCode::NOT_FOUND => {
-                            error!("({})\t/{}/\t\t<{}> No {} found! {}",
-                                   endpoint,
-                                   current_board,
-                                   status,
-                                   endpoint,
-                                   if retry_attempt == 0 {
-                                       "".into()
-                                   } else {
-                                       format!("Attempt: #{}", retry_attempt)
-                                   });
+                            error!(
+                                "({})\t/{}/\t\t<{}> No {} found! {}",
+                                endpoint,
+                                current_board,
+                                status,
+                                endpoint,
+                                if retry_attempt == 0 {
+                                    "".into()
+                                } else {
+                                    format!("Attempt: #{}", retry_attempt)
+                                }
+                            );
                             sleep(Duration::from_secs(1)).await;
                             if endpoint == YotsubaEndpoint::Archive {
                                 *has_archives = false;
@@ -450,11 +475,15 @@ impl<H, S> YotsubaArchiver<H, S>
                         }
                         StatusCode::OK => {
                             if body.is_empty() {
-                                error!("({})\t/{}/\t\t<{}> Fetched threads was found to be empty!",
-                                       endpoint, current_board, status);
+                                error!(
+                                    "({})\t/{}/\t\t<{}> Fetched threads was found to be empty!",
+                                    endpoint, current_board, status
+                                );
                             } else {
-                                info!("({})\t/{}/\t\tReceived new threads",
-                                      endpoint, current_board);
+                                info!(
+                                    "({})\t/{}/\t\tReceived new threads",
+                                    endpoint, current_board
+                                );
                                 *fetched_threads = Some(body.to_owned());
 
                                 // Check if there's an entry in the metadata
@@ -472,23 +501,28 @@ impl<H, S> YotsubaArchiver<H, S>
                                     // if *init && (!ena_resume || (ena_resume && endpoint ==
                                     // YotsubaEndpoint::Archive))
                                     if *init
-                                       && (endpoint == YotsubaEndpoint::Archive || !ena_resume)
+                                        && (endpoint == YotsubaEndpoint::Archive || !ena_resume)
                                     {
                                         // going here means the program was restarted
                                         // use combination of ALL threads from cache + new threads,
                                         // getting a total of 150+ threads
                                         // (excluding archived, deleted, and duplicate threads)
-                                        if let Ok(mut list) = self.query
-                                                                  .threads_combined(&statements,
-                                                                                    endpoint,
-                                                                                    current_board,
-                                                                                    &body)
-                                                                  .await
+                                        if let Ok(mut list) = self
+                                            .query
+                                            .threads_combined(
+                                                &statements,
+                                                endpoint,
+                                                current_board,
+                                                &body
+                                            )
+                                            .await
                                         {
                                             local_threads_list.append(&mut list);
                                         } else {
-                                            info!("({})\t/{}/\t\tSeems like there was no modified threads at startup..",
-                                                  endpoint, current_board);
+                                            info!(
+                                                "({})\t/{}/\t\tSeems like there was no modified threads at startup..",
+                                                endpoint, current_board
+                                            );
                                         }
 
                                         // update base at the end
@@ -500,23 +534,27 @@ impl<H, S> YotsubaArchiver<H, S>
                                         // ONLY get the new/modified/deleted threads
                                         // Compare time modified and get the new threads
                                         let id = YotsubaIdentifier {
-                                            endpoint: endpoint,
+                                            endpoint,
                                             board: current_board,
                                             statement: YotsubaStatement::ThreadsModified
                                         };
                                         match &statements.get(&id) {
                                             Some(statement_recieved) => {
-                                                if let Ok(mut list) =
-                                                    self.query
-                                                        .threads_modified(current_board,
-                                                                          &body,
-                                                                          statement_recieved)
-                                                        .await
+                                                if let Ok(mut list) = self
+                                                    .query
+                                                    .threads_modified(
+                                                        current_board,
+                                                        &body,
+                                                        statement_recieved
+                                                    )
+                                                    .await
                                                 {
                                                     local_threads_list.append(&mut list);
                                                 } else {
-                                                    info!("({})\t/{}/\t\tSeems like there was no modified threads..",
-                                                          endpoint, current_board)
+                                                    info!(
+                                                        "({})\t/{}/\t\tSeems like there was no modified threads..",
+                                                        endpoint, current_board
+                                                    )
                                                 }
                                             }
                                             None =>
@@ -529,12 +567,15 @@ impl<H, S> YotsubaArchiver<H, S>
                                     }
                                 } else {
                                     // No cache found, use fetched_threads
-                                    if let Err(e) = self.query
-                                                        .update_metadata(&statements,
-                                                                         endpoint,
-                                                                         current_board,
-                                                                         &body)
-                                                        .await
+                                    if let Err(e) = self
+                                        .query
+                                        .update_metadata(
+                                            &statements,
+                                            endpoint,
+                                            current_board,
+                                            &body
+                                        )
+                                        .await
                                     {
                                         error!("Error running update_metadata function! {}", e)
                                     }
@@ -542,35 +583,38 @@ impl<H, S> YotsubaArchiver<H, S>
                                     *init = false;
 
                                     match if endpoint == YotsubaEndpoint::Threads {
-                                              self.query
-                                                  .threads(&statements,
-                                                           endpoint,
-                                                           current_board,
-                                                           &body)
-                                                  .await
-                                          } else {
-                                              // Converting to anyhow
-                                              match serde_json::from_slice::<VecDeque<u32>>(&body) {
-                                                  Ok(t) => Ok(t),
-                                                  Err(e) =>
-                                                      Err(anyhow!("Error converting body to VecDeque for query.threads() {}",
-                                                                  e)),
-                                              }
-                                          } {
+                                        self.query
+                                            .threads(&statements, endpoint, current_board, &body)
+                                            .await
+                                    } else {
+                                        // Converting to anyhow
+                                        match serde_json::from_slice::<VecDeque<u32>>(&body) {
+                                            Ok(t) => Ok(t),
+                                            Err(e) => Err(anyhow!(
+                                                "Error converting body to VecDeque for query.threads() {}",
+                                                e
+                                            ))
+                                        }
+                                    } {
                                         Ok(mut list) => local_threads_list.append(&mut list),
-                                        Err(e) =>
-                                            warn!("({})\t/{}/\t\tSeems like there was no modified threads in the beginning?.. {}",
-                                                  endpoint, current_board, e),
+                                        Err(e) => warn!(
+                                            "({})\t/{}/\t\tSeems like there was no modified threads in the beginning?.. {}",
+                                            endpoint, current_board, e
+                                        )
                                     }
                                 }
                             }
                         }
-                        _ => error!("({})\t/{}/\t\t<{}> An unforeseen event has occurred!",
-                                    endpoint, current_board, status)
+                        _ => error!(
+                            "({})\t/{}/\t\t<{}> An unforeseen event has occurred!",
+                            endpoint, current_board, status
+                        )
                     };
                 }
-                Err(e) => error!("({})\t/{}/\t\tFetching {}.json: {}",
-                                 endpoint, current_board, endpoint, e)
+                Err(e) => error!(
+                    "({})\t/{}/\t\tFetching {}.json: {}",
+                    endpoint, current_board, endpoint, e
+                )
             }
             if endpoint == YotsubaEndpoint::Archive {
                 *has_archives = true;
@@ -580,11 +624,11 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     /// Manages a single board
-    async fn fetch_board(&self, endpoint: YotsubaEndpoint, bs: &BoardSettings,
-                         semaphore: Arc<Semaphore>,
-                         tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
-                         rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>)
-                         -> Option<()>
+    async fn fetch_board(
+        &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, semaphore: Arc<Semaphore>,
+        tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
+        rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>
+    ) -> Option<()>
     {
         let current_board = bs.board;
         let mut threads_last_modified = String::new();
@@ -638,22 +682,26 @@ impl<H, S> YotsubaArchiver<H, S>
             // Download threads.json / archive.json
             let mut fetched_threads: Option<Vec<u8>> = None;
             let now_endpoint = tokio::time::Instant::now();
-            self.get_generic_thread(endpoint,
-                                    &bs,
-                                    &mut threads_last_modified,
-                                    &mut fetched_threads,
-                                    &mut local_threads_list,
-                                    &mut init,
-                                    &mut update_metadata,
-                                    &mut has_archives,
-                                    &statements)
-                .await;
+            self.get_generic_thread(
+                endpoint,
+                &bs,
+                &mut threads_last_modified,
+                &mut fetched_threads,
+                &mut local_threads_list,
+                &mut init,
+                &mut update_metadata,
+                &mut has_archives,
+                &statements
+            )
+            .await;
 
             // Display length of new fetched threads
             let threads_len = local_threads_list.len();
             if threads_len > 0 {
-                info!("({})\t/{}/\t\tTotal new/modified threads: {}",
-                      endpoint, current_board, threads_len);
+                info!(
+                    "({})\t/{}/\t\tTotal new/modified threads: {}",
+                    endpoint, current_board, threads_len
+                );
                 ratelimit = original_ratelimit.clone();
 
                 // Ratelimit after fetching endpoint
@@ -728,25 +776,33 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     // Download a single thread and its media
-    async fn assign_to_thread(&self, board_settings: &BoardSettings, endpoint: YotsubaEndpoint,
-                              thread: u32, position: u32, length: usize,
-                              statements: &StatementStore)
+    async fn assign_to_thread(
+        &self, board_settings: &BoardSettings, endpoint: YotsubaEndpoint, thread: u32,
+        position: u32, length: usize, statements: &StatementStore
+    )
     {
         let board = board_settings.board;
         for _ in 0..(board_settings.retry_attempts + 1) {
-            match self.client
-                      .get(&format!("{domain}/{board}/thread/{no}.json",
-                                    domain = &self.config.settings.api_url,
-                                    board = board,
-                                    no = thread),
-                           None)
-                      .await
+            match self
+                .client
+                .get(
+                    &format!(
+                        "{domain}/{board}/thread/{no}.json",
+                        domain = &self.config.settings.api_url,
+                        board = board,
+                        no = thread
+                    ),
+                    None
+                )
+                .await
             {
                 Ok((_, status, body)) => match status {
                     StatusCode::OK =>
                         if body.is_empty() {
-                            error!("({})\t/{}/{}\t<{}> Body was found to be empty!",
-                                   endpoint, board, thread, status);
+                            error!(
+                                "({})\t/{}/{}\t<{}> Body was found to be empty!",
+                                endpoint, board, thread, status
+                            );
                             sleep(Duration::from_secs(1)).await;
                         } else {
                             if let Err(e) =
@@ -754,20 +810,25 @@ impl<H, S> YotsubaArchiver<H, S>
                             {
                                 error!("Error executing update_thread function! {}", e);
                             }
-                            match self.query
-                                      .update_deleteds(statements, endpoint, board, thread, &body)
-                                      .await
+                            match self
+                                .query
+                                .update_deleteds(statements, endpoint, board, thread, &body)
+                                .await
                             {
-                                Ok(_) => info!("({})\t/{}/{}\t[{}/{}]",
-                                               endpoint, board, thread, position, length),
+                                Ok(_) => info!(
+                                    "({})\t/{}/{}\t[{}/{}]",
+                                    endpoint, board, thread, position, length
+                                ),
                                 Err(e) => error!("Error running update_deleteds function! {}", e)
                             }
                             break;
                         },
                     StatusCode::NOT_FOUND => {
                         self.query.delete(statements, endpoint, board, thread).await;
-                        warn!("({})\t/{}/{}\t[{}/{}] <DELETED>",
-                              endpoint, board, thread, position, length);
+                        warn!(
+                            "({})\t/{}/{}\t[{}/{}] <DELETED>",
+                            endpoint, board, thread, position, length
+                        );
                         break;
                     }
                     _e => {}
@@ -781,8 +842,10 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     /// FETCH MEDIA
-    async fn fetch_media(&self, info: &BoardSettings, statements: &StatementStore,
-                         endpoint: YotsubaEndpoint, no: u32)
+    async fn fetch_media(
+        &self, info: &BoardSettings, statements: &StatementStore, endpoint: YotsubaEndpoint,
+        no: u32
+    )
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
@@ -860,16 +923,18 @@ impl<H, S> YotsubaArchiver<H, S>
                                     // );
 
                                     self.query
-                                        .update_hash(statements,
-                                                     endpoint,
-                                                     info.board,
-                                                     no,
-                                                     if thumb {
-                                                         YotsubaStatement::UpdateHashThumbs
-                                                     } else {
-                                                         YotsubaStatement::UpdateHashMedia
-                                                     },
-                                                     hsum)
+                                        .update_hash(
+                                            statements,
+                                            endpoint,
+                                            info.board,
+                                            no,
+                                            if thumb {
+                                                YotsubaStatement::UpdateHashThumbs
+                                            } else {
+                                                YotsubaStatement::UpdateHashMedia
+                                            },
+                                            hsum
+                                        )
                                         .await;
                                 }
                             // This is usually due to 404. We are already notified of that.
@@ -888,10 +953,9 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     // Downloads any missing media from a thread
-    async fn dl_media_post2(&self, row: &tokio_postgres::row::Row, info: &BoardSettings,
-                            thumb: bool)
-                            -> Option<(u64, Option<Vec<u8>>, bool)>
-    {
+    async fn dl_media_post2(
+        &self, row: &tokio_postgres::row::Row, info: &BoardSettings, thumb: bool
+    ) -> Option<(u64, Option<Vec<u8>>, bool)> {
         let no: i64 = row.get("no");
         let tim: i64 = row.get("tim");
         let ext: String = row.get("ext");
@@ -903,28 +967,34 @@ impl<H, S> YotsubaArchiver<H, S>
         let domain = &self.config.settings.media_url;
         let board = &info.board;
 
-        let url = format!("{}/{}/{}{}{}",
-                          domain,
-                          board,
-                          tim,
-                          if thumb { "s" } else { "" },
-                          if thumb { ".jpg" } else { &ext });
+        let url = format!(
+            "{}/{}/{}{}{}",
+            domain,
+            board,
+            tim,
+            if thumb { "s" } else { "" },
+            if thumb { ".jpg" } else { &ext }
+        );
         // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
         for ra in 0..(info.retry_attempts + 1) {
             match self.client.get(&url, None).await {
                 Err(e) => {
-                    error!("(media)\t/{}/{}\tFetching media: {} {}",
-                           board,
-                           thread,
-                           e,
-                           if ra > 0 { format!("Attempt #{}", ra) } else { "".into() });
+                    error!(
+                        "(media)\t/{}/{}\tFetching media: {} {}",
+                        board,
+                        thread,
+                        e,
+                        if ra > 0 { format!("Attempt #{}", ra) } else { "".into() }
+                    );
                     sleep(Duration::from_secs(1)).await;
                 }
                 Ok((_, status, body)) => match status {
                     StatusCode::OK => {
                         if body.is_empty() {
-                            error!("(media)\t/{}/{}\t<{}> Body was found to be empty!",
-                                   board, thread, status);
+                            error!(
+                                "(media)\t/{}/{}\t<{}> Body was found to be empty!",
+                                board, thread, status
+                            );
                             sleep(Duration::from_secs(1)).await;
                         } else {
                             // info!("(some)\t/{}/{}#{}\t HASHING", board, thread, no);
@@ -946,11 +1016,11 @@ impl<H, S> YotsubaArchiver<H, S>
                                         // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
                                         // /1/0a
                                         let hash_str = &format!("{:x}", hash_bytes); // &hash_text[2..];
-                                        let basename =
-                                            Path::new(&hash_str).file_stem()
-                                                                .expect("err get basename")
-                                                                .to_str()
-                                                                .expect("err get basename end");
+                                        let basename = Path::new(&hash_str)
+                                            .file_stem()
+                                            .expect("err get basename")
+                                            .to_str()
+                                            .expect("err get basename end");
                                         let second =
                                             &basename[&basename.len() - 3..&basename.len() - 1];
                                         let first = &basename[&basename.len() - 1..];

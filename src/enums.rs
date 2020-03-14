@@ -58,7 +58,7 @@ impl fmt::Display for YotsubaBoard {
 /// and [`strings`](https://is.gd/u54Y0T)
 impl<'de> Deserialize<'de> for YotsubaBoard {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer<'de> {
+    where D: Deserializer<'de> {
         let s = String::deserialize(deserializer)?;
         // YotsubaBoard::into_enum_iter().for_each(|zz|println!("'{}'",s));
         if let Some(found) =
@@ -66,10 +66,11 @@ impl<'de> Deserialize<'de> for YotsubaBoard {
         {
             Ok(found)
         } else {
-            let j = YotsubaBoard::into_enum_iter().skip(1)
-                                                  .map(|zz| zz.to_string())
-                                                  .collect::<Vec<String>>()
-                                                  .join("`, `");
+            let j = YotsubaBoard::into_enum_iter()
+                .skip(1)
+                .map(|zz| zz.to_string())
+                .collect::<Vec<String>>()
+                .join("`, `");
             Err(de::Error::custom(&format!("unknown variant `{}`, expected one of `{}`", s, j)))
             // Err(de::Error::unknown_variant(&s, ss))
         }
@@ -81,7 +82,7 @@ impl<'de> Deserialize<'de> for YotsubaBoard {
 /// Help taken from https://serde.rs/impl-serialize.html
 impl Serialize for YotsubaBoard {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
+    where S: Serializer {
         // let s: Vec<_> = Self::into_enum_iter().map(|zz|zz.to_string()).collect();
 
         /*match *self {
@@ -108,13 +109,9 @@ impl StringExt for String {
     }
 }
 #[allow(non_camel_case_types)]
-#[derive(Debug,
-           Copy,
-           Clone,
-           std::hash::Hash,
-           PartialEq,
-           std::cmp::Eq,
-           enum_iterator::IntoEnumIterator)]
+#[derive(
+    Debug, Copy, Clone, std::hash::Hash, PartialEq, std::cmp::Eq, enum_iterator::IntoEnumIterator,
+)]
 pub enum YotsubaBoard {
     None,
     _3,
