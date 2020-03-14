@@ -24,53 +24,223 @@ impl SchemaTrait for Schema {
 
     fn init_metadata(&self) -> String {
         format!(
-                r#"
+                "
             CREATE TABLE IF NOT EXISTS metadata (
                 board VARCHAR(10) NOT NULL PRIMARY key UNIQUE,
-                threads json,
-                archive json,
+                `threads` json,
+                `archive` json,
                 INDEX metadata_board_idx (board)
             ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-            "#
+            "
         )
     }
 
     fn delete(&self, schema: &str, board: YotsubaBoard) -> String {
-        r#"UPDATE `?` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0"#.to_string()
+        format!("UPDATE `{}` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0",
+                board)
     }
 
     fn update_deleteds(&self, schema: &str, board: YotsubaBoard) -> String {
-        todo!()
+        // This simulates a FULL JOIN
+        format!(r#"
+                UPDATE `{0}`, (
+                    SELECT x.* FROM
+                        (SELECT num, `timestamp`, thread_num FROM `{0}` where num=:no or thread_num=:no order by num) x
+                    LEFT OUTER JOIN
+                        ( {1} ) z
+                      ON x.num = z.no
+                      UNION
+                      
+                    SELECT x.* FROM
+                        (SELECT num, `timestamp`, thread_num FROM `{0}` where num=:no or thread_num=:no order by num) x
+                    RIGHT OUTER JOIN
+                        ( {1} ) z
+                      ON x.num = z.no
+                    WHERE z.no is null
+                ) as `src`
+                SET `{0}`.deleted = 1;"#,
+                board,
+                self.init_type(""))
     }
 
     fn update_hash(&self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement)
                    -> String {
-        todo!()
+        unreachable!()
     }
 
     fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
-        todo!()
+        format!(
+                "INSERT INTO metadata(board, {0})
+                  VALUES (:board, :json)
+                  ON CONFLICT (board)
+                  DO UPDATE
+                      SET {0} = :json;
+              ",
+                column
+        )
     }
 
     fn medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String {
-        todo!()
+        format!("SELECT * FROM `{0}`
+                WHERE (media_hash is not null) AND (num=:no or thread_num=:no)
+                ORDER BY num desc;",
+                board)
     }
 
     fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String {
-        todo!()
+        let thread = format!(
+                             r#"
+        SELECT JSON_ARRAYAGG(coalesce (newv->'$.no', prev->'$.no')) from (
+            SELECT * from metadata m2 ,
+                JSON_TABLE(threads, '$[*].threads[*]'
+                COLUMNS(prev json path '$')) q 
+            LEFT OUTER JOIN
+            (SELECT * from 
+                JSON_TABLE(:json, '$[*].threads[*]'
+                COLUMNS(newv json path '$')) w) e
+            on prev->'$.no' = newv->'$.no'
+            where board = :board
+            
+            UNION
+            
+            SELECT * from metadata m3 ,
+                JSON_TABLE( threads, '$[*].threads[*]'
+                COLUMNS(prev json path '$')) r
+            RIGHT OUTER JOIN
+            (SELECT * FROM
+                JSON_TABLE(:json, '$[*].threads[*]'
+                COLUMNS(newv json path '$')) a) s
+            on prev->'$.no' = newv->'$.no'
+            where board = :board
+        ) z
+        where newv is null or prev is null or prev->'$.last_modified' != newv->'$.last_modified';
+        "#
+        );
+
+        let archive = format!(
+                              r#"
+        SELECT JSON_ARRAYAGG(coalesce (newv,prev)) from (
+            SELECT * from metadata m2 ,
+                JSON_TABLE( archive, '$[*]'
+                COLUMNS(prev json path '$')) q 
+            LEFT OUTER JOIN
+            (SELECT * from 
+                JSON_TABLE(:json, '$[*]'
+                COLUMNS(newv json path '$')) w) e
+            on prev = newv
+            where board = :board
+            
+            UNION
+            
+            SELECT * from metadata m3 ,
+                JSON_TABLE( archive, '$[*]'
+                COLUMNS(prev json path '$')) r
+            RIGHT OUTER JOIN
+            (SELECT * FROM
+                JSON_TABLE(:json, '$[*]'
+                COLUMNS(newv json path '$')) a) s
+            on prev = newv
+            where board = :board
+        ) z
+        where newv is null or prev is null;
+        "#
+        );
+
+        match endpoint {
+            YotsubaEndpoint::Archive => archive,
+            _ => thread
+        }
     }
 
-    fn threads<'a>(&self) -> &'a str {
-        todo!()
+    fn threads(&self) -> String {
+        format!(
+                r#"
+        SELECT JSON_ARRAYAGG(z.no)
+        FROM
+        ( {} )z
+        "#,
+                self.init_type("")
+        )
     }
 
     fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {
-        todo!()
+        format!(r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = ?"#,
+                column)
     }
 
     fn threads_combined(&self, schema: &str, board: YotsubaBoard, endpoint: YotsubaEndpoint)
                         -> String {
-        todo!()
+        let thread = format!(
+                             r#"
+        select JSON_ARRAYAGG(c) from (
+            SELECT coalesce (newv->'$.no', prev->'$.no') as c from (
+                SELECT * from metadata m2 ,
+                    JSON_TABLE(threads, '$[*].threads[*]'
+                    COLUMNS(prev json path '$')) q 
+                LEFT OUTER JOIN
+                (SELECT * from 
+                    JSON_TABLE(:json, '$[*].threads[*]'
+                    COLUMNS(newv json path '$')) w) e
+                on prev->'$.no' = newv->'$.no'
+                where board = :board
+                
+                UNION
+                
+                SELECT * from metadata m3 ,
+                    JSON_TABLE( threads, '$[*].threads[*]'
+                    COLUMNS(prev json path '$')) r
+                RIGHT OUTER JOIN
+                (SELECT * FROM
+                    JSON_TABLE(:json, '$[*].threads[*]'
+                    COLUMNS(newv json path '$')) a) s
+                on prev->'$.no' = newv->'$.no'
+                where board = :board
+            ) z ) i
+            left join
+              (select num as nno from `{}` where op=1 and (timestamp_expired is not null or deleted is not null))u
+              ON c = nno
+            where  nno is null;
+        "#,
+                             board
+        );
+
+        let archive = format!(
+                              r#"
+        select JSON_ARRAYAGG(c) from (
+            SELECT coalesce (newv, prev) as c from (
+                SELECT * from metadata m2 ,
+                    JSON_TABLE(archive, '$[*]'
+                    COLUMNS(prev json path '$')) q 
+                LEFT OUTER JOIN
+                (SELECT * from 
+                    JSON_TABLE(:json, '$[*]'
+                    COLUMNS(newv json path '$')) w) e
+                on prev = newv
+                where board = :board
+                
+                UNION
+                
+                SELECT * from metadata m3 ,
+                    JSON_TABLE(archive, '$[*]'
+                    COLUMNS(prev json path '$')) r
+                RIGHT OUTER JOIN
+                (SELECT * FROM
+                    JSON_TABLE(:json, '$[*]'
+                    COLUMNS(newv json path '$')) a) s
+                on prev = newv
+                where board = :board
+            ) z ) i
+            left join
+              (select num as nno from `{}` where op=1 and (timestamp_expired is not null or deleted is not null))u
+              ON c = nno
+            where  nno is null;
+        "#,
+                              board
+        );
+        match endpoint {
+            YotsubaEndpoint::Archive => archive,
+            _ => thread
+        }
     }
 
     fn init_board(&self, board: YotsubaBoard, schema: &str) -> String {
@@ -126,14 +296,167 @@ impl SchemaTrait for Schema {
     }
 
     fn init_type(&self, schema: &str) -> String {
-        todo!()
+        format!(
+                r#"SELECT * FROM JSON_TABLE(?, "$.posts[*]" COLUMNS(
+            `no`				BIGINT		PATH "$.no",
+            `sticky`			SMALLINT	PATH "$.sticky",
+            `closed`			SMALLINT	PATH "$.closed",
+            `now`				TEXT		PATH "$.now",
+            `name`				TEXT		PATH "$.name",
+            `sub`				TEXT		PATH "$.sub",
+            `com`				TEXT		PATH "$.com",
+            `filedeleted`		SMALLINT	PATH "$.filedeleted",
+            `spoiler`			SMALLINT	PATH "$.spoiler",
+            `custom_spoiler`	SMALLINT	PATH "$.custom_spoiler",
+            `filename`			TEXT		PATH "$.filename",
+            `ext`				TEXT		PATH "$.ext",
+            `w`					INT			PATH "$.h",
+            `h`					INT			PATH "$.w",
+            `tn_w`				INT			PATH "$.tn_w",
+            `tn_h`				INT			PATH "$.tn_h",
+            `tim`				BIGINT		PATH "$.tim",
+            `time`				BIGINT		PATH "$.time",
+            `md5`				TEXT		PATH "$.md5",
+            `fsize`				BIGINT		PATH "$.fsize",
+            `m_img`				SMALLINT	PATH "$.m_img",
+            `resto`				INT			PATH "$.resto",
+            `trip`				TEXT		PATH "$.trip",
+            `id`				TEXT		PATH "$.id",
+            `capcode`			TEXT		PATH "$.capcode",
+            `country`			TEXT		PATH "$.country",
+            `country_name`		TEXT		PATH "$.country_name",
+            `archived`			SMALLINT	PATH "$.archived",
+            `bumplimit`			SMALLINT	PATH "$.bumplimit",
+            `archived_on`		BIGINT		PATH "$.archived_on",
+            `imagelimit`		SMALLINT	PATH "$.imagelimit",
+            `semantic_url`		TEXT		PATH "$.semantic_url",
+            `replies`			INT			PATH "$.replies",
+            `images`			INT			PATH "$.images",
+            `unique_ips`		INT			PATH "$.unique_ips",
+            `tag`				TEXT		PATH "$.tag",
+            `since4pass`		SMALLINT	PATH "$.since4pass")
+            ) w
+        "#
+        )
     }
 
     fn init_views(&self, schema: &str, board: YotsubaBoard) -> String {
-        todo!()
+        unreachable!()
     }
 
     fn update_thread(&self, schema: &str, board: YotsubaBoard) -> String {
-        todo!()
+        format!(
+                r#"
+        INSERT INTO `{}`(`poster_ip`,`num`,`subnum`,`thread_num`,`op`,`timestamp`,`timestamp_expired`,`preview_orig`,`preview_w`,`preview_h`,`media_filename`,`media_w`,`media_h`,`media_size`,`media_hash`,`media_orig`,`spoiler`,`deleted`,`capcode`,`email`,`name`,`trip`,`title`,`comment`,`delpass`,`sticky`,`locked`,`poster_hash`,`poster_country`,`exif`)
+        SELECT *
+        FROM (SELECT
+                -- _id																'media_id',
+                IF(unique_ips IS NULL, 0, unique_ips)							'poster_ip',	-- Unused in Asagi. Used in FF.
+                no																'num',
+                0																'subnum',		-- Unused in Asagi. Used in FF for ghost posts.
+                IF(resto=0, resto, no)											'thread_num',
+                IF(resto=0, TRUE, FALSE)										'op',
+                `time`															'timestamp',
+                0																'timestamp_expired',
+                IF(tim IS NULL, NULL, CONCAT(tim, 's.jpg'))						'preview_orig',
+                IF(tn_w IS NULL, 0, tn_w)										'preview_w',
+                IF(tn_h IS NULL, 0, tn_h)										'preview_h',
+                IF(filename IS NULL, NULL, CONCAT(filename, ext))				'media_filename',
+                IF(w IS NULL, 0, w)												'media_w',
+                IF(h IS NULL, 0, h)												'media_h',
+                IF(fsize IS NULL, 0, h)											'media_size',
+                md5																'media_hash',
+                IF(tim IS NOT NULL and ext IS NOT NULL, CONCAT(tim, ext), NULL)	'media_orig',
+                IF(spoiler IS NULL, FALSE, spoiler)								'spoiler',
+                0																'deleted',
+                IF(capcode IS NULL, 'N', capcode)								'capcode',
+                NULL															'email',
+                doCleanFull(name)												'name',
+                trip															'trip',
+                doCleanFull(sub)												'title',
+                doCleanFull(com)												'comment',
+                NULL															'delpass',		-- Unused in Asagi. Used in FF.
+                IF(sticky IS NULL, FALSE, sticky)								'sticky',
+                IF(closed IS NULL, FALSE, closed)								'locked',
+                IF(id='Developer', 'Dev', id)									'poster_hash',	-- Not the same as media_hash
+                country															'poster_country',
+                -- country_name													'poster_country_name',
+                -- CAST(JSON_OBJECT('uniqueIps', unique_ips, 'since4pass', since4pass, 'trollCountry', 'NULL') AS CHAR) 'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
+                NULL 'exif'
+        FROM (
+        SELECT * FROM JSON_TABLE(@j, "$.posts[*]" COLUMNS (
+                -- `_id`						FOR ORDINALITY,
+                `no`				BIGINT		PATH "$.no",
+                `sticky`			SMALLINT	PATH "$.sticky",
+                `closed`			SMALLINT	PATH "$.closed",
+                `now`				TEXT		PATH "$.now",
+                `name`				TEXT		PATH "$.name",
+                `sub`				TEXT		PATH "$.sub",
+                `com`				TEXT		PATH "$.com",
+                `filedeleted`		SMALLINT	PATH "$.filedeleted",
+                `spoiler`			SMALLINT	PATH "$.spoiler",
+                `custom_spoiler`	SMALLINT	PATH "$.custom_spoiler",
+                `filename`			TEXT		PATH "$.filename",
+                `ext`				TEXT		PATH "$.ext",
+                `w`					INT			PATH "$.h",
+                `h`					INT			PATH "$.w",
+                `tn_w`				INT			PATH "$.tn_w",
+                `tn_h`				INT			PATH "$.tn_h",
+                `tim`				BIGINT		PATH "$.tim",
+                `time`				BIGINT		PATH "$.time",
+                `md5`				TEXT		PATH "$.md5",
+                `fsize`				BIGINT		PATH "$.fsize",
+                `m_img`				SMALLINT	PATH "$.m_img",
+                `resto`				INT			PATH "$.resto",
+                `trip`				TEXT		PATH "$.trip",
+                `id`				TEXT		PATH "$.id",
+                `capcode`			TEXT		PATH "$.capcode",
+                `country`			TEXT		PATH "$.country",
+                `country_name`		TEXT		PATH "$.country_name",
+                `archived`			SMALLINT	PATH "$.archived",
+                `bumplimit`			SMALLINT	PATH "$.bumplimit",
+                `archived_on`		BIGINT		PATH "$.archived_on",
+                `imagelimit`		SMALLINT	PATH "$.imagelimit",
+                `semantic_url`		TEXT		PATH "$.semantic_url",
+                `replies`			INT			PATH "$.replies",
+                `images`			INT			PATH "$.images",
+                `unique_ips`		INT			PATH "$.unique_ips",
+                `tag`				TEXT		PATH "$.tag",
+                `since4pass`		SMALLINT	PATH "$.since4pass")
+            ) AS w) AS `4chan`) AS q
+            ON DUPLICATE KEY UPDATE
+                -- `poster_ip`		= values(`poster_ip`),
+                `num`				= values(`num`),
+                `subnum`			= values(`subnum`),
+                `thread_num`		= values(`thread_num`),
+                `op`				= values(`op`),
+                `timestamp`			= values(`timestamp`),
+                `timestamp_expired`	= values(`timestamp_expired`),
+                `preview_orig`		= values(`preview_orig`),
+                `preview_w`			= values(`preview_w`),
+                `preview_h`			= values(`preview_h`),
+                `media_filename`	= values(`media_filename`),
+                `media_w`			= values(`media_w`),
+                `media_h`			= values(`media_h`),
+                `media_size`		= values(`media_size`),
+                `media_hash`		= values(`media_hash`),
+                `media_orig`		= values(`media_orig`),
+                `spoiler`			= values(`spoiler`),
+                `deleted`			= values(`deleted`),
+                `capcode`			= values(`capcode`),
+                `email`				= values(`email`),
+                `name`				= values(`name`),
+                `trip`				= values(`trip`),
+                `title`				= values(`title`),
+                `comment`			= values(`comment`),
+                `delpass`			= values(`delpass`),
+                `sticky`			= values(`sticky`),
+                `locked`			= values(`locked`),
+                `poster_hash`		= values(`poster_hash`),
+                `poster_country`	= values(`poster_country`),
+                `exif`				= values(`exif`);
+        "#,
+                board
+        )
     }
 }

@@ -18,10 +18,9 @@ use crate::{config::{BoardSettings, Config},
 
 use std::{collections::{HashMap, VecDeque},
           convert::TryFrom,
-          env,
           path::Path,
+          process::exit,
           sync::{atomic::AtomicBool, Arc}};
-          use std::process::exit;
 
 use tokio::{runtime::Builder,
             time::{delay_for as sleep, Duration}};
@@ -322,7 +321,7 @@ impl<H, S> YotsubaArchiver<H, S>
                                                .await
                                                .unwrap(),
                                        YotsubaStatement::Threads =>
-                                           self.query.prepare(self.sql.threads()).await.unwrap(),
+                                           self.query.prepare(self.sql.threads().as_str()).await.unwrap(),
                                        YotsubaStatement::ThreadsModified =>
                                            self.query
                                                .prepare(self.sql
@@ -669,7 +668,6 @@ impl<H, S> YotsubaArchiver<H, S>
 
             // Download each thread
             let mut position = 1_u32;
-            let copy_threads = local_threads_list.clone();
             let _t = tx.clone().unwrap();
             while let Some(thread) = local_threads_list.pop_front() {
                 // Semaphore
@@ -824,7 +822,7 @@ impl<H, S> YotsubaArchiver<H, S>
                                 }
                             }
                             if dl_media {
-                                fut.push(self.dl_media_post2(row, statements, info, false));
+                                fut.push(self.dl_media_post2(row, info, false));
                             }
                         }
                         let mut dl_thumb = false;
@@ -842,7 +840,7 @@ impl<H, S> YotsubaArchiver<H, S>
                                 }
                             }
                             if dl_thumb {
-                                fut.push(self.dl_media_post2(row, statements, info, true));
+                                fut.push(self.dl_media_post2(row, info, true));
                             }
                         }
                     }
@@ -890,8 +888,8 @@ impl<H, S> YotsubaArchiver<H, S>
     }
 
     // Downloads any missing media from a thread
-    async fn dl_media_post2(&self, row: &tokio_postgres::row::Row, statements: &StatementStore,
-                            info: &BoardSettings, thumb: bool)
+    async fn dl_media_post2(&self, row: &tokio_postgres::row::Row, info: &BoardSettings,
+                            thumb: bool)
                             -> Option<(u64, Option<Vec<u8>>, bool)>
     {
         let no: i64 = row.get("no");

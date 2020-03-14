@@ -245,15 +245,15 @@ impl SchemaTrait for Schema {
         // ok to only select no
         format!(
                 r#"
-      INSERT INTO "{0}"."{1}" (no, time, resto)
-          SELECT x.* FROM
-              (SELECT no, time, resto FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
-              --(SELECT * FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
-          FULL JOIN
-              (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
-              --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
-          ON x.no = z.no
-          WHERE z.no is null
+        INSERT INTO "{0}"."{1}" (no, time, resto)
+            SELECT x.* FROM
+                (SELECT no, time, resto FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
+                --(SELECT * FROM "{0}"."{1}" where no=$2 or resto=$2 order by no) x
+            FULL JOIN
+                (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
+                --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
+            ON x.no = z.no
+            WHERE z.no is null
       ON CONFLICT (no) 
       DO
           UPDATE
@@ -361,10 +361,10 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn threads<'a>(&self) -> &'a str {
+    fn threads(&self) -> String {
         "SELECT jsonb_agg(newv->'no')
-  FROM
-  (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
+          FROM
+          (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z".to_string()
     }
 
     fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String {

@@ -192,7 +192,7 @@ pub trait SchemaTrait: Sync + Send {
     fn update_metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;
     fn medias(&self, board: YotsubaBoard, media_mode: YotsubaStatement) -> String;
     fn threads_modified(&self, schema: &str, endpoint: YotsubaEndpoint) -> String;
-    fn threads<'a>(&self) -> &'a str;
+    fn threads(&self) -> String;
     fn metadata(&self, schema: &str, column: YotsubaEndpoint) -> String;
     fn threads_combined(&self, schema: &str, board: YotsubaBoard, endpoint: YotsubaEndpoint)
                         -> String;
