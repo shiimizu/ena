@@ -264,10 +264,7 @@ pub fn read_config(config_path: &str) -> Config {
         // No DB URL found, update our DB URL with our own values
         settings.db_url = format!(
             "{engine}://{username}:{password}@{host}:{port}/{database}",
-            engine = match &settings.engine {
-                Database::PostgreSQL | Database::TimescaleDB => "postgresql",
-                _ => "mysql"
-            },
+            engine = &settings.engine.base().to_string().to_lowercase(),
             username = &settings.username,
             password = &settings.password,
             host = &settings.host,
@@ -295,6 +292,13 @@ pub fn version() -> String {
 
 pub fn ena_resume() -> bool {
     var("ENA_RESUME").ok().map(|a| a.parse::<bool>().ok()).flatten().unwrap_or(false)
+}
+
+pub fn check_version() {
+    std::env::args().nth(1).filter(|arg| matches!(arg.as_str(), "-v" | "--version")).map(|_| {
+        display_full_version();
+        std::process::exit(0)
+    });
 }
 
 pub fn display_full_version() {

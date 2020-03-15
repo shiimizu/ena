@@ -37,6 +37,15 @@ pub enum Database {
     InnoDB,
     TokuDB
 }
+
+impl Database {
+    pub fn base(&self) -> Database {
+        match self {
+            Database::PostgreSQL | Database::TimescaleDB => Database::PostgreSQL,
+            _ => Database::MySQL
+        }
+    }
+}
 pub enum Rows {
     PostgreSQL(Vec<tokio_postgres::row::Row>),
     MySQL(Vec<mysql_async::Row>)

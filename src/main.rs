@@ -22,7 +22,6 @@ use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom,
     path::Path,
-    process::exit,
     sync::{atomic::AtomicBool, Arc}
 };
 
@@ -45,10 +44,7 @@ use tokio::sync::{
     Semaphore
 };
 fn main() {
-    std::env::args().nth(1).filter(|arg| matches!(arg.as_str(), "-v" | "--version")).map(|_| {
-        config::display_full_version();
-        exit(0)
-    });
+    config::check_version();
     config::display();
 
     let start_time = Local::now();
@@ -86,16 +82,11 @@ async fn async_main() -> Result<u64> {
         }
     }
 
-    if config.settings.asagi_mode && config.settings.engine != Database::MySQL {
+    if config.settings.asagi_mode && config.settings.engine.base() != Database::MySQL {
         unimplemented!("Asagi mode outside of MySQL. Found {:?}", &config.settings.engine)
     }
-
     // TODO
     // Asagi
-    // https://rust-cli.github.io/book/tutorial/index.html
-    // https://doc.rust-lang.org/edition-guide/rust-2018/trait-system/impl-trait-for-returning-complex-types-with-ease.html
-    // debug!("{} {:#?}", &config.board_settings.board,&config.board_settings.board);
-    // return Ok(0);
 
     // if config.settings.engine == Database::MySQL {
     //     info!("Connected with:\t{}", config.settings.db_url);
@@ -147,15 +138,10 @@ async fn async_main() -> Result<u64> {
     archiver.query.init_schema(&archiver.config.settings.schema).await;
     archiver.query.init_type().await;
     archiver.query.init_metadata().await;
-    // let q = archiver.query.query("SELECT * FROM pg_type WHERE typname =
-    // 'schema_4chan';", &[]).await.unwrap(); for z in q.iter() {
-    //     let no: String = z.get("typname");
-    //     println!("{:?}", no)
-    // }
 
     sleep(Duration::from_millis(1100)).await;
     archiver.run().await;
-    return Ok(0);
+    Ok(0)
 }
 
 /// A struct to store variables without using global statics.
