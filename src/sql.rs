@@ -12,6 +12,29 @@ use std::{
     ops::Add
 };
 
+/// This trait is used to define the implementation details archiving.  
+/// The logic/algorithm in how you want to approach downloading everything.  
+/// With that said, it should have more methods and stuff but I just use it as  
+/// a way to pass generic implementations of `YotsubaArchiver` for different databases.
+#[async_trait]
+pub trait Archiver: Sync + Send {
+    async fn run_inner(&self) {}
+}
+
+/// A struct to hold a generic implementation of `Archiver`  
+/// See [this](https://is.gd/t3AHTt) chapter of the Rust Book on traits.
+pub struct MuhArchiver(Box<dyn Archiver>);
+
+impl MuhArchiver {
+    pub fn new(x: Box<dyn Archiver>) -> Self {
+        Self(x)
+    }
+
+    pub async fn run(&self) {
+        self.0.run_inner().await;
+    }
+}
+
 pub type StatementStore<S> = HashMap<YotsubaIdentifier, S>;
 #[async_trait]
 pub trait StatementTrait<T>: Send + Sync {

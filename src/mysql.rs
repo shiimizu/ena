@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-use crate::{sql::*, YotsubaBoard, YotsubaEndpoint, YotsubaHash};
+use crate::{sql::*, YotsubaArchiver, YotsubaBoard, YotsubaEndpoint, YotsubaHash};
 use ::mysql::{prelude::*, Statement, *};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -9,6 +9,13 @@ use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom
 };
+
+#[async_trait]
+impl Archiver for YotsubaArchiver<Statement, ::mysql::Pool, reqwest::Client> {
+    async fn run_inner(&self) {
+        self.run().await
+    }
+}
 
 impl Queries for ::mysql::Pool {
     fn query_init_schema(&self, schema: &str) -> String {

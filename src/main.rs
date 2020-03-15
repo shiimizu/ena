@@ -14,8 +14,6 @@ mod sql;
 use crate::{
     config::{BoardSettings, Config},
     enums::*,
-    mysql::*,
-    pgsql::*,
     sql::*
 };
 
@@ -31,6 +29,7 @@ use tokio::{
     time::{delay_for as sleep, Duration}
 };
 
+use ::mysql::{prelude::*, *};
 use anyhow::{anyhow, Context, Result};
 use chrono::Local;
 use core::sync::atomic::Ordering;
@@ -43,6 +42,7 @@ use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     Semaphore
 };
+
 fn main() {
     config::check_version();
     config::display();
@@ -65,8 +65,7 @@ fn main() {
         Local::now().to_rfc2822()
     );
 }
-use ::mysql::{prelude::*, *};
-#[allow(unused_mut)]
+
 async fn async_main() -> Result<u64> {
     let config = config::read_config("ena_config.json");
 
@@ -75,93 +74,60 @@ async fn async_main() -> Result<u64> {
     }
 
     // Find duplicate boards
-    for a in &config.boards {
-        let c = &config.boards.iter().filter(|&n| n.board == a.board).count();
-        if *c > 1 {
-            panic!("Multiple occurrences of `{}` found :: {}", a.board, c);
+    for info in &config.boards {
+        let count = &config.boards.iter().filter(|&n| n.board == info.board).count();
+        if *count > 1 {
+            panic!("Multiple occurrences of `{}` found :: {}", info.board, count);
         }
     }
 
-    if config.settings.asagi_mode && config.settings.engine.base() != Database::MySQL {
+    if config.settings.asagi_mode && config.settings.engine.base() == Database::MySQL {
         unimplemented!("Asagi mode outside of MySQL. Found {:?}", &config.settings.engine)
     }
-
-    if config.settings.engine.base() == Database::MySQL {
-        info!("Connected with:\t{}", config.settings.db_url);
-        let pool = Pool::new(&config.settings.db_url)?;
-        let mut conn = pool.get_conn()?;
-        // let yb = YotsubaDatabase::new(conn);
-        let _q = r#"UPDATE ? SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ?
-    AND subnum = 0"#
-            .to_string();
-
-        conn.query_drop(
-            r"CREATE TEMPORARY TABLE payment (
-                    customer_id int not null,
-                    amount int not null,
-                    account_name text
-                )"
-        )
-        .unwrap();
-        conn.query_drop(
-            r"CREATE TEMPORARY TABLE payment (
-                    customer_id int not null,
-                    amount int not null,
-                    account_name text
-                )"
-        )
-        .unwrap();
-        return Ok(1);
-    }
-
-    let (db_client, connection) =
-        tokio_postgres::connect(&config.settings.db_url, tokio_postgres::NoTls)
-            .await
-            .context(format!(
-                "\nPlease check your settings. Connection url used: {}",
-                config.settings.db_url
-            ))
-            .expect("Connecting to database");
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            error!("Connection error: {}", e);
-        }
-    });
-    info!("Connected with:\t\t{}", config.settings.db_url);
 
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
         .build()
         .expect("Err building the HTTP Client");
 
-    // let ss = pgsql::Schema::new();
-    // Rust articles
-    // https://rust-cli.github.io/book/tutorial/index.html
-    // https://doc.rust-lang.org/edition-guide/rust-2018/trait-system/impl-trait-for-returning-complex-types-with-ease.html
+    let archiver;
 
-    // let archive2r = YotsubaArchiver2::<tokio_postgres::Statement, tokio_postgres::Client,
-    // tokio_postgres::Client, reqwest::Client> {query: db_client, client: http_client, config,
-    // finished: Arc::new(AtomicBool::new(false))};
+    // Determine which engine is being used
+    if config.settings.engine.base() == Database::PostgreSQL {
+        let (db_client, connection) =
+            tokio_postgres::connect(&config.settings.db_url, tokio_postgres::NoTls)
+                .await
+                .context(format!(
+                    "\nPlease check your settings. Connection url used: {}",
+                    config.settings.db_url
+                ))
+                .expect("Connecting to database");
 
-    let stmt = db_client.prepare("select 1;").await.unwrap();
-    // let stmt = conn.prep("select 1;").unwrap();
-    // let archiver2 = YotsubaArchiver2::new(stmt, pool, http_client.clone(), config.clone()).await;
-    let archiver2 =
-        YotsubaArchiver2::new(stmt, db_client, http_client.clone(), config.clone()).await;
-
-    // let st :()= a.create_statements().await;
-    // let archiver = YotsubaArchiver::new(http_client, db_client, config, ss).await;
-    // archiver.listen_to_exit();
-    archiver2.listen_to_exit();
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                error!("Connection error: {}", e);
+            }
+        });
+        let stmt = db_client.prepare("select 1;").await.unwrap();
+        info!("Connected with:\t\t{}", config.settings.db_url);
+        archiver = MuhArchiver::new(Box::new(
+            YotsubaArchiver::new(stmt, db_client, http_client, config).await
+        ));
+    } else {
+        let pool = Pool::new(&config.settings.db_url)?;
+        let mut conn = pool.get_conn()?;
+        let stmt = conn.prep("select 1;").unwrap();
+        info!("Connected with:\t\t{}", config.settings.db_url);
+        archiver =
+            MuhArchiver::new(Box::new(YotsubaArchiver::new(stmt, pool, http_client, config).await));
+    }
 
     sleep(Duration::from_millis(1100)).await;
-    archiver2.run().await;
-    // archiver.run().await;
+    archiver.run().await;
     Ok(0)
 }
 
-pub struct YotsubaArchiver2<S, D: DatabaseTrait<S>, H: request::HttpClient> {
+pub struct YotsubaArchiver<S, D: DatabaseTrait<S>, H: request::HttpClient> {
     _stmt:    S,
     query:    D,
     client:   H,
@@ -169,8 +135,8 @@ pub struct YotsubaArchiver2<S, D: DatabaseTrait<S>, H: request::HttpClient> {
     finished: Arc<AtomicBool>
 }
 
-// The implementation of `YotsubaArchiver2` that handles everything
-impl<S, D, H> YotsubaArchiver2<S, D, H>
+// The implementation of `YotsubaArchiver` that handles everything
+impl<S, D, H> YotsubaArchiver<S, D, H>
 where
     D: DatabaseTrait<S>,
     H: request::HttpClient
@@ -185,17 +151,8 @@ where
         }
     }
 
-    // async fn st(&self, stmts: HashMap<YotsubaIdentifier, S>) {
-    //     let id = YotsubaIdentifier::new(
-    //         YotsubaEndpoint::Threads,
-    //         YotsubaBoard::a,
-    //         YotsubaStatement::UpdateThread
-    //     );
-    //     let stmt = stmts.get(&id).unwrap();
-    //     self.query.update_metadata(&stmts, id, vec![].as_slice());
-    // }
-
     async fn run(&self) {
+        self.listen_to_exit();
         self.query.init_schema(&self.config.settings.schema).await;
         self.query.init_type().await;
         self.query.init_metadata().await;
@@ -415,7 +372,7 @@ where
                 .await
             {
                 Ok((last_modified_recieved, status, body)) => {
-                    if last_modified.is_empty() {
+                    if last_modified_recieved.is_empty() {
                         error!(
                             "({})\t/{}/\t\t<{}> An error has occurred getting the last_modified date",
                             endpoint, current_board, status
@@ -460,11 +417,7 @@ where
                                 *fetched_threads = Some(body.to_owned());
 
                                 // Check if there's an entry in the metadata
-                                if self
-                                    .query
-                                    .metadata(&statements, endpoint, current_board)
-                                    .await
-                                {
+                                if self.query.metadata(&statements, endpoint, current_board).await {
                                     let ena_resume = config::ena_resume();
 
                                     // if there's cache
@@ -561,12 +514,7 @@ where
 
                                     match if endpoint == YotsubaEndpoint::Threads {
                                         self.query
-                                            .threads(
-                                                &statements,
-                                                endpoint,
-                                                current_board,
-                                                &body
-                                            )
+                                            .threads(&statements, endpoint, current_board, &body)
                                             .await
                                     } else {
                                         // Converting to anyhow
@@ -709,8 +657,9 @@ where
                     _sem_thread = Some(semaphore.acquire().await);
                 }
                 if self.finished.load(Ordering::Relaxed) {
-                    if let Err(e) = t.send((bs.clone(), statements_media, 0)) {
-                        error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
+                    if let Err(_) = t.send((bs.clone(), statements_media, 0)) {
+                        // Don't display an error if we're sending the exit code
+                        // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                     }
                     break;
                 }
@@ -739,10 +688,8 @@ where
             // list of threads it was processing before + new ones.
             if threads_len > 0 && update_metadata {
                 if let Some(ft) = &fetched_threads {
-                    if let Err(e) = self
-                        .query
-                        .update_metadata(&statements, endpoint, current_board, &ft)
-                        .await
+                    if let Err(e) =
+                        self.query.update_metadata(&statements, endpoint, current_board, &ft).await
                     {
                         error!("Error executing update_metadata function! {}", e);
                     }
@@ -797,10 +744,8 @@ where
                             );
                             sleep(Duration::from_secs(1)).await;
                         } else {
-                            if let Err(e) = self
-                                .query
-                                .update_thread(&statements, endpoint, board, &body)
-                                .await
+                            if let Err(e) =
+                                self.query.update_thread(&statements, endpoint, board, &body).await
                             {
                                 error!("Error executing update_thread function! {}", e);
                             }

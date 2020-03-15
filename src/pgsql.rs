@@ -1,8 +1,17 @@
-use crate::{sql::*, YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
+use crate::{
+    sql::*, YotsubaArchiver, YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier
+};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::{collections::VecDeque, convert::TryFrom};
 use tokio_postgres::Statement;
+
+#[async_trait]
+impl Archiver for YotsubaArchiver<Statement, tokio_postgres::Client, reqwest::Client> {
+    async fn run_inner(&self) {
+        self.run().await
+    }
+}
 
 /// PostgreSQL version of the schema. This is also the default one used.  
 /// If another schema is thought of, feel free to use the `Queries` to implement it.
