@@ -1,4 +1,7 @@
-use crate::{enums::StringExt, sql::Database, YotsubaBoard};
+use crate::{
+    enums::{StringExt, YotsubaBoard},
+    sql::Database
+};
 use anyhow::{Context, Result};
 use enum_iterator::IntoEnumIterator;
 use serde::{self, Deserialize, Serialize};

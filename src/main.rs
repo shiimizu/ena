@@ -14,7 +14,8 @@ mod sql;
 use crate::{
     config::{BoardSettings, Config},
     enums::*,
-    request::*,
+    mysql::*,
+    pgsql::*,
     sql::*
 };
 
@@ -36,7 +37,6 @@ use core::sync::atomic::Ordering;
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
 use log::*;
-use mysql_async::prelude::*;
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
 use tokio::sync::{
@@ -65,7 +65,7 @@ fn main() {
         Local::now().to_rfc2822()
     );
 }
-
+use ::mysql::{prelude::*, *};
 #[allow(unused_mut)]
 async fn async_main() -> Result<u64> {
     let config = config::read_config("ena_config.json");
@@ -85,31 +85,34 @@ async fn async_main() -> Result<u64> {
     if config.settings.asagi_mode && config.settings.engine.base() != Database::MySQL {
         unimplemented!("Asagi mode outside of MySQL. Found {:?}", &config.settings.engine)
     }
-    // TODO
-    // Asagi
 
-    // if config.settings.engine == Database::MySQL {
-    //     info!("Connected with:\t{}", config.settings.db_url);
-    //     let pool = mysql_async::Pool::new(&config.settings.db_url);
-    //     let yb = YotsubaDatabase::new(pool);
-    //     let conn = yb.get_conn().await.unwrap();
-    //     let q = r#"UPDATE ? SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ?
-    // AND subnum = 0"#.to_string();
+    if config.settings.engine.base() == Database::MySQL {
+        info!("Connected with:\t{}", config.settings.db_url);
+        let pool = Pool::new(&config.settings.db_url)?;
+        let mut conn = pool.get_conn()?;
+        // let yb = YotsubaDatabase::new(conn);
+        let _q = r#"UPDATE ? SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ?
+    AND subnum = 0"#
+            .to_string();
 
-    //     let stmt = conn.prepare(&q).await.unwrap();
-    //     stmt.execute(("3", 518668))
-    //         .await
-    //         .unwrap()/*
-    //         .for_each(|row| {
-    //             let z: u8 = row.get(0).unwrap();
-    //             let x: u8 = row.get(1).unwrap();
-    //             println!("{} {}", z, x);
-    //         })
-    //         .await
-    //         .unwrap()*/;
-    //     yb.0.disconnect().await.unwrap();
-    //     return Ok(1);
-    // }
+        conn.query_drop(
+            r"CREATE TEMPORARY TABLE payment (
+                    customer_id int not null,
+                    amount int not null,
+                    account_name text
+                )"
+        )
+        .unwrap();
+        conn.query_drop(
+            r"CREATE TEMPORARY TABLE payment (
+                    customer_id int not null,
+                    amount int not null,
+                    account_name text
+                )"
+        )
+        .unwrap();
+        return Ok(1);
+    }
 
     let (db_client, connection) =
         tokio_postgres::connect(&config.settings.db_url, tokio_postgres::NoTls)
@@ -132,48 +135,77 @@ async fn async_main() -> Result<u64> {
         .build()
         .expect("Err building the HTTP Client");
 
-    let ss = pgsql::Schema::new();
-    let archiver = YotsubaArchiver::new(http_client, db_client, config, ss).await;
-    archiver.listen_to_exit();
-    archiver.query.init_schema(&archiver.config.settings.schema).await;
-    archiver.query.init_type().await;
-    archiver.query.init_metadata().await;
+    // let ss = pgsql::Schema::new();
+    // Rust articles
+    // https://rust-cli.github.io/book/tutorial/index.html
+    // https://doc.rust-lang.org/edition-guide/rust-2018/trait-system/impl-trait-for-returning-complex-types-with-ease.html
+
+    // let archive2r = YotsubaArchiver2::<tokio_postgres::Statement, tokio_postgres::Client,
+    // tokio_postgres::Client, reqwest::Client> {query: db_client, client: http_client, config,
+    // finished: Arc::new(AtomicBool::new(false))};
+
+    let stmt = db_client.prepare("select 1;").await.unwrap();
+    // let stmt = conn.prep("select 1;").unwrap();
+    // let archiver2 = YotsubaArchiver2::new(stmt, pool, http_client.clone(), config.clone()).await;
+    let archiver2 =
+        YotsubaArchiver2::new(stmt, db_client, http_client.clone(), config.clone()).await;
+
+    // let st :()= a.create_statements().await;
+    // let archiver = YotsubaArchiver::new(http_client, db_client, config, ss).await;
+    // archiver.listen_to_exit();
+    archiver2.listen_to_exit();
 
     sleep(Duration::from_millis(1100)).await;
-    archiver.run().await;
+    archiver2.run().await;
+    // archiver.run().await;
     Ok(0)
 }
 
-/// A struct to store variables without using global statics.
-/// It also allows passing http client as reference.
-pub struct YotsubaArchiver<H: request::HttpClient, S: sql::SchemaTrait> {
-    client:   YotsubaHttpClient<H>,
-    query:    tokio_postgres::Client,
+pub struct YotsubaArchiver2<S, D: DatabaseTrait<S>, H: request::HttpClient> {
+    _stmt:    S,
+    query:    D,
+    client:   H,
     config:   Config,
-    sql:      YotsubaSchema<S>,
     finished: Arc<AtomicBool>
 }
-impl<H, S> YotsubaArchiver<H, S>
+
+// The implementation of `YotsubaArchiver2` that handles everything
+impl<S, D, H> YotsubaArchiver2<S, D, H>
 where
-    H: request::HttpClient,
-    S: sql::SchemaTrait
+    D: DatabaseTrait<S>,
+    H: request::HttpClient
 {
-    async fn new(
-        http_client: H, db_client: tokio_postgres::Client, config: Config, _sql: S
-    ) -> Self {
+    async fn new(_stmt: S, db_client: D, http_client: H, config: Config) -> Self {
         Self {
-            client: YotsubaHttpClient::new(http_client),
+            _stmt,
             query: db_client,
+            client: http_client,
             config,
-            sql: sql::YotsubaSchema::new(_sql),
             finished: Arc::new(AtomicBool::new(false))
         }
     }
 
+    // async fn st(&self, stmts: HashMap<YotsubaIdentifier, S>) {
+    //     let id = YotsubaIdentifier::new(
+    //         YotsubaEndpoint::Threads,
+    //         YotsubaBoard::a,
+    //         YotsubaStatement::UpdateThread
+    //     );
+    //     let stmt = stmts.get(&id).unwrap();
+    //     self.query.update_metadata_new(&stmts, id, vec![].as_slice());
+    // }
+
     async fn run(&self) {
+        self.query.init_schema_new(&self.config.settings.schema).await;
+        self.query.init_type_new().await;
+        self.query.init_metadata_new().await;
+
+        // Runs an archive, threads, and media thread concurrently
         let mut fut = FuturesUnordered::new();
         let semaphore = Arc::new(Semaphore::new(1));
-        let (tx, rx) = unbounded_channel::<(BoardSettings, StatementStore, u32)>();
+        let (tx, rx) = unbounded_channel();
+
+        // Media background thread
         fut.push(self.compute(
             YotsubaEndpoint::Media,
             &self.config.board_settings,
@@ -183,8 +215,8 @@ where
         ));
 
         for board in self.config.boards.iter() {
-            self.query.init_board(board.board).await;
-            self.query.init_views(board.board).await;
+            self.query.init_board_new(board.board).await;
+            self.query.init_views_new(board.board).await;
 
             if board.download_archives {
                 fut.push(self.compute(
@@ -208,10 +240,6 @@ where
         while let Some(_) = fut.next().await {}
     }
 
-    fn get_path(&self) -> &str {
-        &self.config.settings.path
-    }
-
     fn listen_to_exit(&self) {
         let finished_clone = Arc::clone(&self.finished);
         ctrlc::set_handler(move || {
@@ -222,122 +250,89 @@ where
 
     async fn create_statements(
         &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, media_mode: YotsubaStatement
-    ) -> StatementStore {
-        let mut statement_store: StatementStore = HashMap::new();
+    ) -> HashMap<YotsubaIdentifier, S> {
+        let mut statement_store = HashMap::new();
         let statements: Vec<_> = YotsubaStatement::into_enum_iter().collect();
+        let gen_id = |stmt: YotsubaStatement| -> YotsubaIdentifier {
+            YotsubaIdentifier::new(endpoint, board, stmt)
+        };
+
         if endpoint == YotsubaEndpoint::Media {
             statement_store.insert(
-                YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias },
-                self.query.prepare(self.sql.medias(board, media_mode).as_str()).await.unwrap()
+                gen_id(YotsubaStatement::Medias),
+                self.query.prepare(&self.query.query_medias(board, media_mode)).await
             );
 
             statement_store.insert(
-                YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateHashMedia },
+                gen_id(YotsubaStatement::UpdateHashMedia),
                 self.query
-                    .prepare(
-                        self.sql
-                            .update_hash(
-                                board,
-                                YotsubaHash::Sha256,
-                                YotsubaStatement::UpdateHashMedia
-                            )
-                            .as_str()
-                    )
+                    .prepare(&self.query.query_update_hash(
+                        board,
+                        YotsubaHash::Sha256,
+                        YotsubaStatement::UpdateHashMedia
+                    ))
                     .await
-                    .unwrap()
             );
             statement_store.insert(
-                YotsubaIdentifier {
-                    endpoint,
-                    board,
-                    statement: YotsubaStatement::UpdateHashThumbs
-                },
+                gen_id(YotsubaStatement::UpdateHashThumbs),
                 self.query
-                    .prepare(
-                        self.sql
-                            .update_hash(
-                                board,
-                                YotsubaHash::Sha256,
-                                YotsubaStatement::UpdateHashThumbs
-                            )
-                            .as_str()
-                    )
+                    .prepare(&self.query.query_update_hash(
+                        board,
+                        YotsubaHash::Sha256,
+                        YotsubaStatement::UpdateHashThumbs
+                    ))
                     .await
-                    .unwrap()
             );
             return statement_store;
         }
+
         for statement in statements {
-            statement_store.insert(
-                YotsubaIdentifier { endpoint, board, statement },
-                match statement {
-                    YotsubaStatement::UpdateMetadata => self
-                        .query
-                        .prepare(self.sql.update_metadata(endpoint).as_str())
-                        .await
-                        .unwrap(),
-                    YotsubaStatement::UpdateThread =>
-                        self.query.prepare(self.sql.update_thread(board).as_str()).await.unwrap(),
-                    YotsubaStatement::Delete =>
-                        self.query.prepare(self.sql.delete(board).as_str()).await.unwrap(),
-                    YotsubaStatement::UpdateDeleteds =>
-                        self.query.prepare(self.sql.update_deleteds(board).as_str()).await.unwrap(),
-                    YotsubaStatement::UpdateHashMedia => self
-                        .query
-                        .prepare(
-                            self.sql
-                                .update_hash(
-                                    board,
-                                    YotsubaHash::Sha256,
-                                    YotsubaStatement::UpdateHashMedia
-                                )
-                                .as_str()
-                        )
-                        .await
-                        .unwrap(),
-                    YotsubaStatement::UpdateHashThumbs => self
-                        .query
-                        .prepare(
-                            self.sql
-                                .update_hash(
-                                    board,
-                                    YotsubaHash::Sha256,
-                                    YotsubaStatement::UpdateHashThumbs
-                                )
-                                .as_str()
-                        )
-                        .await
-                        .unwrap(),
-                    YotsubaStatement::Medias => self
-                        .query
-                        .prepare(self.sql.medias(board, YotsubaStatement::Medias).as_str())
-                        .await
-                        .unwrap(),
-                    YotsubaStatement::Threads =>
-                        self.query.prepare(self.sql.threads().as_str()).await.unwrap(),
-                    YotsubaStatement::ThreadsModified => self
-                        .query
-                        .prepare(self.sql.threads_modified(endpoint).as_str())
-                        .await
-                        .unwrap(),
-                    YotsubaStatement::ThreadsCombined => self
-                        .query
-                        .prepare(self.sql.threads_combined(board, endpoint).as_str())
-                        .await
-                        .unwrap(),
-                    YotsubaStatement::Metadata =>
-                        self.query.prepare(self.sql.metadata(endpoint).as_str()).await.unwrap(),
-                }
-            );
+            statement_store.insert(gen_id(statement), match statement {
+                YotsubaStatement::UpdateMetadata =>
+                    self.query.prepare(&self.query.query_update_metadata(endpoint)).await,
+                YotsubaStatement::UpdateThread =>
+                    self.query.prepare(&self.query.query_update_thread(board)).await,
+                YotsubaStatement::Delete =>
+                    self.query.prepare(&self.query.query_delete(board)).await,
+                YotsubaStatement::UpdateDeleteds =>
+                    self.query.prepare(&self.query.query_update_deleteds(board)).await,
+                YotsubaStatement::UpdateHashMedia =>
+                    self.query
+                        .prepare(&self.query.query_update_hash(
+                            board,
+                            YotsubaHash::Sha256,
+                            YotsubaStatement::UpdateHashMedia
+                        ))
+                        .await,
+                YotsubaStatement::UpdateHashThumbs =>
+                    self.query
+                        .prepare(&self.query.query_update_hash(
+                            board,
+                            YotsubaHash::Sha256,
+                            YotsubaStatement::UpdateHashThumbs
+                        ))
+                        .await,
+                YotsubaStatement::Medias =>
+                    self.query
+                        .prepare(&self.query.query_medias(board, YotsubaStatement::Medias))
+                        .await,
+                YotsubaStatement::Threads => self.query.prepare(&self.query.query_threads()).await,
+                YotsubaStatement::ThreadsModified =>
+                    self.query.prepare(&self.query.query_threads_modified(endpoint)).await,
+                YotsubaStatement::ThreadsCombined =>
+                    self.query.prepare(&self.query.query_threads_combined(board, endpoint)).await,
+                YotsubaStatement::Metadata =>
+                    self.query.prepare(&self.query.query_metadata(endpoint)).await,
+            });
         }
+
         statement_store
     }
 
-    #[allow(unused_mut)]
     async fn compute(
         &self, endpoint: YotsubaEndpoint, info: &BoardSettings, semaphore: Arc<Semaphore>,
-        tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
-        rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>
+        tx: Option<UnboundedSender<(BoardSettings, StatementStore2<S>, u32)>>,
+        rx: Option<UnboundedReceiver<(BoardSettings, StatementStore2<S>, u32)>>
     )
     {
         match endpoint {
@@ -397,7 +392,7 @@ where
         &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, last_modified: &mut String,
         fetched_threads: &mut Option<Vec<u8>>, local_threads_list: &mut VecDeque<u32>,
         init: &mut bool, update_metadata: &mut bool, has_archives: &mut bool,
-        statements: &StatementStore
+        statements: &StatementStore2<S>
     )
     {
         if endpoint == YotsubaEndpoint::Archive && !*has_archives {
@@ -465,7 +460,11 @@ where
                                 *fetched_threads = Some(body.to_owned());
 
                                 // Check if there's an entry in the metadata
-                                if self.query.metadata(&statements, endpoint, current_board).await {
+                                if self
+                                    .query
+                                    .metadata_new(&statements, endpoint, current_board)
+                                    .await
+                                {
                                     let ena_resume = config::ena_resume();
 
                                     // if there's cache
@@ -487,7 +486,7 @@ where
                                         // (excluding archived, deleted, and duplicate threads)
                                         if let Ok(mut list) = self
                                             .query
-                                            .threads_combined(
+                                            .threads_combined_new(
                                                 &statements,
                                                 endpoint,
                                                 current_board,
@@ -520,7 +519,7 @@ where
                                             Some(statement_recieved) => {
                                                 if let Ok(mut list) = self
                                                     .query
-                                                    .threads_modified(
+                                                    .threads_modified_new(
                                                         current_board,
                                                         &body,
                                                         statement_recieved
@@ -547,7 +546,7 @@ where
                                     // No cache found, use fetched_threads
                                     if let Err(e) = self
                                         .query
-                                        .update_metadata(
+                                        .update_metadata_new(
                                             &statements,
                                             endpoint,
                                             current_board,
@@ -562,7 +561,12 @@ where
 
                                     match if endpoint == YotsubaEndpoint::Threads {
                                         self.query
-                                            .threads(&statements, endpoint, current_board, &body)
+                                            .threads_new(
+                                                &statements,
+                                                endpoint,
+                                                current_board,
+                                                &body
+                                            )
                                             .await
                                     } else {
                                         // Converting to anyhow
@@ -604,8 +608,8 @@ where
     /// Manages a single board
     async fn fetch_board(
         &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, semaphore: Arc<Semaphore>,
-        tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
-        _rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>
+        tx: Option<UnboundedSender<(BoardSettings, StatementStore2<S>, u32)>>,
+        _rx: Option<UnboundedReceiver<(BoardSettings, StatementStore2<S>, u32)>>
     ) -> Option<()>
     {
         let current_board = bs.board;
@@ -631,8 +635,6 @@ where
             // So this is fine
             YotsubaStatement::Threads
         };
-        let statements_media =
-            self.create_statements(YotsubaEndpoint::Media, current_board, file_setting).await;
 
         let dur = Duration::from_millis(250);
         let ratel = Duration::from_millis(bs.throttle_millisec.into());
@@ -695,13 +697,19 @@ where
             let mut position = 1_u32;
             let t = tx.clone().unwrap();
             while let Some(thread) = local_threads_list.pop_front() {
+                // No `clone()` method for  the HashMap with the trait, so I have to put this here
+                // in the loop
+                let statements_media = self
+                    .create_statements(YotsubaEndpoint::Media, current_board, file_setting)
+                    .await;
+
                 // Semaphore
                 let mut _sem_thread = None;
                 if self.config.settings.strict_mode {
                     _sem_thread = Some(semaphore.acquire().await);
                 }
                 if self.finished.load(Ordering::Relaxed) {
-                    if let Err(e) = t.send((bs.clone(), statements_media.clone(), 0)) {
+                    if let Err(e) = t.send((bs.clone(), statements_media, 0)) {
                         error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                     }
                     break;
@@ -710,7 +718,7 @@ where
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, endpoint, thread, position, threads_len, &statements)
                     .await;
-                if let Err(e) = t.send((bs.clone(), statements_media.clone(), thread)) {
+                if let Err(e) = t.send((bs.clone(), statements_media, thread)) {
                     error!(
                         "(media)\t/{}/{}\t[{}/{}] {}",
                         &bs.board, thread, position, threads_len, e
@@ -731,8 +739,10 @@ where
             // list of threads it was processing before + new ones.
             if threads_len > 0 && update_metadata {
                 if let Some(ft) = &fetched_threads {
-                    if let Err(e) =
-                        self.query.update_metadata(&statements, endpoint, current_board, &ft).await
+                    if let Err(e) = self
+                        .query
+                        .update_metadata_new(&statements, endpoint, current_board, &ft)
+                        .await
                     {
                         error!("Error executing update_metadata function! {}", e);
                     }
@@ -760,7 +770,7 @@ where
     // Download a single thread and its media
     async fn assign_to_thread(
         &self, board_settings: &BoardSettings, endpoint: YotsubaEndpoint, thread: u32,
-        position: u32, length: usize, statements: &StatementStore
+        position: u32, length: usize, statements: &StatementStore2<S>
     )
     {
         let board = board_settings.board;
@@ -787,14 +797,16 @@ where
                             );
                             sleep(Duration::from_secs(1)).await;
                         } else {
-                            if let Err(e) =
-                                self.query.update_thread(&statements, endpoint, board, &body).await
+                            if let Err(e) = self
+                                .query
+                                .update_thread_new(&statements, endpoint, board, &body)
+                                .await
                             {
                                 error!("Error executing update_thread function! {}", e);
                             }
                             match self
                                 .query
-                                .update_deleteds(statements, endpoint, board, thread, &body)
+                                .update_deleteds_new(&statements, endpoint, board, thread, &body)
                                 .await
                             {
                                 Ok(_) => info!(
@@ -806,7 +818,7 @@ where
                             break;
                         },
                     StatusCode::NOT_FOUND => {
-                        self.query.delete(statements, endpoint, board, thread).await;
+                        self.query.delete_new(&statements, endpoint, board, thread).await;
                         warn!(
                             "({})\t/{}/{}\t[{}/{}] <DELETED>",
                             endpoint, board, thread, position, length
@@ -825,14 +837,14 @@ where
 
     /// FETCH MEDIA
     async fn fetch_media(
-        &self, info: &BoardSettings, statements: &StatementStore, endpoint: YotsubaEndpoint,
+        &self, info: &BoardSettings, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint,
         no: u32, downloading: YotsubaEndpoint
     )
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
 
-        match self.query.medias(statements, endpoint, info.board, no).await {
+        match self.query.medias_new(statements, endpoint, info.board, no).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
@@ -920,7 +932,7 @@ where
                                     // );
 
                                     self.query
-                                        .update_hash(
+                                        .update_hash_new(
                                             statements,
                                             endpoint,
                                             info.board,
@@ -957,8 +969,8 @@ where
         let tim: i64 = row.get("tim");
         let ext: String = row.get("ext");
         let resto: i64 = row.get("resto");
-        let path = self.get_path();
-        let thread = (if resto == 0 { no } else { resto }) as u32;
+        let path: &str = &self.config.settings.path;
+        let thread: u32 = (if resto == 0 { no } else { resto }) as u32;
 
         let mut hashsum: Option<Vec<u8>> = None;
         let domain = &self.config.settings.media_url;

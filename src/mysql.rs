@@ -1,28 +1,22 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-use crate::{sql::*, YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
+use crate::{sql::*, YotsubaBoard, YotsubaEndpoint, YotsubaHash};
+use ::mysql::{prelude::*, Statement, *};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use mysql_async::prelude::*;
-use std::{collections::VecDeque, convert::TryFrom};
-use tokio_postgres::Statement;
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryFrom
+};
 
-#[derive(Debug, Copy, Clone)]
-pub struct Schema;
-
-impl Schema {
-    pub fn new() -> Self {
-        Schema {}
-    }
-}
-
-impl SchemaTrait for Schema {
-    fn init_schema(&self, schema: &str) -> String {
-        unreachable!()
+impl Queries2 for ::mysql::Pool {
+    fn query_init_schema(&self, schema: &str) -> String {
+        // unreachable!()
+        "".into()
     }
 
-    fn init_metadata(&self) -> String {
+    fn query_init_metadata(&self) -> String {
         format!(
             "
             CREATE TABLE IF NOT EXISTS metadata (
@@ -35,14 +29,14 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn delete(&self, board: YotsubaBoard) -> String {
+    fn query_delete(&self, board: YotsubaBoard) -> String {
         format!(
             "UPDATE `{}` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0",
             board
         )
     }
 
-    fn update_deleteds(&self, board: YotsubaBoard) -> String {
+    fn query_update_deleteds(&self, board: YotsubaBoard) -> String {
         // This simulates a FULL JOIN
         format!(
             r#"
@@ -63,17 +57,17 @@ impl SchemaTrait for Schema {
                 ) as `src`
                 SET `{board}`.deleted = 1;"#,
             board = board,
-            schema_4chan_query = self.init_type()
+            schema_4chan_query = query_4chan_schema()
         )
     }
 
-    fn update_hash(
+    fn query_update_hash(
         &self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement
     ) -> String {
         unreachable!()
     }
 
-    fn update_metadata(&self, column: YotsubaEndpoint) -> String {
+    fn query_update_metadata(&self, column: YotsubaEndpoint) -> String {
         format!(
             "INSERT INTO metadata(board, {0})
                   VALUES (:board, :json)
@@ -85,7 +79,7 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String {
+    fn query_medias(&self, board: YotsubaBoard, thumb: YotsubaStatement) -> String {
         format!(
             "SELECT * FROM `{0}`
                 WHERE (media_hash is not null) AND (num=:no or thread_num=:no)
@@ -94,7 +88,7 @@ impl SchemaTrait for Schema {
         )
     }
 
-    fn threads_modified(&self, endpoint: YotsubaEndpoint) -> String {
+    fn query_threads_modified(&self, endpoint: YotsubaEndpoint) -> String {
         let thread = format!(
             r#"
         SELECT JSON_ARRAYAGG(coalesce (newv->'$.no', prev->'$.no')) from (
@@ -159,25 +153,25 @@ impl SchemaTrait for Schema {
         }
     }
 
-    fn threads(&self) -> String {
+    fn query_threads(&self) -> String {
         format!(
             r#"
         SELECT JSON_ARRAYAGG(z.no)
         FROM
         ( {schema_4chan_query} )z
         "#,
-            schema_4chan_query = self.init_type()
+            schema_4chan_query = query_4chan_schema()
         )
     }
 
-    fn metadata(&self, column: YotsubaEndpoint) -> String {
+    fn query_metadata(&self, column: YotsubaEndpoint) -> String {
         format!(
             r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = ?"#,
             column
         )
     }
 
-    fn threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String {
+    fn query_threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String {
         let thread = format!(
             r#"
         select JSON_ARRAYAGG(c) from (
@@ -251,7 +245,7 @@ impl SchemaTrait for Schema {
         }
     }
 
-    fn init_board(&self, board: YotsubaBoard) -> String {
+    fn query_init_board(&self, board: YotsubaBoard) -> String {
         r#"CREATE TABLE IF NOT EXISTS `?` (
             `doc_id` int unsigned NOT NULL auto_increment,
             `media_id` int unsigned NOT NULL DEFAULT '0',
@@ -303,56 +297,15 @@ impl SchemaTrait for Schema {
             .to_string()
     }
 
-    fn init_type(&self) -> String {
-        format!(
-            r#"SELECT * FROM JSON_TABLE(?, "$.posts[*]" COLUMNS(
-            `no`				BIGINT		PATH "$.no",
-            `sticky`			SMALLINT	PATH "$.sticky",
-            `closed`			SMALLINT	PATH "$.closed",
-            `now`				TEXT		PATH "$.now",
-            `name`				TEXT		PATH "$.name",
-            `sub`				TEXT		PATH "$.sub",
-            `com`				TEXT		PATH "$.com",
-            `filedeleted`		SMALLINT	PATH "$.filedeleted",
-            `spoiler`			SMALLINT	PATH "$.spoiler",
-            `custom_spoiler`	SMALLINT	PATH "$.custom_spoiler",
-            `filename`			TEXT		PATH "$.filename",
-            `ext`				TEXT		PATH "$.ext",
-            `w`					INT			PATH "$.h",
-            `h`					INT			PATH "$.w",
-            `tn_w`				INT			PATH "$.tn_w",
-            `tn_h`				INT			PATH "$.tn_h",
-            `tim`				BIGINT		PATH "$.tim",
-            `time`				BIGINT		PATH "$.time",
-            `md5`				TEXT		PATH "$.md5",
-            `fsize`				BIGINT		PATH "$.fsize",
-            `m_img`				SMALLINT	PATH "$.m_img",
-            `resto`				INT			PATH "$.resto",
-            `trip`				TEXT		PATH "$.trip",
-            `id`				TEXT		PATH "$.id",
-            `capcode`			TEXT		PATH "$.capcode",
-            `country`			TEXT		PATH "$.country",
-            `country_name`		TEXT		PATH "$.country_name",
-            `archived`			SMALLINT	PATH "$.archived",
-            `bumplimit`			SMALLINT	PATH "$.bumplimit",
-            `archived_on`		BIGINT		PATH "$.archived_on",
-            `imagelimit`		SMALLINT	PATH "$.imagelimit",
-            `semantic_url`		TEXT		PATH "$.semantic_url",
-            `replies`			INT			PATH "$.replies",
-            `images`			INT			PATH "$.images",
-            `unique_ips`		INT			PATH "$.unique_ips",
-            `tag`				TEXT		PATH "$.tag",
-            `since4pass`		SMALLINT	PATH "$.since4pass")
-            ) w
-        "#
-        )
-    }
-
-    fn init_views(&self, board: YotsubaBoard) -> String {
+    fn query_init_type(&self) -> String {
         unreachable!()
     }
 
-    fn update_thread(&self, board: YotsubaBoard) -> String {
+    fn query_init_views(&self, board: YotsubaBoard) -> String {
+        unreachable!()
+    }
+
+    fn query_update_thread(&self, board: YotsubaBoard) -> String {
         format!(
             r#"
         INSERT INTO `{}`(`poster_ip`,`num`,`subnum`,`thread_num`,`op`,`timestamp`,`timestamp_expired`,`preview_orig`,`preview_w`,`preview_h`,`media_filename`,`media_w`,`media_h`,`media_size`,`media_hash`,`media_orig`,`spoiler`,`deleted`,`capcode`,`email`,`name`,`trip`,`title`,`comment`,`delpass`,`sticky`,`locked`,`poster_hash`,`poster_country`,`exif`)
@@ -467,4 +420,150 @@ impl SchemaTrait for Schema {
             board
         )
     }
+}
+
+#[async_trait]
+impl QueriesExecutor2<Statement> for ::mysql::Pool {
+    async fn init_schema_new(&self, schema: &str) {
+        unimplemented!()
+    }
+
+    async fn init_type_new(&self) {
+        unimplemented!()
+    }
+
+    async fn init_metadata_new(&self) {
+        unimplemented!()
+    }
+
+    async fn init_board_new(&self, board: YotsubaBoard) {
+        unimplemented!()
+    }
+
+    async fn init_views_new(&self, board: YotsubaBoard) {
+        unimplemented!()
+    }
+
+    async fn update_metadata_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, item: &[u8]
+    ) -> Result<u64>
+    {
+        unimplemented!()
+    }
+
+    async fn update_thread_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, item: &[u8]
+    ) -> Result<u64>
+    {
+        unimplemented!()
+    }
+
+    async fn delete_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, no: u32
+    )
+    {
+        unimplemented!()
+    }
+
+    async fn update_deleteds_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, thread: u32, item: &[u8]
+    ) -> Result<u64>
+    {
+        unimplemented!()
+    }
+
+    async fn update_hash_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
+    )
+    {
+        unimplemented!()
+    }
+
+    async fn medias_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, no: u32
+    ) -> Result<Rows>
+    {
+        unimplemented!()
+    }
+
+    async fn threads_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, item: &[u8]
+    ) -> Result<VecDeque<u32>>
+    {
+        unimplemented!()
+    }
+
+    async fn threads_modified_new(
+        &self, board: YotsubaBoard, new_threads: &[u8], statement: &Statement
+    ) -> Result<VecDeque<u32>> {
+        unimplemented!()
+    }
+
+    async fn threads_combined_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, new_threads: &[u8]
+    ) -> Result<VecDeque<u32>>
+    {
+        unimplemented!()
+    }
+
+    async fn metadata_new(
+        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard
+    ) -> bool
+    {
+        unimplemented!()
+    }
+}
+
+fn query_4chan_schema() -> String {
+    format!(
+        r#"SELECT * FROM JSON_TABLE(?, "$.posts[*]" COLUMNS(
+        `no`				BIGINT		PATH "$.no",
+        `sticky`			SMALLINT	PATH "$.sticky",
+        `closed`			SMALLINT	PATH "$.closed",
+        `now`				TEXT		PATH "$.now",
+        `name`				TEXT		PATH "$.name",
+        `sub`				TEXT		PATH "$.sub",
+        `com`				TEXT		PATH "$.com",
+        `filedeleted`		SMALLINT	PATH "$.filedeleted",
+        `spoiler`			SMALLINT	PATH "$.spoiler",
+        `custom_spoiler`	SMALLINT	PATH "$.custom_spoiler",
+        `filename`			TEXT		PATH "$.filename",
+        `ext`				TEXT		PATH "$.ext",
+        `w`					INT			PATH "$.h",
+        `h`					INT			PATH "$.w",
+        `tn_w`				INT			PATH "$.tn_w",
+        `tn_h`				INT			PATH "$.tn_h",
+        `tim`				BIGINT		PATH "$.tim",
+        `time`				BIGINT		PATH "$.time",
+        `md5`				TEXT		PATH "$.md5",
+        `fsize`				BIGINT		PATH "$.fsize",
+        `m_img`				SMALLINT	PATH "$.m_img",
+        `resto`				INT			PATH "$.resto",
+        `trip`				TEXT		PATH "$.trip",
+        `id`				TEXT		PATH "$.id",
+        `capcode`			TEXT		PATH "$.capcode",
+        `country`			TEXT		PATH "$.country",
+        `country_name`		TEXT		PATH "$.country_name",
+        `archived`			SMALLINT	PATH "$.archived",
+        `bumplimit`			SMALLINT	PATH "$.bumplimit",
+        `archived_on`		BIGINT		PATH "$.archived_on",
+        `imagelimit`		SMALLINT	PATH "$.imagelimit",
+        `semantic_url`		TEXT		PATH "$.semantic_url",
+        `replies`			INT			PATH "$.replies",
+        `images`			INT			PATH "$.images",
+        `unique_ips`		INT			PATH "$.unique_ips",
+        `tag`				TEXT		PATH "$.tag",
+        `since4pass`		SMALLINT	PATH "$.since4pass")
+        ) w
+    "#
+    )
 }

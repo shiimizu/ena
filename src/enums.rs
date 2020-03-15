@@ -34,11 +34,19 @@ impl fmt::Display for YotsubaEndpoint {
         }
     }
 }
-#[derive(Debug, std::hash::Hash, PartialEq, std::cmp::Eq, Clone)]
+#[derive(Debug, std::hash::Hash, PartialEq, std::cmp::Eq, Clone, Copy)]
 pub struct YotsubaIdentifier {
     pub endpoint:  YotsubaEndpoint,
     pub board:     YotsubaBoard,
     pub statement: YotsubaStatement
+}
+
+impl YotsubaIdentifier {
+    pub fn new(
+        endpoint: YotsubaEndpoint, board: YotsubaBoard, statement: YotsubaStatement
+    ) -> Self {
+        Self { endpoint, board, statement }
+    }
 }
 
 impl fmt::Display for YotsubaBoard {

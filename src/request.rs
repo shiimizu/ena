@@ -12,30 +12,6 @@ pub trait HttpClient: Sync + Send {
     ) -> Result<(String, StatusCode, Vec<u8>), reqwest::Error>;
 }
 
-/// Http Client wrapper to  promote modularity and extensibility.
-///
-/// Just add your desired http client with the `HttpClient` trait and implement
-/// `get`.
-pub struct YotsubaHttpClient<T: HttpClient>(T);
-
-impl<T> YotsubaHttpClient<T>
-where T: HttpClient
-{
-    pub fn new(client: T) -> Self {
-        Self(client)
-    }
-}
-
-impl<T> std::ops::Deref for YotsubaHttpClient<T>
-where T: HttpClient
-{
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
 /// Implementation of `HttpClient` for `reqwest`.
 #[async_trait]
 impl HttpClient for reqwest::Client {
