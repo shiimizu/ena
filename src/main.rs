@@ -49,25 +49,7 @@ fn main() {
         config::display_full_version();
         exit(0)
     });
-    println!(
-        r#"
-    ⣿⠟⣽⣿⣿⣿⣿⣿⢣⠟⠋⡜⠄⢸⣿⣿⡟⣬⢁⠠⠁⣤⠄⢰⠄⠇⢻⢸
-    ⢏⣾⣿⣿⣿⠿⣟⢁⡴⡀⡜⣠⣶⢸⣿⣿⢃⡇⠂⢁⣶⣦⣅⠈⠇⠄⢸⢸
-    ⣹⣿⣿⣿⡗⣾⡟⡜⣵⠃⣴⣿⣿⢸⣿⣿⢸⠘⢰⣿⣿⣿⣿⡀⢱⠄⠨⢸       ____
-    ⣿⣿⣿⣿⡇⣿⢁⣾⣿⣾⣿⣿⣿⣿⣸⣿⡎⠐⠒⠚⠛⠛⠿⢧⠄⠄⢠⣼      /\  _`\
-    ⣿⣿⣿⣿⠃⠿⢸⡿⠭⠭⢽⣿⣿⣿⢂⣿⠃⣤⠄⠄⠄⠄⠄⠄⠄⠄⣿⡾      \ \ \L\_     ___      __
-    ⣼⠏⣿⡏⠄⠄⢠⣤⣶⣶⣾⣿⣿⣟⣾⣾⣼⣿⠒⠄⠄⠄⡠⣴⡄⢠⣿⣵       \ \  __\  /' _ `\  /'__`\
-    ⣳⠄⣿⠄⠄⢣⠸⣹⣿⡟⣻⣿⣿⣿⣿⣿⣿⡿⡻⡖⠦⢤⣔⣯⡅⣼⡿⣹        \ \ \___\/\ \/\ \/\ \L\.\_
-    ⡿⣼⢸⠄⠄⣷⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣕⡜⡌⡝⡸⠙⣼⠟⢱⠏         \ \____/\ \_\ \_\ \__/.\_\
-    ⡇⣿⣧⡰⡄⣿⣿⣿⣿⡿⠿⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣋⣪⣥⢠⠏⠄          \/___/  \/_/\/_/\/__/\/_/   v{}
-    ⣧⢻⣿⣷⣧⢻⣿⣿⣿⡇⠄⢀⣀⣀⡙⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠂⠄⠄
-    ⢹⣼⣿⣿⣿⣧⡻⣿⣿⣇⣴⣿⣿⣿⣷⢸⣿⣿⣿⣿⣿⣿⣿⣿⣰⠄⠄⠄
-    ⣼⡟⡟⣿⢸⣿⣿⣝⢿⣿⣾⣿⣿⣿⢟⣾⣿⣿⣿⣿⣿⣿⣿⣿⠟⠄⡀⡀        A lightweight 4chan archiver (¬ ‿ ¬ )
-    ⣿⢰⣿⢹⢸⣿⣿⣿⣷⣝⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠉⠄⠄⣸⢰⡇
-    ⣿⣾⣹⣏⢸⣿⣿⣿⣿⣿⣷⣍⡻⣛⣛⣛⡉⠁⠄⠄⠄⠄⠄⠄⢀⢇⡏⠄
-    "#,
-        config::version()
-    );
+    config::display();
 
     let start_time = Local::now();
     pretty_env_logger::try_init_timed_custom_env("ENA_LOG").unwrap();
@@ -90,7 +72,11 @@ fn main() {
 
 #[allow(unused_mut)]
 async fn async_main() -> Result<u64> {
-    let (config, conn_url) = config::read_config("ena_config.json");
+    let config = config::read_config("ena_config.json");
+
+    if config.boards.is_empty() {
+        panic!("No boards specified");
+    }
 
     // Find duplicate boards
     for a in &config.boards {
@@ -104,7 +90,6 @@ async fn async_main() -> Result<u64> {
         unimplemented!("Asagi mode outside of MySQL. Found {:?}", &config.settings.engine)
     }
 
-    // info!("{}", config.pretty());
     // TODO
     // Asagi
     // https://rust-cli.github.io/book/tutorial/index.html
@@ -113,8 +98,8 @@ async fn async_main() -> Result<u64> {
     // return Ok(0);
 
     // if config.settings.engine == Database::MySQL {
-    //     info!("Connected with:\t{}", conn_url);
-    //     let pool = mysql_async::Pool::new(&conn_url);
+    //     info!("Connected with:\t{}", config.settings.db_url);
+    //     let pool = mysql_async::Pool::new(&config.settings.db_url);
     //     let yb = YotsubaDatabase::new(pool);
     //     let conn = yb.get_conn().await.unwrap();
     //     let q = r#"UPDATE ? SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ?
@@ -135,17 +120,21 @@ async fn async_main() -> Result<u64> {
     //     return Ok(1);
     // }
 
-    let (db_client, connection) = tokio_postgres::connect(&conn_url, tokio_postgres::NoTls)
-        .await
-        .context(format!("\nPlease check your settings. Connection url used: {}", conn_url))
-        .expect("Connecting to database");
+    let (db_client, connection) =
+        tokio_postgres::connect(&config.settings.db_url, tokio_postgres::NoTls)
+            .await
+            .context(format!(
+                "\nPlease check your settings. Connection url used: {}",
+                config.settings.db_url
+            ))
+            .expect("Connecting to database");
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             error!("Connection error: {}", e);
         }
     });
-    info!("Connected with:\t\t{}", conn_url);
+    info!("Connected with:\t\t{}", config.settings.db_url);
 
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
@@ -202,7 +191,6 @@ where
         fut.push(self.compute(
             YotsubaEndpoint::Media,
             &self.config.board_settings,
-            Some(&self.config),
             semaphore.clone(),
             None,
             Some(rx)
@@ -216,7 +204,6 @@ where
                 fut.push(self.compute(
                     YotsubaEndpoint::Archive,
                     board,
-                    None,
                     semaphore.clone(),
                     Some(tx.clone()),
                     None
@@ -226,7 +213,6 @@ where
             fut.push(self.compute(
                 YotsubaEndpoint::Threads,
                 board,
-                None,
                 semaphore.clone(),
                 Some(tx.clone()),
                 None
@@ -234,10 +220,6 @@ where
         }
 
         while let Some(_) = fut.next().await {}
-    }
-
-    fn schema(&self) -> &str {
-        &self.config.settings.schema
     }
 
     fn get_path(&self) -> &str {
@@ -367,8 +349,7 @@ where
 
     #[allow(unused_mut)]
     async fn compute(
-        &self, endpoint: YotsubaEndpoint, info: &BoardSettings, config: Option<&Config>,
-        semaphore: Arc<Semaphore>,
+        &self, endpoint: YotsubaEndpoint, info: &BoardSettings, semaphore: Arc<Semaphore>,
         tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
         rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>
     )
@@ -394,6 +375,7 @@ where
                             info!("({})\tStopping media fetching...", endpoint);
                             downloading = YotsubaEndpoint::Threads;
                         }
+                        // Only leave here
                         // The signal to stop is a thread no of: 0
                         if received.2 == 0 {
                             break;
@@ -637,7 +619,7 @@ where
     async fn fetch_board(
         &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, semaphore: Arc<Semaphore>,
         tx: Option<UnboundedSender<(BoardSettings, StatementStore, u32)>>,
-        rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>
+        _rx: Option<UnboundedReceiver<(BoardSettings, StatementStore, u32)>>
     ) -> Option<()>
     {
         let current_board = bs.board;
@@ -869,13 +851,13 @@ where
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
                 let mut pg = None;
-                let mut ms = None;
+                let mut _ms = None;
                 match media_list {
                     Rows::PostgreSQL(p) => {
                         pg = Some(p);
                     }
                     Rows::MySQL(m) => {
-                        ms = Some(m);
+                        _ms = Some(m);
                     }
                 }
                 let ml = pg.unwrap();

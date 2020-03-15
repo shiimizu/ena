@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
+
 use crate::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -31,9 +32,11 @@ pub type StatementStore = HashMap<YotsubaIdentifier, Statement>;
 #[serde(rename_all = "lowercase")]
 pub enum Database {
     PostgreSQL,
-    MySQL
+    TimescaleDB,
+    MySQL,
+    InnoDB,
+    TokuDB
 }
-
 pub enum Rows {
     PostgreSQL(Vec<tokio_postgres::row::Row>),
     MySQL(Vec<mysql_async::Row>)
@@ -42,8 +45,8 @@ pub enum Rows {
 impl fmt::Display for Database {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Self::PostgreSQL => write!(f, "postgresql"),
-            Self::MySQL => write!(f, "mysql")
+            // Self::PostgreSQL | Self::TimescaleDB => write!(f, "postgresql"),
+            d => write!(f, "{:?}", d)
         }
     }
 }
@@ -51,23 +54,43 @@ impl fmt::Display for Database {
 /// Implement `into`.
 /// Help taken from this [blog](https://is.gd/94QtP0)
 /// [archive](http://archive.is/vIW5Y)
-impl Into<String> for Database {
+/*impl Into<String> for Database {
     fn into(self) -> String {
         self.to_string()
     }
-}
+}*/
 
 impl Into<Database> for String {
     fn into(self) -> Database {
-        if let Some(found) =
-            Database::into_enum_iter().find(|db| db.to_string() == self.to_lowercase())
+        println!("Inside INTO {}", self);
+        // Key point to note here is the `to_lowercase()`
+        if let Some(found) = Database::into_enum_iter()
+            .find(|db| db.to_string().to_lowercase() == self.to_lowercase())
         {
             found
         } else {
-            Database::PostgreSQL
+            let list = Database::into_enum_iter()
+                .map(|zz| zz.to_string())
+                .collect::<Vec<String>>()
+                .join("`, `");
+            panic!(format!("unknown variant `{}`, expected one of `{}`", self, list));
         }
     }
 }
+
+// impl From<Database> for String {
+//     fn from(d: Database) -> String {
+//     println!("INSIDE  FROM TRAIT");
+//         d.to_string().to_lowercase()
+//         // if let Some(found) =
+//         //     Database::into_enum_iter().find(|db| db.to_string() == d.to_lowercase())
+//         // {
+//         //     found
+//         // } else {
+//         //     Database::PostgreSQL
+//         // }
+//     }
+// }
 
 #[derive(
     Debug, Copy, Clone, std::hash::Hash, PartialEq, std::cmp::Eq, enum_iterator::IntoEnumIterator,

@@ -51,28 +51,32 @@ impl fmt::Display for YotsubaBoard {
     }
 }
 
-/// Proper deserialize from JSON
+/// Proper deserialize from JSON  
 ///
+/// Manually override the deserialization to only allow every board except `None`
+/// and do a proper display for the board: `3` using its
+/// display trait impl rather than using its debug trait impl which shows "_3".  
 /// Help taken from this [blog](https://is.gd/Y8tCz3]
 /// and [`serde/test_annotations.rs`](https://is.gd/7qt6Sl)
-/// and [`strings`](https://is.gd/u54Y0T)
+/// and [`strings`](https://is.gd/u54Y0T)  
 impl<'de> Deserialize<'de> for YotsubaBoard {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where D: Deserializer<'de> {
         let s = String::deserialize(deserializer)?;
-        // YotsubaBoard::into_enum_iter().for_each(|zz|println!("'{}'",s));
         if let Some(found) =
             YotsubaBoard::into_enum_iter().skip(1).find(|_board| _board.to_string() == s)
         {
             Ok(found)
         } else {
-            let j = YotsubaBoard::into_enum_iter()
+            let list_of_boards = YotsubaBoard::into_enum_iter()
                 .skip(1)
-                .map(|zz| zz.to_string())
+                .map(|zz| zz.to_string().to_lowercase())
                 .collect::<Vec<String>>()
                 .join("`, `");
-            Err(de::Error::custom(&format!("unknown variant `{}`, expected one of `{}`", s, j)))
-            // Err(de::Error::unknown_variant(&s, ss))
+            Err(de::Error::custom(&format!(
+                "unknown variant `{}`, expected one of `{}`",
+                s, list_of_boards
+            )))
         }
     }
 }
@@ -83,15 +87,6 @@ impl<'de> Deserialize<'de> for YotsubaBoard {
 impl Serialize for YotsubaBoard {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where S: Serializer {
-        // let s: Vec<_> = Self::into_enum_iter().map(|zz|zz.to_string()).collect();
-
-        /*match *self {
-            YotsubaBoard::None => serializer.serialize_unit_variant("YotsubaBoard", 0, ""),
-            z => {
-                // serializer.serialize_unit_variant("YotsubaBoard", z as u32, "z")
-                serializer.serialize_str("YotsubaBoard")
-            },
-        }*/
         serializer.serialize_str(&self.to_string())
     }
 }
