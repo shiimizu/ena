@@ -192,13 +192,13 @@ where
     //         YotsubaStatement::UpdateThread
     //     );
     //     let stmt = stmts.get(&id).unwrap();
-    //     self.query.update_metadata_new(&stmts, id, vec![].as_slice());
+    //     self.query.update_metadata(&stmts, id, vec![].as_slice());
     // }
 
     async fn run(&self) {
-        self.query.init_schema_new(&self.config.settings.schema).await;
-        self.query.init_type_new().await;
-        self.query.init_metadata_new().await;
+        self.query.init_schema(&self.config.settings.schema).await;
+        self.query.init_type().await;
+        self.query.init_metadata().await;
 
         // Runs an archive, threads, and media thread concurrently
         let mut fut = FuturesUnordered::new();
@@ -215,8 +215,8 @@ where
         ));
 
         for board in self.config.boards.iter() {
-            self.query.init_board_new(board.board).await;
-            self.query.init_views_new(board.board).await;
+            self.query.init_board(board.board).await;
+            self.query.init_views(board.board).await;
 
             if board.download_archives {
                 fut.push(self.compute(
@@ -331,8 +331,8 @@ where
 
     async fn compute(
         &self, endpoint: YotsubaEndpoint, info: &BoardSettings, semaphore: Arc<Semaphore>,
-        tx: Option<UnboundedSender<(BoardSettings, StatementStore2<S>, u32)>>,
-        rx: Option<UnboundedReceiver<(BoardSettings, StatementStore2<S>, u32)>>
+        tx: Option<UnboundedSender<(BoardSettings, StatementStore<S>, u32)>>,
+        rx: Option<UnboundedReceiver<(BoardSettings, StatementStore<S>, u32)>>
     )
     {
         match endpoint {
@@ -392,7 +392,7 @@ where
         &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, last_modified: &mut String,
         fetched_threads: &mut Option<Vec<u8>>, local_threads_list: &mut VecDeque<u32>,
         init: &mut bool, update_metadata: &mut bool, has_archives: &mut bool,
-        statements: &StatementStore2<S>
+        statements: &StatementStore<S>
     )
     {
         if endpoint == YotsubaEndpoint::Archive && !*has_archives {
@@ -414,15 +414,15 @@ where
                 )
                 .await
             {
-                Ok((last_modified_new, status, body)) => {
-                    if last_modified_new.is_empty() {
+                Ok((last_modified_recieved, status, body)) => {
+                    if last_modified.is_empty() {
                         error!(
                             "({})\t/{}/\t\t<{}> An error has occurred getting the last_modified date",
                             endpoint, current_board, status
                         );
-                    } else if *last_modified != last_modified_new {
+                    } else if *last_modified != last_modified_recieved {
                         last_modified.clear();
-                        last_modified.push_str(&last_modified_new);
+                        last_modified.push_str(&last_modified_recieved);
                     }
                     match status {
                         StatusCode::NOT_MODIFIED =>
@@ -462,7 +462,7 @@ where
                                 // Check if there's an entry in the metadata
                                 if self
                                     .query
-                                    .metadata_new(&statements, endpoint, current_board)
+                                    .metadata(&statements, endpoint, current_board)
                                     .await
                                 {
                                     let ena_resume = config::ena_resume();
@@ -486,7 +486,7 @@ where
                                         // (excluding archived, deleted, and duplicate threads)
                                         if let Ok(mut list) = self
                                             .query
-                                            .threads_combined_new(
+                                            .threads_combined(
                                                 &statements,
                                                 endpoint,
                                                 current_board,
@@ -519,7 +519,7 @@ where
                                             Some(statement_recieved) => {
                                                 if let Ok(mut list) = self
                                                     .query
-                                                    .threads_modified_new(
+                                                    .threads_modified(
                                                         current_board,
                                                         &body,
                                                         statement_recieved
@@ -546,7 +546,7 @@ where
                                     // No cache found, use fetched_threads
                                     if let Err(e) = self
                                         .query
-                                        .update_metadata_new(
+                                        .update_metadata(
                                             &statements,
                                             endpoint,
                                             current_board,
@@ -561,7 +561,7 @@ where
 
                                     match if endpoint == YotsubaEndpoint::Threads {
                                         self.query
-                                            .threads_new(
+                                            .threads(
                                                 &statements,
                                                 endpoint,
                                                 current_board,
@@ -608,8 +608,8 @@ where
     /// Manages a single board
     async fn fetch_board(
         &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, semaphore: Arc<Semaphore>,
-        tx: Option<UnboundedSender<(BoardSettings, StatementStore2<S>, u32)>>,
-        _rx: Option<UnboundedReceiver<(BoardSettings, StatementStore2<S>, u32)>>
+        tx: Option<UnboundedSender<(BoardSettings, StatementStore<S>, u32)>>,
+        _rx: Option<UnboundedReceiver<(BoardSettings, StatementStore<S>, u32)>>
     ) -> Option<()>
     {
         let current_board = bs.board;
@@ -741,7 +741,7 @@ where
                 if let Some(ft) = &fetched_threads {
                     if let Err(e) = self
                         .query
-                        .update_metadata_new(&statements, endpoint, current_board, &ft)
+                        .update_metadata(&statements, endpoint, current_board, &ft)
                         .await
                     {
                         error!("Error executing update_metadata function! {}", e);
@@ -770,7 +770,7 @@ where
     // Download a single thread and its media
     async fn assign_to_thread(
         &self, board_settings: &BoardSettings, endpoint: YotsubaEndpoint, thread: u32,
-        position: u32, length: usize, statements: &StatementStore2<S>
+        position: u32, length: usize, statements: &StatementStore<S>
     )
     {
         let board = board_settings.board;
@@ -799,14 +799,14 @@ where
                         } else {
                             if let Err(e) = self
                                 .query
-                                .update_thread_new(&statements, endpoint, board, &body)
+                                .update_thread(&statements, endpoint, board, &body)
                                 .await
                             {
                                 error!("Error executing update_thread function! {}", e);
                             }
                             match self
                                 .query
-                                .update_deleteds_new(&statements, endpoint, board, thread, &body)
+                                .update_deleteds(&statements, endpoint, board, thread, &body)
                                 .await
                             {
                                 Ok(_) => info!(
@@ -818,7 +818,7 @@ where
                             break;
                         },
                     StatusCode::NOT_FOUND => {
-                        self.query.delete_new(&statements, endpoint, board, thread).await;
+                        self.query.delete(&statements, endpoint, board, thread).await;
                         warn!(
                             "({})\t/{}/{}\t[{}/{}] <DELETED>",
                             endpoint, board, thread, position, length
@@ -837,14 +837,14 @@ where
 
     /// FETCH MEDIA
     async fn fetch_media(
-        &self, info: &BoardSettings, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint,
+        &self, info: &BoardSettings, statements: &StatementStore<S>, endpoint: YotsubaEndpoint,
         no: u32, downloading: YotsubaEndpoint
     )
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
 
-        match self.query.medias_new(statements, endpoint, info.board, no).await {
+        match self.query.medias(statements, endpoint, info.board, no).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
@@ -932,7 +932,7 @@ where
                                     // );
 
                                     self.query
-                                        .update_hash_new(
+                                        .update_hash(
                                             statements,
                                             endpoint,
                                             info.board,

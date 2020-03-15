@@ -10,7 +10,7 @@ use std::{
     convert::TryFrom
 };
 
-impl Queries2 for ::mysql::Pool {
+impl Queries for ::mysql::Pool {
     fn query_init_schema(&self, schema: &str) -> String {
         // unreachable!()
         "".into()
@@ -423,99 +423,99 @@ impl Queries2 for ::mysql::Pool {
 }
 
 #[async_trait]
-impl QueriesExecutor2<Statement> for ::mysql::Pool {
-    async fn init_schema_new(&self, schema: &str) {
+impl QueriesExecutor<Statement> for ::mysql::Pool {
+    async fn init_schema(&self, schema: &str) {
         unimplemented!()
     }
 
-    async fn init_type_new(&self) {
+    async fn init_type(&self) {
         unimplemented!()
     }
 
-    async fn init_metadata_new(&self) {
+    async fn init_metadata(&self) {
         unimplemented!()
     }
 
-    async fn init_board_new(&self, board: YotsubaBoard) {
+    async fn init_board(&self, board: YotsubaBoard) {
         unimplemented!()
     }
 
-    async fn init_views_new(&self, board: YotsubaBoard) {
+    async fn init_views(&self, board: YotsubaBoard) {
         unimplemented!()
     }
 
-    async fn update_metadata_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_metadata(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
         unimplemented!()
     }
 
-    async fn update_thread_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_thread(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
         unimplemented!()
     }
 
-    async fn delete_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn delete(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u32
     )
     {
         unimplemented!()
     }
 
-    async fn update_deleteds_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_deleteds(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, thread: u32, item: &[u8]
     ) -> Result<u64>
     {
         unimplemented!()
     }
 
-    async fn update_hash_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_hash(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
     )
     {
         unimplemented!()
     }
 
-    async fn medias_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn medias(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u32
     ) -> Result<Rows>
     {
         unimplemented!()
     }
 
-    async fn threads_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn threads(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, item: &[u8]
     ) -> Result<VecDeque<u32>>
     {
         unimplemented!()
     }
 
-    async fn threads_modified_new(
+    async fn threads_modified(
         &self, board: YotsubaBoard, new_threads: &[u8], statement: &Statement
     ) -> Result<VecDeque<u32>> {
         unimplemented!()
     }
 
-    async fn threads_combined_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn threads_combined(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, new_threads: &[u8]
     ) -> Result<VecDeque<u32>>
     {
         unimplemented!()
     }
 
-    async fn metadata_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn metadata(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard
     ) -> bool
     {

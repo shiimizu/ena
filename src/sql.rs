@@ -12,7 +12,7 @@ use std::{
     ops::Add
 };
 
-pub type StatementStore2<S> = HashMap<YotsubaIdentifier, S>;
+pub type StatementStore<S> = HashMap<YotsubaIdentifier, S>;
 #[async_trait]
 pub trait StatementTrait<T>: Send + Sync {
     async fn prepare(&self, stmt: &str) -> T;
@@ -32,47 +32,6 @@ impl StatementTrait<::mysql::Statement> for ::mysql::Pool {
         conn.prep(stmt).unwrap()
     }
 }
-
-/*#[derive(Debug, Copy, Clone)]
-pub struct MuhStatement<T: StatementTrait>(pub T);
-
-impl<T> MuhStatement<T>
-where T: StatementTrait
-{
-    pub fn new(x: T) -> Self {
-        Self(x)
-    }
-
-    pub fn get(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> std::ops::Deref for MuhStatement<T>
-where T: StatementTrait
-{
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> std::ops::DerefMut for MuhStatement<T>
-where T: StatementTrait
-{
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
-
-impl<T> AsRef<T> for MuhStatement<T>
-where T: StatementTrait
-{
-    fn as_ref(&self) -> &T {
-        &self.0
-    }
-}*/
 
 #[derive(
     Debug,
@@ -119,12 +78,6 @@ impl fmt::Display for Database {
 /// Implement `into`.
 /// Help taken from this [blog](https://is.gd/94QtP0)
 /// [archive](http://archive.is/vIW5Y)
-/*impl Into<String> for Database {
-    fn into(self) -> String {
-        self.to_string()
-    }
-}*/
-
 impl Into<Database> for String {
     fn into(self) -> Database {
         println!("Inside INTO {}", self);
@@ -158,7 +111,7 @@ impl Into<Database> for String {
 // }
 
 /// A list of actions that can be done.  
-/// Basically an enum of `QueriesExecutor2`.
+/// Basically an enum of `QueriesExecutor`.
 #[derive(
     Debug, Copy, Clone, std::hash::Hash, PartialEq, std::cmp::Eq, enum_iterator::IntoEnumIterator,
 )]
@@ -194,27 +147,27 @@ impl Add for YotsubaStatement {
 
 /// Executors for all SQL queries
 #[async_trait]
-pub trait QueriesExecutor2<S> {
+pub trait QueriesExecutor<S> {
     /// Creates the schema if nonexistent and uses it as the search_path
-    async fn init_schema_new(&self, schema: &str);
+    async fn init_schema(&self, schema: &str);
 
     /// Creates the 4chan schema as a type to be easily referenced
-    async fn init_type_new(&self);
+    async fn init_type(&self);
 
     /// Creates the metadata if nonexistent to store the api endpoints' data
-    async fn init_metadata_new(&self);
+    async fn init_metadata(&self);
 
     /// Creates a table for the specified board
-    async fn init_board_new(&self, board: YotsubaBoard);
+    async fn init_board(&self, board: YotsubaBoard);
 
     /// Creates views for asagi
-    async fn init_views_new(&self, board: YotsubaBoard);
+    async fn init_views(&self, board: YotsubaBoard);
 
     /// Upserts an endpoint to the metadata
     ///
     /// Converts bytes to json object and feeds that into the query
-    async fn update_metadata_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn update_metadata(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         item: &[u8]
     ) -> Result<u64>;
 
@@ -229,63 +182,63 @@ pub trait QueriesExecutor2<S> {
     ///
     /// 4chan inserts a backslash in their md5.
     /// https://stackoverflow.com/a/11449627
-    async fn update_thread_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn update_thread(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         item: &[u8]
     ) -> Result<u64>;
 
     /// Marks a post as deleted
-    async fn delete_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn delete(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         no: u32
     );
 
     // deleted before updating. PgSQL needs to do this >_>..
     /// Compares between the thread in db and the one fetched and marks any
     /// posts missing in the fetched thread as deleted
-    async fn update_deleteds_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn update_deleteds(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         thread: u32, item: &[u8]
     ) -> Result<u64>;
 
     /// Upserts a media hash to a post
-    async fn update_hash_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn update_hash(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
     );
 
     /// Gets the list of posts in a thread that have media
-    async fn medias_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn medias(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         no: u32
     ) -> Result<Rows>;
 
     /// Gets a list of threads from the corresponding endpoint
-    async fn threads_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn threads(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         item: &[u8]
     ) -> Result<VecDeque<u32>>;
 
     /// Gets only the deleted and modified threads when comparing the metadata
     /// and the fetched endpoint
-    async fn threads_modified_new(
+    async fn threads_modified(
         &self, board: YotsubaBoard, new_threads: &[u8], statement: &S
     ) -> Result<VecDeque<u32>>;
 
     /// Gets the list of threads from the one in the metadata + the fetched one
-    async fn threads_combined_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
+    async fn threads_combined(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         new_threads: &[u8]
     ) -> Result<VecDeque<u32>>;
 
     /// Checks for the existence of an endpoint in the metadata
-    async fn metadata_new(
-        &self, statements: &StatementStore2<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard
+    async fn metadata(
+        &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard
     ) -> bool;
 }
 
 /// List of all SQL queries to use
-pub trait Queries2 {
+pub trait Queries {
     fn query_init_schema(&self, schema: &str) -> String;
     fn query_init_metadata(&self) -> String;
     fn query_init_type(&self) -> String;
@@ -306,51 +259,6 @@ pub trait Queries2 {
 }
 
 #[async_trait]
-pub trait DatabaseTrait<T>:
-    Queries2 + QueriesExecutor2<T> + StatementTrait<T> + Send + Sync {
-    // async fn prepare(&self, stmt: dyn AsRef<str>) -> MuhStatement<T>  ;
-}
+pub trait DatabaseTrait<T>: Queries + QueriesExecutor<T> + StatementTrait<T> + Send + Sync {}
 impl DatabaseTrait<tokio_postgres::Statement> for tokio_postgres::Client {}
 impl DatabaseTrait<::mysql::Statement> for ::mysql::Pool {}
-
-/*#[derive(Debug, Copy, Clone)]
-pub struct MuhConnection<T: DatabaseTrait>(pub T);
-
-impl<T> MuhConnection<T>
-where T: DatabaseTrait
-{
-    pub fn new(x: T) -> Self {
-        Self(x)
-    }
-
-    pub fn get(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> std::ops::Deref for MuhConnection<T>
-where T: DatabaseTrait
-{
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> std::ops::DerefMut for MuhConnection<T>
-where T: DatabaseTrait
-{
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
-
-impl<T> AsRef<T> for MuhConnection<T>
-where T: DatabaseTrait
-{
-    fn as_ref(&self) -> &T {
-        &self.0
-    }
-}
-*/

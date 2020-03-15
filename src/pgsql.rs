@@ -6,7 +6,7 @@ use tokio_postgres::Statement;
 
 /// PostgreSQL version of the schema. This is also the default one used.  
 /// If another schema is thought of, feel free to use the `Queries` to implement it.
-impl Queries2 for tokio_postgres::Client {
+impl Queries for tokio_postgres::Client {
     fn query_init_schema(&self, schema: &str) -> String {
         format!(
             r#"
@@ -690,35 +690,35 @@ impl Queries2 for tokio_postgres::Client {
 
 /// PostgreSQL version is using tokio_postgres
 #[async_trait]
-impl QueriesExecutor2<Statement> for tokio_postgres::Client {
-    async fn init_type_new(&self) {
+impl QueriesExecutor<Statement> for tokio_postgres::Client {
+    async fn init_type(&self) {
         self.execute(self.query_init_type().as_str(), &[])
             .await
             .expect("Err initializing 4chan schema as a type");
     }
 
-    async fn init_schema_new(&self, schema: &str) {
+    async fn init_schema(&self, schema: &str) {
         self.batch_execute(&self.query_init_schema(schema))
             .await
             .expect(&format!("Err creating schema: {}", schema));
     }
 
-    async fn init_metadata_new(&self) {
+    async fn init_metadata(&self) {
         self.batch_execute(&self.query_init_metadata()).await.expect("Err creating metadata");
     }
 
-    async fn init_board_new(&self, board: YotsubaBoard) {
+    async fn init_board(&self, board: YotsubaBoard) {
         self.batch_execute(&self.query_init_board(board))
             .await
             .expect(&format!("Err creating schema: {}", board));
     }
 
-    async fn init_views_new(&self, board: YotsubaBoard) {
+    async fn init_views(&self, board: YotsubaBoard) {
         self.batch_execute(&self.query_init_views(board)).await.expect("Err create views");
     }
 
-    async fn update_metadata_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_metadata(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
@@ -737,8 +737,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
             .await?)
     }
 
-    async fn medias_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn medias(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u32
     ) -> Result<Rows>
     {
@@ -747,8 +747,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
         Ok(Rows::PostgreSQL(self.query(statement, &[&(no as i64)]).await?))
     }
 
-    async fn update_hash_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_hash(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
     )
     {
@@ -762,8 +762,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
     }
 
     /// Mark a single post as deleted.
-    async fn delete_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn delete(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u32
     )
     {
@@ -775,8 +775,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
     }
 
     /// Mark posts from a thread where it's deleted.
-    async fn update_deleteds_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_deleteds(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, thread: u32, item: &[u8]
     ) -> Result<u64>
     {
@@ -790,8 +790,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
             .await?)
     }
 
-    async fn update_thread_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn update_thread(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
@@ -800,8 +800,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
         Ok(self.execute(statement, &[&serde_json::from_slice::<serde_json::Value>(item)?]).await?)
     }
 
-    async fn metadata_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn metadata(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard
     ) -> bool
     {
@@ -816,8 +816,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
             .unwrap_or(false)
     }
 
-    async fn threads_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn threads(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, item: &[u8]
     ) -> Result<VecDeque<u32>>
     {
@@ -843,8 +843,8 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
     /// new + modified threads Then compares that result to the database
     /// where a thread is deleted or archived, and takes only the threads
     /// where's it's not deleted or archived
-    async fn threads_combined_new(
-        &self, statements: &StatementStore2<Statement>, endpoint: YotsubaEndpoint,
+    async fn threads_combined(
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, new_threads: &[u8]
     ) -> Result<VecDeque<u32>>
     {
@@ -871,7 +871,7 @@ impl QueriesExecutor2<Statement> for tokio_postgres::Client {
     /// we basically have a list of deleted and modified threads.
     /// Return back this list to be processed.
     /// Use the new threads.json as the base now.
-    async fn threads_modified_new(
+    async fn threads_modified(
         &self, board: YotsubaBoard, new_threads: &[u8], statement: &Statement
     ) -> Result<VecDeque<u32>> {
         let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
