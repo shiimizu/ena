@@ -1,11 +1,6 @@
-<h1 align="center"><br>
-  <img src="./img/yotsuba-and-ena.png" alt="Yotsuba&Ena!" width="470" /><br>
-  
-</h1>
-
+<h1 align="center"><img src="./img/yotsuba-and-ena.png" alt="Yotsuba&Ena!" width="470" /><br>
+Ena</h1><h4 align="center">A lightweight imageboard archiver<br><br>
 <div align="center">
-
-<b>A lightweight 4chan thread and board archiver</b><br>
 
 [![Latest Version][latest-badge]][latest-link]
 [![License][license-badge]][license-url]
@@ -26,6 +21,8 @@
 
 </div>
 
+</h4>
+
 <br>
 
 Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store. It is:
@@ -40,15 +37,15 @@ Low resource and high performance archiver to save posts, images and all relevan
 * thread/post/file deletions
 * massive threads consisting of thousands of posts
   -->
-## Runtime dependencies
+### Runtime dependencies
 * [PostgreSQL](https://www.postgresql.org/download/) >= 11.0
 
-## Changes from Asagi
+### Changes from Asagi
 * PostgreSQL as the database engine
-* Media files use sha256 as its filename and its directory structure is the same as yuki.la's
+* Files use sha256 as its filename and its directory structure is the same as yuki.la's
 * Comments are preserved and untouched
 
-## Installation
+### Installation
 1. [Download][latest-link] the pre-compiled binaries _**or**_ build from source for the latest builds.  
 You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After that, clone the repo and build.
 	```console
@@ -63,7 +60,7 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 
 4. You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks.<br>Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
 
-## FAQ
+### FAQ
 Check the [wiki](https://github.com/shiimizu/ena/wiki) for more FAQs and information.
 
 ### Why?
