@@ -36,6 +36,7 @@ use core::sync::atomic::Ordering;
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
 use log::*;
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
 use tokio::sync::{
@@ -911,6 +912,9 @@ where
         &self, row: &tokio_postgres::row::Row, info: &BoardSettings, thumb: bool
     ) -> Option<(u64, Option<Vec<u8>>, bool)> {
         let no: i64 = row.get("no");
+        if info.board == YotsubaBoard::f && thumb {
+            return Some((u64::try_from(no).unwrap(), None, thumb));
+        }
         let tim: i64 = row.get("tim");
         let ext: String = row.get("ext");
         let resto: i64 = row.get("resto");
@@ -921,14 +925,23 @@ where
         let domain = &self.config.settings.media_url;
         let board = &info.board;
 
-        let url = format!(
-            "{}/{}/{}{}{}",
-            domain,
-            board,
-            tim,
-            if thumb { "s" } else { "" },
-            if thumb { ".jpg" } else { &ext }
-        );
+        let url = if info.board == YotsubaBoard::f {
+            // 4chan has HTML entities UNESCAPED in their filenames (and database) and THAT is then
+            // encoded into an ascii url RATHER than an escaped html string then precent
+            // encoded....
+            let filename: String = row.try_get("filename").unwrap_or("<EMPTY>".into());
+            let filename_encoded = utf8_percent_encode(&filename, FRAGMENT).to_string();
+            format!("{}/{}/{}{}", domain, board, filename_encoded, &ext)
+        } else {
+            format!(
+                "{}/{}/{}{}{}",
+                domain,
+                board,
+                tim,
+                if thumb { "s" } else { "" },
+                if thumb { ".jpg" } else { &ext }
+            )
+        };
         // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
         for ra in 0..(info.retry_attempts + 1) {
             match self.client.get(&url, None).await {
@@ -1024,3 +1037,19 @@ where
         Some((u64::try_from(no).unwrap(), hashsum, thumb))
     }
 }
+
+const FRAGMENT: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'<')
+    .add(b'>')
+    .add(b'`')
+    .add(b'\'')
+    .add(b'(')
+    .add(b')')
+    .add(b'{')
+    .add(b'}')
+    .add(b',')
+    .add(b'&')
+    .add(b'#')
+    .add(b';');

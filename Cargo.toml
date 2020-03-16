@@ -29,6 +29,7 @@ ctrlc = { version = "3.1", features = ["termination"] }
 anyhow = "1.0"
 sha2 = "0.8"
 enum-iterator = "0.6"
+percent-encoding = "2.1"
 
 # Async
 async-trait = "0.1"
