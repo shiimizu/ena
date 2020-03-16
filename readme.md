@@ -1,5 +1,5 @@
 <h1 align="center"><img src="./img/yotsuba-and-ena.png" alt="Yotsuba&Ena!" width="470" /><br>
-Ena</h1><h4 align="center">A lightweight imageboard archiver<br><br>
+Ena</h1><h4 align="center">An ultra lightweight imageboard archiver<br><br>
 <div align="center">
 
 [![Latest Version][latest-badge]][latest-link]
@@ -12,8 +12,8 @@ Ena</h1><h4 align="center">A lightweight imageboard archiver<br><br>
 [latest-link]: https://github.com/shiimizu/ena/releases/latest
 [license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue&style=flat-square
 [license-url]: LICENSE
-[build-badge]: https://img.shields.io/github/workflow/status/shiimizu/ena/Rust?style=flat-square
-[build-url]: https://github.com/shiimizu/ena/releases/latest
+[build-badge]: https://img.shields.io/github/workflow/status/shiimizu/ena/Rust?logo=github&style=flat-square
+[build-url]: https://github.com/shiimizu/ena/actions?query=workflow%3ARust
 [safety-badge]: https://img.shields.io/badge/unsafe-forbidden-green.svg?style=flat-square
 [safety-url]: https://github.com/rust-secure-code/safety-dance/
 [chat-link]: https://matrix.to/#/#bibanon-chat:matrix.org
