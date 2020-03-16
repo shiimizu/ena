@@ -3,15 +3,21 @@ name = "ena"
 version = "0.5.0"
 authors = ["shiimizu <shiimizu@protonmail.com>"]
 edition = "2018"
-description = "A lightweight imageboard archiver"
-documentation = "https://github.com/shiimizu/ena"
-homepage = "https://github.com/shiimizu/ena"
+description = "An ultra-low resource imageboard archiver"
 repository = "https://github.com/shiimizu/ena"
 license = "MIT"
 readme = "readme.md"
 keywords = ["4chan", "archiver", "scraper", "crawler"]
 categories = ["command-line-utilities"]
 build = "src/build.rs"
+
+[[bin]]
+name = "ena"
+path = "src/main.rs"
+
+[lib]
+name = "ena"
+path = "src/lib.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [profile.release]
@@ -39,9 +45,7 @@ futures-intrusive = "0.3"
 tokio = { version = "0.2", default-features = false, features = ["rt-threaded", "time", "io-driver", "sync"] }
 reqwest = { version = "0.10", default-features = false }
 tokio-postgres = { version = "0.5", features = ["with-serde_json-1"] }
-
-# MySQL
-mysql = "18"
+mysql_async = "0.22"
 
 [build-dependencies]
 vergen = "3"

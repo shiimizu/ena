@@ -1,36 +1,113 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
-use crate::{sql::*, YotsubaArchiver, YotsubaBoard, YotsubaEndpoint, YotsubaHash};
-use ::mysql::{prelude::*, Statement, *};
+use crate::{
+    archiver::YotsubaArchiver,
+    enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier},
+    sql::*
+};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use mysql_async::{prelude::*, Pool};
 use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom
 };
 
+pub type Statement = mysql_async::Stmt<mysql_async::Conn>;
+
 #[async_trait]
-impl Archiver for YotsubaArchiver<Statement, ::mysql::Pool, reqwest::Client> {
+impl Archiver for YotsubaArchiver<Statement, Pool, reqwest::Client> {
     async fn run_inner(&self) {
         self.run().await
     }
 }
 
-impl Queries for ::mysql::Pool {
+impl Queries for Pool {
     fn query_init_schema(&self, schema: &str) -> String {
-        // unreachable!()
-        "".into()
+        // Not really init schema
+        // But here we init commons.sql and functions
+        r#"
+        CREATE TABLE IF NOT EXISTS `index_counters` (
+            `id` varchar(50) NOT NULL,
+            `val` int(10) NOT NULL,
+            PRIMARY KEY (`id`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+          
+          DROP FUNCTION IF EXISTS doCleanFull;
+          CREATE FUNCTION doCleanFull (com TEXT)
+          RETURNS TEXT DETERMINISTIC
+          RETURN	
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(	
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(
+              REGEXP_REPLACE(com, '&#039;', '\'')
+              , '&gt;', '>')
+              , '&lt;', '<')
+              , '&quot;', '"')
+              , '&amp;', '&')
+              , '\\s*$', '')
+              , '^\\s*$', '')
+              , '<span class=\"capcodeReplies\"><span style=\"font-size: smaller;\"><span style=\"font-weight: bold;\">(?:Administrator|Moderator|Developer) Repl(?:y|ies):</span>.*?</span><br></span>', '')
+              , '\\[(/?(banned|moot|spoiler|code))]', '[$1:lit]')
+              , '<span class=\"abbr\">.*?</span>', '')
+              , '<table class=\"exif\"[^>]*>.*?</table>', '')
+              , '<br><br><small><b>Oekaki Post</b>.*?</small>', '')
+              , '<(?:b|strong) style=\"color:\\s*red;\">(.*?)</(?:b|strong)>', '[banned]$1[/banned]')
+              , '<div style=\"padding: 5px;margin-left: \\.5em;border-color: #faa;border: 2px dashed rgba\\(255,0,0,\\.1\\);border-radius: 2px\">(.*?)</div>', '[moot]$1[/moot]')
+              , '<span class=\"fortune\" style=\"color:(.*?)\"><br><br><b>(.*?)</b></span>', '\n\n[fortune color=\"$1\"]$2[/fortune]')
+              , '<(?:b|strong)>(.*?)</(?:b|strong)>', '[b]$1[/b]')
+              , '<pre[^>]*>', '[code]')
+              , '</pre>', '[/code]')
+              , '<span class=\"math\">(.*?)</span>', '[math]$1[/math]')
+              , '<div class=\"math\">(.*?)</div>', '[eqn]$1[/eqn]')
+              , '<font class=\"unkfunc\">(.*?)</font>', '$1')
+              , '<span class=\"quote\">(.*?)</span>', '$1')
+              , '<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>', '$1')
+              , '<a[^>]*>(.*?)</a>', '$1')
+              , '<span class=\"spoiler\"[^>]*>(.*?)</span>', '[spoiler]$1[/spoiler]')
+              , '<span class=\"sjis\">(.*?)</span>', '[shiftjis]$1[/shiftjis]')
+              , '<s>', '[spoiler]')
+              , '</s>', '[/spoiler]')
+              , '<wbr>', '')
+              , '<br\\s*/?>', '\n');
+          "#.to_string()
     }
 
     fn query_init_metadata(&self) -> String {
         format!(
             "
-            CREATE TABLE IF NOT EXISTS metadata (
-                board VARCHAR(10) NOT NULL PRIMARY key UNIQUE,
+            CREATE TABLE IF NOT EXISTS `metadata` (
+                `board` varchar(10) NOT NULL PRIMARY key unique ,
                 `threads` json,
                 `archive` json,
-                INDEX metadata_board_idx (board)
+                INDEX metadata_board_idx (`board`)
             ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
             "
         )
@@ -71,18 +148,19 @@ impl Queries for ::mysql::Pool {
     fn query_update_hash(
         &self, board: YotsubaBoard, hash_type: YotsubaHash, thumb: YotsubaStatement
     ) -> String {
-        unreachable!()
+        // Do nothing
+        "select 1".into()
     }
 
     fn query_update_metadata(&self, column: YotsubaEndpoint) -> String {
         format!(
-            "INSERT INTO metadata(board, {0})
-                  VALUES (:board, :json)
-                  ON CONFLICT (board)
-                  DO UPDATE
-                      SET {0} = :json;
-              ",
-            column
+            r#"INSERT INTO `metadata`(`board`, `{endpoint}`)
+            VALUES (:board, :jj)
+            ON DUPLICATE KEY update
+               `{endpoint}` = :jj
+             ;
+              "#,
+            endpoint = column
         )
     }
 
@@ -96,99 +174,16 @@ impl Queries for ::mysql::Pool {
     }
 
     fn query_threads_modified(&self, endpoint: YotsubaEndpoint) -> String {
-        let thread = format!(
-            r#"
-        SELECT JSON_ARRAYAGG(coalesce (newv->'$.no', prev->'$.no')) from (
-            SELECT * from metadata m2 ,
-                JSON_TABLE(threads, '$[*].threads[*]'
-                COLUMNS(prev json path '$')) q 
-            LEFT OUTER JOIN
-            (SELECT * from 
-                JSON_TABLE(:json, '$[*].threads[*]'
-                COLUMNS(newv json path '$')) w) e
-            on prev->'$.no' = newv->'$.no'
-            where board = :board
-            
-            UNION
-            
-            SELECT * from metadata m3 ,
-                JSON_TABLE( threads, '$[*].threads[*]'
-                COLUMNS(prev json path '$')) r
-            RIGHT OUTER JOIN
-            (SELECT * FROM
-                JSON_TABLE(:json, '$[*].threads[*]'
-                COLUMNS(newv json path '$')) a) s
-            on prev->'$.no' = newv->'$.no'
-            where board = :board
-        ) z
-        where newv is null or prev is null or prev->'$.last_modified' != newv->'$.last_modified';
-        "#
-        );
-
-        let archive = format!(
-            r#"
-        SELECT JSON_ARRAYAGG(coalesce (newv,prev)) from (
-            SELECT * from metadata m2 ,
-                JSON_TABLE( archive, '$[*]'
-                COLUMNS(prev json path '$')) q 
-            LEFT OUTER JOIN
-            (SELECT * from 
-                JSON_TABLE(:json, '$[*]'
-                COLUMNS(newv json path '$')) w) e
-            on prev = newv
-            where board = :board
-            
-            UNION
-            
-            SELECT * from metadata m3 ,
-                JSON_TABLE( archive, '$[*]'
-                COLUMNS(prev json path '$')) r
-            RIGHT OUTER JOIN
-            (SELECT * FROM
-                JSON_TABLE(:json, '$[*]'
-                COLUMNS(newv json path '$')) a) s
-            on prev = newv
-            where board = :board
-        ) z
-        where newv is null or prev is null;
-        "#
-        );
-
         match endpoint {
-            YotsubaEndpoint::Archive => archive,
-            _ => thread
-        }
-    }
-
-    fn query_threads(&self) -> String {
-        format!(
-            r#"
-        SELECT JSON_ARRAYAGG(z.no)
-        FROM
-        ( {schema_4chan_query} )z
-        "#,
-            schema_4chan_query = query_4chan_schema()
-        )
-    }
-
-    fn query_metadata(&self, column: YotsubaEndpoint) -> String {
-        format!(
-            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = ?"#,
-            column
-        )
-    }
-
-    fn query_threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String {
-        let thread = format!(
-            r#"
-        select JSON_ARRAYAGG(c) from (
-            SELECT coalesce (newv->'$.no', prev->'$.no') as c from (
+            YotsubaEndpoint::Threads => format!(
+                r#"
+            SELECT JSON_ARRAYAGG(coalesce (newv->'$.no', prev->'$.no')) from (
                 SELECT * from metadata m2 ,
                     JSON_TABLE(threads, '$[*].threads[*]'
                     COLUMNS(prev json path '$')) q 
                 LEFT OUTER JOIN
                 (SELECT * from 
-                    JSON_TABLE(:json, '$[*].threads[*]'
+                    JSON_TABLE(:jj, '$[*].threads[*]'
                     COLUMNS(newv json path '$')) w) e
                 on prev->'$.no' = newv->'$.no'
                 where board = :board
@@ -200,7 +195,87 @@ impl Queries for ::mysql::Pool {
                     COLUMNS(prev json path '$')) r
                 RIGHT OUTER JOIN
                 (SELECT * FROM
-                    JSON_TABLE(:json, '$[*].threads[*]'
+                    JSON_TABLE(:jj, '$[*].threads[*]'
+                    COLUMNS(newv json path '$')) a) s
+                on prev->'$.no' = newv->'$.no'
+                where board = :board
+            ) z
+            where newv is null or prev is null or prev->'$.last_modified' != newv->'$.last_modified';
+            "#
+            ),
+            _ => format!(
+                r#"
+            SELECT JSON_ARRAYAGG(coalesce (newv,prev)) from (
+                SELECT * from metadata m2 ,
+                    JSON_TABLE( archive, '$[*]'
+                    COLUMNS(prev json path '$')) q 
+                LEFT OUTER JOIN
+                (SELECT * from 
+                    JSON_TABLE(:jj, '$[*]'
+                    COLUMNS(newv json path '$')) w) e
+                on prev = newv
+                where board = :board
+                
+                UNION
+                
+                SELECT * from metadata m3 ,
+                    JSON_TABLE( archive, '$[*]'
+                    COLUMNS(prev json path '$')) r
+                RIGHT OUTER JOIN
+                (SELECT * FROM
+                    JSON_TABLE(:jj, '$[*]'
+                    COLUMNS(newv json path '$')) a) s
+                on prev = newv
+                where board = :board
+            ) z
+            where newv is null or prev is null;
+            "#
+            )
+        }
+    }
+
+    fn query_threads(&self) -> String {
+        r#"
+            SELECT JSON_ARRAYAGG(no)
+            FROM
+            ( SELECT * FROM JSON_TABLE(:jj, "$[*].threads[*]" COLUMNS(
+            `no`				bigint		PATH "$.no")
+            ) w )z;
+        "#
+        .to_string()
+    }
+
+    fn query_metadata(&self, column: YotsubaEndpoint) -> String {
+        format!(
+            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = :board"#,
+            column
+        )
+    }
+
+    // TODO do not coalesce, see what happens
+    fn query_threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String {
+        let thread = format!(
+            r#"
+        select coalesce (json_array(),JSON_ARRAYAGG(c)) from (
+            SELECT coalesce (newv->'$.no', prev->'$.no') as c from (
+                SELECT * from metadata m2 ,
+                    JSON_TABLE(threads, '$[*].threads[*]'
+                    COLUMNS(prev json path '$')) q 
+                LEFT OUTER JOIN
+                (SELECT * from 
+                    JSON_TABLE(:jj, '$[*].threads[*]'
+                    COLUMNS(newv json path '$')) w) e
+                on prev->'$.no' = newv->'$.no'
+                where board = :board
+                
+                UNION
+                
+                SELECT * from metadata m3 ,
+                    JSON_TABLE( threads, '$[*].threads[*]'
+                    COLUMNS(prev json path '$')) r
+                RIGHT OUTER JOIN
+                (SELECT * FROM
+                    JSON_TABLE(:jj, '$[*].threads[*]'
                     COLUMNS(newv json path '$')) a) s
                 on prev->'$.no' = newv->'$.no'
                 where board = :board
@@ -215,14 +290,14 @@ impl Queries for ::mysql::Pool {
 
         let archive = format!(
             r#"
-        select JSON_ARRAYAGG(c) from (
+        select coalesce (json_array(),JSON_ARRAYAGG(c)) from (
             SELECT coalesce (newv, prev) as c from (
                 SELECT * from metadata m2 ,
                     JSON_TABLE(archive, '$[*]'
                     COLUMNS(prev json path '$')) q 
                 LEFT OUTER JOIN
                 (SELECT * from 
-                    JSON_TABLE(:json, '$[*]'
+                    JSON_TABLE(:jj, '$[*]'
                     COLUMNS(newv json path '$')) w) e
                 on prev = newv
                 where board = :board
@@ -234,7 +309,7 @@ impl Queries for ::mysql::Pool {
                     COLUMNS(prev json path '$')) r
                 RIGHT OUTER JOIN
                 (SELECT * FROM
-                    JSON_TABLE(:json, '$[*]'
+                    JSON_TABLE(:jj, '$[*]'
                     COLUMNS(newv json path '$')) a) s
                 on prev = newv
                 where board = :board
@@ -253,7 +328,9 @@ impl Queries for ::mysql::Pool {
     }
 
     fn query_init_board(&self, board: YotsubaBoard) -> String {
-        r#"CREATE TABLE IF NOT EXISTS `?` (
+        // Init boards and triggers
+        format!(
+            r#"CREATE TABLE IF NOT EXISTS `{board}` (
             `doc_id` int unsigned NOT NULL auto_increment,
             `media_id` int unsigned NOT NULL DEFAULT '0',
             `poster_ip` decimal(39,0) unsigned NOT NULL DEFAULT '0',
@@ -300,16 +377,507 @@ impl Queries for ::mysql::Pool {
             INDEX email_index (`email`),
             INDEX poster_ip_index (`poster_ip`),
             INDEX timestamp_index (`timestamp`)
-          ) engine=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;"#
-            .to_string()
+          ) engine=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          
+          CREATE TABLE IF NOT EXISTS `{board}_deleted` LIKE `{board}`;
+
+
+          CREATE TABLE IF NOT EXISTS `{board}_threads` (
+            `thread_num` int unsigned NOT NULL,
+            `time_op` int unsigned NOT NULL,
+            `time_last` int unsigned NOT NULL,
+            `time_bump` int unsigned NOT NULL,
+            `time_ghost` int unsigned DEFAULT NULL,
+            `time_ghost_bump` int unsigned DEFAULT NULL,
+            `time_last_modified` int unsigned NOT NULL,
+            `nreplies` int unsigned NOT NULL DEFAULT '0',
+            `nimages` int unsigned NOT NULL DEFAULT '0',
+            `sticky` bool NOT NULL DEFAULT '0',
+            `locked` bool NOT NULL DEFAULT '0',
+          
+            PRIMARY KEY (`thread_num`),
+            INDEX time_op_index (`time_op`),
+            INDEX time_bump_index (`time_bump`),
+            INDEX time_ghost_bump_index (`time_ghost_bump`),
+            INDEX time_last_modified_index (`time_last_modified`),
+            INDEX sticky_index (`sticky`),
+            INDEX locked_index (`locked`)
+          ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          
+          
+          CREATE TABLE IF NOT EXISTS `{board}_users` (
+            `user_id` int unsigned NOT NULL auto_increment,
+            `name` varchar(100) NOT NULL DEFAULT '',
+            `trip` varchar(25) NOT NULL DEFAULT '',
+            `firstseen` int(11) NOT NULL,
+            `postcount` int(11) NOT NULL,
+          
+            PRIMARY KEY (`user_id`),
+            UNIQUE name_trip_index (`name`, `trip`),
+            INDEX firstseen_index (`firstseen`),
+            INDEX postcount_index (`postcount`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          
+          
+          CREATE TABLE IF NOT EXISTS `{board}_images` (
+            `media_id` int unsigned NOT NULL auto_increment,
+            `media_hash` varchar(25) NOT NULL,
+            `media` varchar(20),
+            `preview_op` varchar(20),
+            `preview_reply` varchar(20),
+            `total` int(10) unsigned NOT NULL DEFAULT '0',
+            `banned` smallint unsigned NOT NULL DEFAULT '0',
+          
+            PRIMARY KEY (`media_id`),
+            UNIQUE media_hash_index (`media_hash`),
+            INDEX total_index (`total`),
+            INDEX banned_index (`banned`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          
+          
+          CREATE TABLE IF NOT EXISTS `{board}_daily` (
+            `day` int(10) unsigned NOT NULL,
+            `posts` int(10) unsigned NOT NULL,
+            `images` int(10) unsigned NOT NULL,
+            `sage` int(10) unsigned NOT NULL,
+            `anons` int(10) unsigned NOT NULL,
+            `trips` int(10) unsigned NOT NULL,
+            `names` int(10) unsigned NOT NULL,
+          
+            PRIMARY KEY (`day`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          
+          
+          DROP PROCEDURE IF EXISTS `update_thread_{board}`;
+          
+          
+          CREATE PROCEDURE `update_thread_{board}` (tnum INT)
+          BEGIN
+            UPDATE
+              `{board}_threads` op
+            SET
+              op.time_last = (
+                COALESCE(GREATEST(
+                  op.time_op,
+                  (SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
+                    re.thread_num = tnum AND re.subnum = 0)
+                ), op.time_op)
+              ),
+              op.time_bump = (
+                COALESCE(GREATEST(
+                  op.time_op,
+                  (SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
+                    re.thread_num = tnum AND (re.email <> 'sage' OR re.email IS NULL)
+                    AND re.subnum = 0)
+                ), op.time_op)
+              ),
+              op.time_ghost = (
+                SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
+                  re.thread_num = tnum AND re.subnum <> 0
+              ),
+              op.time_ghost_bump = (
+                SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
+                  re.thread_num = tnum AND re.subnum <> 0 AND (re.email <> 'sage' OR
+                    re.email IS NULL)
+              ),
+              op.time_last_modified = (
+                COALESCE(GREATEST(
+                  op.time_op,
+                  (SELECT GREATEST(MAX(timestamp), MAX(timestamp_expired)) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
+                    re.thread_num = tnum)
+                ), op.time_op)
+              ),
+              op.nreplies = (
+                SELECT COUNT(*) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
+                  re.thread_num = tnum
+              ),
+              op.nimages = (
+                SELECT COUNT(media_hash) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
+                  re.thread_num = tnum
+              )
+              WHERE op.thread_num = tnum;
+          END;
+          
+          
+          DROP PROCEDURE IF EXISTS `create_thread_{board}`;
+          
+          
+          CREATE PROCEDURE `create_thread_{board}` (num INT, timestamp INT)
+          BEGIN
+            INSERT IGNORE INTO `{board}_threads` VALUES (num, timestamp, timestamp,
+              timestamp, NULL, NULL, timestamp, 0, 0, 0, 0);
+          END;
+          
+          
+          DROP PROCEDURE IF EXISTS `delete_thread_{board}`;
+          
+          
+          CREATE PROCEDURE `delete_thread_{board}` (tnum INT)
+          BEGIN
+            DELETE FROM `{board}_threads` WHERE thread_num = tnum;
+          END;
+          
+          
+          DROP PROCEDURE IF EXISTS `insert_image_{board}`;
+          
+          
+          CREATE PROCEDURE `insert_image_{board}` (n_media_hash VARCHAR(25),
+           n_media VARCHAR(20), n_preview VARCHAR(20), n_op INT)
+          BEGIN
+            IF n_op = 1 THEN
+              INSERT INTO `{board}_images` (media_hash, media, preview_op, total)
+              VALUES (n_media_hash, n_media, n_preview, 1)
+              ON DUPLICATE KEY UPDATE
+                media_id = LAST_INSERT_ID(media_id),
+                total = (total + 1),
+                preview_op = COALESCE(preview_op, VALUES(preview_op)),
+                media = COALESCE(media, VALUES(media));
+            ELSE
+              INSERT INTO `{board}_images` (media_hash, media, preview_reply, total)
+              VALUES (n_media_hash, n_media, n_preview, 1)
+              ON DUPLICATE KEY UPDATE
+                media_id = LAST_INSERT_ID(media_id),
+                total = (total + 1),
+                preview_reply = COALESCE(preview_reply, VALUES(preview_reply)),
+                media = COALESCE(media, VALUES(media));
+            END IF;
+          END;
+          
+          
+          DROP PROCEDURE IF EXISTS `delete_image_{board}`;
+          
+          
+          CREATE PROCEDURE `delete_image_{board}` (n_media_id INT)
+          BEGIN
+            UPDATE `{board}_images` SET total = (total - 1) WHERE media_id = n_media_id;
+          END;
+          
+          
+          DROP PROCEDURE IF EXISTS `insert_post_{board}`;
+          
+          
+          CREATE PROCEDURE `insert_post_{board}` (p_timestamp INT, p_media_hash VARCHAR(25),
+            p_email VARCHAR(100), p_name VARCHAR(100), p_trip VARCHAR(25))
+          BEGIN
+            DECLARE d_day INT;
+            DECLARE d_image INT;
+            DECLARE d_sage INT;
+            DECLARE d_anon INT;
+            DECLARE d_trip INT;
+            DECLARE d_name INT;
+          
+            SET d_day = FLOOR(p_timestamp/86400)*86400;
+            SET d_image = p_media_hash IS NOT NULL;
+            SET d_sage = COALESCE(p_email = 'sage', 0);
+            SET d_anon = COALESCE(p_name = 'Anonymous' AND p_trip IS NULL, 0);
+            SET d_trip = p_trip IS NOT NULL;
+            SET d_name = COALESCE(p_name <> 'Anonymous' AND p_trip IS NULL, 1);
+          
+            INSERT INTO `{board}_daily` VALUES(d_day, 1, d_image, d_sage, d_anon, d_trip,
+              d_name)
+              ON DUPLICATE KEY UPDATE posts=posts+1, images=images+d_image,
+              sage=sage+d_sage, anons=anons+d_anon, trips=trips+d_trip,
+              names=names+d_name;
+          
+            IF (SELECT trip FROM `{board}_users` WHERE trip = p_trip) IS NOT NULL THEN
+              UPDATE `{board}_users` SET postcount=postcount+1,
+                  firstseen = LEAST(p_timestamp, firstseen),
+                  name = COALESCE(p_name, '')
+                WHERE trip = p_trip;
+            ELSE
+              INSERT INTO `{board}_users` VALUES(
+              NULL, COALESCE(p_name,''), COALESCE(p_trip,''), p_timestamp, 1)
+              ON DUPLICATE KEY UPDATE postcount=postcount+1,
+                firstseen = LEAST(VALUES(firstseen), firstseen),
+                name = COALESCE(p_name, '');
+            END IF;
+          END;
+          
+          
+          DROP PROCEDURE IF EXISTS `delete_post_{board}`;
+          
+          
+          CREATE PROCEDURE `delete_post_{board}` (p_timestamp INT, p_media_hash VARCHAR(25), p_email VARCHAR(100), p_name VARCHAR(100), p_trip VARCHAR(25))
+          BEGIN
+            DECLARE d_day INT;
+            DECLARE d_image INT;
+            DECLARE d_sage INT;
+            DECLARE d_anon INT;
+            DECLARE d_trip INT;
+            DECLARE d_name INT;
+          
+            SET d_day = FLOOR(p_timestamp/86400)*86400;
+            SET d_image = p_media_hash IS NOT NULL;
+            SET d_sage = COALESCE(p_email = 'sage', 0);
+            SET d_anon = COALESCE(p_name = 'Anonymous' AND p_trip IS NULL, 0);
+            SET d_trip = p_trip IS NOT NULL;
+            SET d_name = COALESCE(p_name <> 'Anonymous' AND p_trip IS NULL, 1);
+          
+            UPDATE `{board}_daily` SET posts=posts-1, images=images-d_image,
+              sage=sage-d_sage, anons=anons-d_anon, trips=trips-d_trip,
+              names=names-d_name WHERE day = d_day;
+          
+            IF (SELECT trip FROM `{board}_users` WHERE trip = p_trip) IS NOT NULL THEN
+              UPDATE `{board}_users` SET postcount = postcount-1 WHERE trip = p_trip;
+            ELSE
+              UPDATE `{board}_users` SET postcount = postcount-1 WHERE
+                name = COALESCE(p_name, '') AND trip = COALESCE(p_trip, '');
+            END IF;
+          END;
+          
+          -- TRIGGERS
+          
+          DROP TRIGGER IF EXISTS `before_ins_{board}`;
+          
+          
+          CREATE TRIGGER `before_ins_{board}` BEFORE INSERT ON `{board}`
+          FOR EACH ROW
+          BEGIN
+            IF NEW.media_hash IS NOT NULL THEN
+              CALL insert_image_{board}(NEW.media_hash, NEW.media_orig, NEW.preview_orig, NEW.op);
+              SET NEW.media_id = LAST_INSERT_ID();
+            END IF;
+          END;
+          
+          
+          DROP TRIGGER IF EXISTS `after_ins_{board}`;
+          
+          
+          CREATE TRIGGER `after_ins_{board}` AFTER INSERT ON `{board}`
+          FOR EACH ROW
+          BEGIN
+            IF NEW.op = 1 THEN
+              CALL create_thread_{board}(NEW.num, NEW.timestamp);
+            END IF;
+            CALL update_thread_{board}(NEW.thread_num);
+            CALL insert_post_{board}(NEW.timestamp, NEW.media_hash, NEW.email, NEW.name, NEW.trip);
+          END;
+          
+          
+          DROP TRIGGER IF EXISTS `after_del_{board}`;
+          
+          
+          CREATE TRIGGER `after_del_{board}` AFTER DELETE ON `{board}`
+          FOR EACH ROW
+          BEGIN
+            CALL update_thread_{board}(OLD.thread_num);
+            IF OLD.op = 1 THEN
+              CALL delete_thread_{board}(OLD.num);
+            END IF;
+            CALL delete_post_{board}(OLD.timestamp, OLD.media_hash, OLD.email, OLD.name, OLD.trip);
+            IF OLD.media_hash IS NOT NULL THEN
+              CALL delete_image_{board}(OLD.media_id);
+            END IF;
+          END;
+          
+          
+
+          DROP PROCEDURE IF EXISTS `update_thread_{board}`;
+
+          CREATE PROCEDURE `update_thread_{board}` (tnum INT, ghost_num INT, p_timestamp INT,
+            p_media_hash VARCHAR(25), p_email VARCHAR(100))
+          BEGIN
+            DECLARE d_time_last INT;
+            DECLARE d_time_bump INT;
+            DECLARE d_time_ghost INT;
+            DECLARE d_time_ghost_bump INT;
+            DECLARE d_time_last_modified INT;
+            DECLARE d_image INT;
+          
+            SET d_time_last = 0;
+            SET d_time_bump = 0;
+            SET d_time_ghost = 0;
+            SET d_time_ghost_bump = 0;
+            SET d_image = p_media_hash IS NOT NULL;
+          
+            IF (ghost_num = 0) THEN
+              SET d_time_last_modified = p_timestamp;
+              SET d_time_last = p_timestamp;
+              IF (p_email <> 'sage' OR p_email IS NULL) THEN
+                SET d_time_bump = p_timestamp;
+              END IF;
+            ELSE
+              SET d_time_last_modified = p_timestamp;
+              SET d_time_ghost = p_timestamp;
+              IF (p_email <> 'sage' OR p_email IS NULL) THEN
+                SET d_time_ghost_bump = p_timestamp;
+              END IF;
+            END IF;
+          
+            UPDATE
+              `{board}_threads` op
+            SET
+              op.time_last = (
+                COALESCE(
+                  GREATEST(op.time_op, d_time_last),
+                  op.time_op
+                )
+              ),
+              op.time_bump = (
+                COALESCE(
+                  GREATEST(op.time_bump, d_time_bump),
+                  op.time_op
+                )
+              ),
+              op.time_ghost = (
+                IF (
+                  GREATEST(
+                    IFNULL(op.time_ghost, 0),
+                    d_time_ghost
+                  ) <> 0,
+                  GREATEST(
+                    IFNULL(op.time_ghost, 0),
+                    d_time_ghost
+                  ),
+                  NULL
+                )
+              ),
+              op.time_ghost_bump = (
+                IF(
+                  GREATEST(
+                    IFNULL(op.time_ghost_bump, 0),
+                    d_time_ghost_bump
+                  ) <> 0,
+                  GREATEST(
+                    IFNULL(op.time_ghost_bump, 0),
+                    d_time_ghost_bump
+                  ),
+                  NULL
+                )
+              ),
+              op.time_last_modified = (
+                COALESCE(
+                  GREATEST(op.time_last_modified, d_time_last_modified),
+                  op.time_op
+                )
+              ),
+              op.nreplies = (
+                op.nreplies + 1
+              ),
+              op.nimages = (
+                op.nimages + d_image
+              )
+              WHERE op.thread_num = tnum;
+          END;
+          
+          DROP PROCEDURE IF EXISTS `update_thread_timestamp_{board}`;
+          
+          CREATE PROCEDURE `update_thread_timestamp_{board}` (tnum INT, timestamp INT)
+          BEGIN
+            UPDATE
+              `{board}_threads` op
+            SET
+              op.time_last_modified = (
+                GREATEST(op.time_last_modified, timestamp)
+              )
+            WHERE op.thread_num = tnum;
+          END;
+          
+          DROP PROCEDURE IF EXISTS `create_thread_{board}`;
+          
+          CREATE PROCEDURE `create_thread_{board}` (num INT, timestamp INT)
+          BEGIN
+            INSERT IGNORE INTO `{board}_threads` VALUES (num, timestamp, timestamp,
+              timestamp, NULL, NULL, timestamp, 0, 0, 0, 0);
+          END;
+          
+          DROP PROCEDURE IF EXISTS `delete_thread_{board}`;
+          
+          CREATE PROCEDURE `delete_thread_{board}` (tnum INT)
+          BEGIN
+            DELETE FROM `{board}_threads` WHERE thread_num = tnum;
+          END;
+          
+          DROP PROCEDURE IF EXISTS `insert_image_{board}`;
+          
+          CREATE PROCEDURE `insert_image_{board}` (n_media_hash VARCHAR(25),
+           n_media VARCHAR(20), n_preview VARCHAR(20), n_op INT)
+          BEGIN
+            IF n_op = 1 THEN
+              INSERT INTO `{board}_images` (media_hash, media, preview_op, total)
+              VALUES (n_media_hash, n_media, n_preview, 1)
+              ON DUPLICATE KEY UPDATE
+                media_id = LAST_INSERT_ID(media_id),
+                total = (total + 1),
+                preview_op = COALESCE(preview_op, VALUES(preview_op)),
+                media = COALESCE(media, VALUES(media));
+            ELSE
+              INSERT INTO `{board}_images` (media_hash, media, preview_reply, total)
+              VALUES (n_media_hash, n_media, n_preview, 1)
+              ON DUPLICATE KEY UPDATE
+                media_id = LAST_INSERT_ID(media_id),
+                total = (total + 1),
+                preview_reply = COALESCE(preview_reply, VALUES(preview_reply)),
+                media = COALESCE(media, VALUES(media));
+            END IF;
+          END;
+          
+          DROP PROCEDURE IF EXISTS `delete_image_{board}`;
+          
+          CREATE PROCEDURE `delete_image_{board}` (n_media_id INT)
+          BEGIN
+            UPDATE `{board}_images` SET total = (total - 1) WHERE media_id = n_media_id;
+          END;
+          
+          DROP TRIGGER IF EXISTS `before_ins_{board}`;
+          
+          CREATE TRIGGER `before_ins_{board}` BEFORE INSERT ON `{board}`
+          FOR EACH ROW
+          BEGIN
+            IF NEW.media_hash IS NOT NULL THEN
+              CALL insert_image_{board}(NEW.media_hash, NEW.media_orig, NEW.preview_orig, NEW.op);
+              SET NEW.media_id = LAST_INSERT_ID();
+            END IF;
+          END;
+          
+          DROP TRIGGER IF EXISTS `after_ins_{board}`;
+          
+          CREATE TRIGGER `after_ins_{board}` AFTER INSERT ON `{board}`
+          FOR EACH ROW
+          BEGIN
+            IF NEW.op = 1 THEN
+              CALL create_thread_{board}(NEW.num, NEW.timestamp);
+            END IF;
+            CALL update_thread_{board}(NEW.thread_num, NEW.subnum, NEW.timestamp, NEW.media_hash, NEW.email);
+          END;
+          
+          DROP TRIGGER IF EXISTS `after_del_{board}`;
+          
+          CREATE TRIGGER `after_del_{board}` AFTER DELETE ON `{board}`
+          FOR EACH ROW
+          BEGIN
+            CALL update_thread_{board}(OLD.thread_num, OLD.subnum, OLD.timestamp, OLD.media_hash, OLD.email);
+            IF OLD.op = 1 THEN
+              CALL delete_thread_{board}(OLD.num);
+            END IF;
+            IF OLD.media_hash IS NOT NULL THEN
+              CALL delete_image_{board}(OLD.media_id);
+            END IF;
+          END;
+          
+          DROP TRIGGER IF EXISTS `after_upd_{board}`;
+          
+          CREATE TRIGGER `after_upd_{board}` AFTER UPDATE ON `{board}`
+          FOR EACH ROW
+          BEGIN
+            IF NEW.timestamp_expired <> 0 THEN
+              CALL update_thread_timestamp_{board}(NEW.thread_num, NEW.timestamp_expired);
+            END IF;
+          END;
+          
+          "#,
+            board = board
+        )
     }
 
     fn query_init_type(&self) -> String {
-        unreachable!()
+        // Do nothing
+        "select 1".into()
     }
 
     fn query_init_views(&self, board: YotsubaBoard) -> String {
-        unreachable!()
+        // Do nothing
+        "select 1".into()
     }
 
     fn query_update_thread(&self, board: YotsubaBoard) -> String {
@@ -337,7 +905,7 @@ impl Queries for ::mysql::Pool {
                 IF(tim IS NOT NULL and ext IS NOT NULL, CONCAT(tim, ext), NULL)	'media_orig',
                 IF(spoiler IS NULL, FALSE, spoiler)								'spoiler',
                 0																'deleted',
-                IF(capcode IS NULL, 'N', capcode)								'capcode',
+                IF(capcode='manager' or capcode='Manager', 'G', coalesce(upper(left(capcode, 1)),'N'))  'capcode',
                 NULL															'email',
                 doCleanFull(name)												'name',
                 trip															'trip',
@@ -352,7 +920,7 @@ impl Queries for ::mysql::Pool {
                 -- CAST(JSON_OBJECT('uniqueIps', unique_ips, 'since4pass', since4pass, 'trollCountry', 'NULL') AS CHAR) 'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
                 NULL 'exif'
         FROM (
-        SELECT * FROM JSON_TABLE(@j, "$.posts[*]" COLUMNS (
+        SELECT * FROM JSON_TABLE(:jj, "$.posts[*]" COLUMNS (
                 -- `_id`						FOR ORDINALITY,
                 `no`				BIGINT		PATH "$.no",
                 `sticky`			SMALLINT	PATH "$.sticky",
@@ -429,26 +997,45 @@ impl Queries for ::mysql::Pool {
     }
 }
 
+// https://www.reddit.com/r/rust/comments/6rll9j/example_of_async_hyper_async_mysql/
 #[async_trait]
-impl QueriesExecutor<Statement> for ::mysql::Pool {
+impl QueriesExecutor<Statement> for Pool {
     async fn init_schema(&self, schema: &str) {
-        unimplemented!()
+        // log::info!("init_schema");
+        self.get_conn()
+            .await
+            .unwrap()
+            .drop_query(&self.query_init_schema(""))
+            .await
+            .expect("Err initializing");
     }
 
     async fn init_type(&self) {
-        unimplemented!()
+        // Do nothing
     }
 
     async fn init_metadata(&self) {
-        unimplemented!()
+        // log::info!("init_metadata");
+        self.get_conn()
+            .await
+            .unwrap()
+            .drop_query(&self.query_init_metadata())
+            .await
+            .expect("Err creating metadata");
     }
 
     async fn init_board(&self, board: YotsubaBoard) {
-        unimplemented!()
+        // log::info!("init_board");
+        self.get_conn()
+            .await
+            .unwrap()
+            .drop_query(&self.query_init_board(board))
+            .await
+            .expect(&format!("Err creating board: {}", board));
     }
 
     async fn init_views(&self, board: YotsubaBoard) {
-        unimplemented!()
+        // Do nothing
     }
 
     async fn update_metadata(
@@ -456,7 +1043,18 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
-        unimplemented!()
+        // log::info!("update_metadata");
+        let conn = self.get_conn().await.unwrap();
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateMetadata
+        // }; let statement = statements.get(&id).unwrap();
+        // let statement = conn.prep(self.query_update_metadata(endpoint)).unwrap();
+        let json = &serde_json::from_slice::<serde_json::Value>(item)?;
+        conn.prep_exec(
+            self.query_update_metadata(endpoint),
+            params! { "board" => board.to_string(), "jj" => json }
+        )
+        .await?;
+        Ok(1)
     }
 
     async fn update_thread(
@@ -464,7 +1062,14 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
-        unimplemented!()
+        // log::info!("update_thread");
+        let conn = self.get_conn().await.unwrap();
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateThread
+        // }; let statement = statements.get(&id).unwrap();
+        // let statement = conn.prep(self.query_update_thread(board)).unwrap();
+        let json = &serde_json::from_slice::<serde_json::Value>(item)?;
+        conn.prep_exec(self.query_update_thread(board), params! {"jj" => json }).await?;
+        Ok(1)
     }
 
     async fn delete(
@@ -472,7 +1077,14 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, no: u32
     )
     {
-        unimplemented!()
+        // log::info!("delete");
+        let conn = self.get_conn().await.unwrap();
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Delete };
+        // let statement = statements.get(&id).unwrap();
+        // let statement = conn.prep(self.query_delete(board)).unwrap();
+        conn.drop_exec(self.query_delete(board), (&i64::try_from(no).unwrap(),))
+            .await
+            .expect("Err executing sql: delete");
     }
 
     async fn update_deleteds(
@@ -480,7 +1092,18 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, thread: u32, item: &[u8]
     ) -> Result<u64>
     {
-        unimplemented!()
+        // log::info!("update_deleteds");
+        let conn = self.get_conn().await?;
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateDeleteds
+        // }; let statement = statements.get(&id).unwrap();
+        // let statement = conn.prep(self.query_update_deleteds(board)).unwrap();
+        let json = &serde_json::from_slice::<serde_json::Value>(item)?;
+        conn.prep_exec(
+            self.query_update_deleteds(board),
+            params! {"jj" => json, "no" => &i64::try_from(thread)? }
+        )
+        .await?;
+        Ok(1)
     }
 
     async fn update_hash(
@@ -488,7 +1111,7 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
     )
     {
-        unimplemented!()
+        // Do nothing
     }
 
     async fn medias(
@@ -496,7 +1119,21 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, no: u32
     ) -> Result<Rows>
     {
-        unimplemented!()
+        // log::info!("medias");
+        let conn = self.get_conn().await?;
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
+        // let statement = statements.get(&id).unwrap();
+        // TODO fix YotsubaStatement::Medias =>thumb
+        Ok(Rows::MySQL(
+            conn.prep_exec(
+                self.query_medias(board, YotsubaStatement::Medias),
+                params! {"no" => &(no as i64)}
+            )
+            .await?
+            .collect_and_drop()
+            .await?
+            .1
+        ))
     }
 
     async fn threads(
@@ -504,13 +1141,42 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, item: &[u8]
     ) -> Result<VecDeque<u32>>
     {
-        unimplemented!()
+        // log::info!("inside threads");
+        let conn = self.get_conn().await?;
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
+        // let statement = statements.get(&id).unwrap();
+        // let statement = conn.prep(self.query_threads()).unwrap();
+        let json = serde_json::from_slice::<serde_json::Value>(item)?;
+
+        Ok(conn
+            .first_exec(self.query_threads(), params! { "jj"=>json})
+            .await
+            .map(|(c, r)| r)
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
+            .ok()
+            .flatten()
+            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
     }
 
     async fn threads_modified(
         &self, board: YotsubaBoard, new_threads: &[u8], statement: &Statement
     ) -> Result<VecDeque<u32>> {
-        unimplemented!()
+        // log::info!("threads_modified");
+        let conn = self.get_conn().await?;
+        // let statementt = conn.prep().unwrap();
+        let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        // TODO this endpoint
+        Ok(conn
+            .first_exec(
+                self.query_threads_modified(YotsubaEndpoint::Threads),
+                params! {"board" => &board.to_string(), "jj" => json}
+            )
+            .await
+            .map(|(c, r)| r)
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
+            .ok()
+            .flatten()
+            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
     }
 
     async fn threads_combined(
@@ -518,7 +1184,25 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard, new_threads: &[u8]
     ) -> Result<VecDeque<u32>>
     {
-        unimplemented!()
+        // log::info!("threads_combined");
+        let conn = self.get_conn().await?;
+        // let id = YotsubaIdentifier { endpoint, board, statement:
+        // YotsubaStatement::ThreadsCombined }; let statement =
+        // statements.get(&id).unwrap(); let statement =
+        // conn.prep(self.query_threads_combined(board, endpoint)).unwrap();
+        let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+
+        Ok(conn
+            .first_exec(
+                self.query_threads_combined(board, endpoint),
+                params! {"board" => &board.to_string(), "jj" => json}
+            )
+            .await
+            .map(|(c, r)| r)
+            .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
+            .ok()
+            .flatten()
+            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
     }
 
     async fn metadata(
@@ -526,13 +1210,23 @@ impl QueriesExecutor<Statement> for ::mysql::Pool {
         board: YotsubaBoard
     ) -> bool
     {
-        unimplemented!()
+        // log::info!("inside metadata");
+        let conn = self.get_conn().await.unwrap();
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Metadata };
+        // let statement = statements.get(&id).unwrap();
+        // let statement = conn.prep(self.query_metadata(endpoint)).unwrap();
+        conn.first_exec(self.query_metadata(endpoint), params! {"board" => &board.to_string()})
+            .await
+            .map(|(c, res)| res)
+            .ok()
+            .flatten()
+            .unwrap_or(false)
     }
 }
 
 fn query_4chan_schema() -> String {
     format!(
-        r#"SELECT * FROM JSON_TABLE(?, "$.posts[*]" COLUMNS(
+        r#"SELECT * FROM JSON_TABLE(:jj, "$.posts[*]" COLUMNS(
         `no`				BIGINT		PATH "$.no",
         `sticky`			SMALLINT	PATH "$.sticky",
         `closed`			SMALLINT	PATH "$.closed",

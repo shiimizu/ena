@@ -1,5 +1,7 @@
 use crate::{
-    sql::*, YotsubaArchiver, YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier
+    archiver::YotsubaArchiver,
+    enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier},
+    sql::*
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -380,7 +382,7 @@ impl Queries for tokio_postgres::Client {
         (CASE WHEN tim IS NOT NULL and ext IS NOT NULL THEN (tim::text || ext) ELSE NULL END) AS media_orig,
         (CASE WHEN spoiler IS NULL THEN false ELSE spoiler END) AS spoiler,
         (CASE WHEN deleted_on IS NULL THEN false ELSE true END) AS deleted,
-        (CASE WHEN capcode IS NULL THEN 'N' ELSE capcode END) AS capcode,
+        (CASE WHEN capcode='manager' OR capcode='Manager' THEN 'G' ELSE coalesce (upper(left(capcode, 1)),'N') end) AS capcode,
         NULL AS email, -- Used by Asagi but no longer in the API. Used by FF.
         name,
         trip,
@@ -719,7 +721,7 @@ impl QueriesExecutor<Statement> for tokio_postgres::Client {
     async fn init_board(&self, board: YotsubaBoard) {
         self.batch_execute(&self.query_init_board(board))
             .await
-            .expect(&format!("Err creating schema: {}", board));
+            .expect(&format!("Err creating board: {}", board));
     }
 
     async fn init_views(&self, board: YotsubaBoard) {
@@ -816,7 +818,7 @@ impl QueriesExecutor<Statement> for tokio_postgres::Client {
     {
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Metadata };
         let statement = statements.get(&id).unwrap();
-        self.query(&(*statement), &[&board.to_string()])
+        self.query(statement, &[&board.to_string()])
             .await
             .ok()
             .filter(|re| !re.is_empty())
@@ -842,7 +844,7 @@ impl QueriesExecutor<Statement> for tokio_postgres::Client {
             .flatten()
             .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
             .flatten()
-            .ok_or_else(|| anyhow!("Error in get_threads_list"))?)
+            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
     }
 
     /// This query is only run ONCE at every startup

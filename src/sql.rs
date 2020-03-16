@@ -1,17 +1,19 @@
 // #![cold]
 
-use crate::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
-use ::mysql::{prelude::*, *};
+use crate::{
+    enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier},
+    mysql
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use enum_iterator::IntoEnumIterator;
+use mysql_async::{prelude::*, Pool};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
     ops::Add
 };
-
 /// This trait is used to define the implementation details archiving.  
 /// The logic/algorithm in how you want to approach downloading everything.  
 /// With that said, it should have more methods and stuff but I just use it as  
@@ -49,10 +51,10 @@ impl StatementTrait<tokio_postgres::Statement> for tokio_postgres::Client {
 }
 
 #[async_trait]
-impl StatementTrait<::mysql::Statement> for ::mysql::Pool {
-    async fn prepare(&self, stmt: &str) -> ::mysql::Statement {
-        let mut conn = self.get_conn().unwrap();
-        conn.prep(stmt).unwrap()
+impl StatementTrait<mysql::Statement> for Pool {
+    async fn prepare(&self, stmt: &str) -> mysql::Statement {
+        let mut conn = self.get_conn().await.unwrap();
+        conn.prepare(stmt).await.unwrap()
     }
 }
 
@@ -86,7 +88,7 @@ impl Database {
 }
 pub enum Rows {
     PostgreSQL(Vec<tokio_postgres::row::Row>),
-    MySQL(Vec<mysql::Row>)
+    MySQL(Vec<mysql_async::Row>)
 }
 
 impl fmt::Display for Database {
@@ -284,4 +286,4 @@ pub trait Queries {
 #[async_trait]
 pub trait DatabaseTrait<T>: Queries + QueriesExecutor<T> + StatementTrait<T> + Send + Sync {}
 impl DatabaseTrait<tokio_postgres::Statement> for tokio_postgres::Client {}
-impl DatabaseTrait<::mysql::Statement> for ::mysql::Pool {}
+impl DatabaseTrait<mysql::Statement> for Pool {}
