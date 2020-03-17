@@ -53,7 +53,7 @@ impl StatementTrait<tokio_postgres::Statement> for tokio_postgres::Client {
 #[async_trait]
 impl StatementTrait<mysql::Statement> for Pool {
     async fn prepare(&self, stmt: &str) -> mysql::Statement {
-        let mut conn = self.get_conn().await.unwrap();
+        let conn = self.get_conn().await.unwrap();
         conn.prepare(stmt).await.unwrap()
     }
 }
@@ -235,7 +235,7 @@ pub trait QueriesExecutor<S> {
     /// Gets the list of posts in a thread that have media
     async fn medias(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
-        no: u32
+        media_mode: YotsubaStatement, no: u32
     ) -> Result<Rows>;
 
     /// Gets a list of threads from the corresponding endpoint
@@ -247,7 +247,8 @@ pub trait QueriesExecutor<S> {
     /// Gets only the deleted and modified threads when comparing the metadata
     /// and the fetched endpoint
     async fn threads_modified(
-        &self, board: YotsubaBoard, new_threads: &[u8], statement: &S
+        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, new_threads: &[u8],
+        statements: &StatementStore<S>
     ) -> Result<VecDeque<u32>>;
 
     /// Gets the list of threads from the one in the metadata + the fetched one

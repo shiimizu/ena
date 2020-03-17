@@ -735,11 +735,6 @@ impl QueriesExecutor<Statement> for tokio_postgres::Client {
     {
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateMetadata };
         let statement = statements.get(&id).unwrap();
-        // let mut hash = HashMap::new();
-        // hash.insert(id.clone(), MuhStatement::new(statement.clone()));
-        // let ms = MuhStatement::new(statement.clone());
-        // let ms = hash.get(&id).unwrap();
-        // self.prepare(query)
         Ok(self
             .execute(statement, &[
                 &board.to_string(),
@@ -750,10 +745,10 @@ impl QueriesExecutor<Statement> for tokio_postgres::Client {
 
     async fn medias(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
-        board: YotsubaBoard, no: u32
+        board: YotsubaBoard, media_mode: YotsubaStatement, no: u32
     ) -> Result<Rows>
     {
-        let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
+        let id = YotsubaIdentifier { endpoint, board, statement: media_mode };
         let statement = statements.get(&id).unwrap();
         Ok(Rows::PostgreSQL(self.query(statement, &[&(no as i64)]).await?))
     }
@@ -883,8 +878,13 @@ impl QueriesExecutor<Statement> for tokio_postgres::Client {
     /// Return back this list to be processed.
     /// Use the new threads.json as the base now.
     async fn threads_modified(
-        &self, board: YotsubaBoard, new_threads: &[u8], statement: &Statement
-    ) -> Result<VecDeque<u32>> {
+        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, new_threads: &[u8],
+        statements: &StatementStore<Statement>
+    ) -> Result<VecDeque<u32>>
+    {
+        let id =
+            YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::ThreadsModified };
+        let statement = statements.get(&id).unwrap();
         let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
         Ok(self
             .query(statement, &[&board.to_string(), &i])

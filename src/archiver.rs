@@ -52,6 +52,10 @@ where
         }
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::Relaxed)
+    }
+
     pub async fn run(&self) {
         self.listen_to_exit();
         self.query.init_schema(&self.config.settings.schema).await;
@@ -108,7 +112,7 @@ where
 
     async fn create_statements(
         &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, media_mode: YotsubaStatement
-    ) -> HashMap<YotsubaIdentifier, S> {
+    ) -> StatementStore<S> {
         let mut statement_store = HashMap::new();
         let statements: Vec<_> = YotsubaStatement::into_enum_iter().collect();
         let gen_id = |stmt: YotsubaStatement| -> YotsubaIdentifier {
@@ -119,31 +123,29 @@ where
             self.query.prepare(&self.query.query_medias(board, media_mode)).await
         );
         if endpoint == YotsubaEndpoint::Media {
-            statement_store.insert(
-                gen_id(YotsubaStatement::Medias),
-                self.query.prepare(&self.query.query_medias(board, media_mode)).await
-            );
-
-            statement_store.insert(
-                gen_id(YotsubaStatement::UpdateHashMedia),
-                self.query
-                    .prepare(&self.query.query_update_hash(
-                        board,
-                        YotsubaHash::Sha256,
-                        YotsubaStatement::UpdateHashMedia
-                    ))
-                    .await
-            );
-            statement_store.insert(
-                gen_id(YotsubaStatement::UpdateHashThumbs),
-                self.query
-                    .prepare(&self.query.query_update_hash(
-                        board,
-                        YotsubaHash::Sha256,
-                        YotsubaStatement::UpdateHashThumbs
-                    ))
-                    .await
-            );
+            for statement in statements {
+                match statement {
+                    YotsubaStatement::Medias => {
+                        statement_store.insert(
+                            gen_id(statement),
+                            self.query.prepare(&self.query.query_medias(board, media_mode)).await
+                        );
+                    }
+                    YotsubaStatement::UpdateHashMedia | YotsubaStatement::UpdateHashThumbs => {
+                        statement_store.insert(
+                            gen_id(statement),
+                            self.query
+                                .prepare(&self.query.query_update_hash(
+                                    board,
+                                    YotsubaHash::Sha256,
+                                    statement
+                                ))
+                                .await
+                        );
+                    }
+                    _ => {}
+                }
+            }
             return statement_store;
         }
 
@@ -157,26 +159,16 @@ where
                     self.query.prepare(&self.query.query_delete(board)).await,
                 YotsubaStatement::UpdateDeleteds =>
                     self.query.prepare(&self.query.query_update_deleteds(board)).await,
-                YotsubaStatement::UpdateHashMedia =>
+                YotsubaStatement::UpdateHashMedia | YotsubaStatement::UpdateHashThumbs =>
                     self.query
                         .prepare(&self.query.query_update_hash(
                             board,
                             YotsubaHash::Sha256,
-                            YotsubaStatement::UpdateHashMedia
-                        ))
-                        .await,
-                YotsubaStatement::UpdateHashThumbs =>
-                    self.query
-                        .prepare(&self.query.query_update_hash(
-                            board,
-                            YotsubaHash::Sha256,
-                            YotsubaStatement::UpdateHashThumbs
+                            statement
                         ))
                         .await,
                 YotsubaStatement::Medias =>
-                    self.query
-                        .prepare(&self.query.query_medias(board, YotsubaStatement::Medias))
-                        .await,
+                    self.query.prepare(&self.query.query_medias(board, media_mode)).await,
                 YotsubaStatement::Threads => self.query.prepare(&self.query.query_threads()).await,
                 YotsubaStatement::ThreadsModified =>
                     self.query.prepare(&self.query.query_threads_modified(endpoint)).await,
@@ -211,9 +203,7 @@ where
                 loop {
                     // Sequential fetching to prevent client congestion and errors
                     while let Ok(received) = r.try_recv() {
-                        if self.finished.load(Ordering::Relaxed)
-                            && downloading == YotsubaEndpoint::Media
-                        {
+                        if self.is_finished() && downloading == YotsubaEndpoint::Media {
                             info!("({})\tStopping media fetching...", endpoint);
                             downloading = YotsubaEndpoint::Threads;
                         }
@@ -223,6 +213,7 @@ where
                             break;
                         }
                         let media_info = received.0;
+
                         if media_info.download_thumbnails || media_info.download_media {
                             self.fetch_media(
                                 &media_info,
@@ -236,12 +227,12 @@ where
                     }
 
                     sleep(dur).await;
-                    if self.finished.load(Ordering::Relaxed) {
+                    if self.is_finished() {
                         break;
                     }
                 }
                 r.close();
-                if self.finished.load(Ordering::Relaxed) {
+                if self.is_finished() {
                     return;
                 }
             }
@@ -367,32 +358,22 @@ where
                                         // running
                                         // ONLY get the new/modified/deleted threads
                                         // Compare time modified and get the new threads
-                                        let id = YotsubaIdentifier {
-                                            endpoint,
-                                            board: current_board,
-                                            statement: YotsubaStatement::ThreadsModified
-                                        };
-                                        match &statements.get(&id) {
-                                            Some(statement_recieved) => {
-                                                if let Ok(mut list) = self
-                                                    .query
-                                                    .threads_modified(
-                                                        current_board,
-                                                        &body,
-                                                        statement_recieved
-                                                    )
-                                                    .await
-                                                {
-                                                    local_threads_list.append(&mut list);
-                                                } else {
-                                                    info!(
-                                                        "({})\t/{}/\t\tSeems like there was no modified threads..",
-                                                        endpoint, current_board
-                                                    )
-                                                }
-                                            }
-                                            None =>
-                                                error!("Statement: {} was not found!", id.statement),
+                                        if let Ok(mut list) = self
+                                            .query
+                                            .threads_modified(
+                                                endpoint,
+                                                current_board,
+                                                &body,
+                                                statements
+                                            )
+                                            .await
+                                        {
+                                            local_threads_list.append(&mut list);
+                                        } else {
+                                            info!(
+                                                "({})\t/{}/\t\tSeems like there was no modified threads..",
+                                                endpoint, current_board
+                                            )
                                         }
 
                                         // update base at the end
@@ -475,6 +456,7 @@ where
         let statements =
             self.create_statements(endpoint, current_board, YotsubaStatement::Medias).await;
 
+        // Media Statements
         let file_setting = if bs.download_media && bs.download_thumbnails {
             YotsubaStatement::Medias
         } else if bs.download_media {
@@ -487,6 +469,8 @@ where
             // So this is fine
             YotsubaStatement::Threads
         };
+        // let statements_media =
+        //     self.create_statements(YotsubaEndpoint::Media, current_board, file_setting).await;
 
         let dur = Duration::from_millis(250);
         let ratel = Duration::from_millis(bs.throttle_millisec.into());
@@ -495,6 +479,12 @@ where
         let original_ratelimit = config::refresh_rate(bs.refresh_delay, 5, 10);
         let mut ratelimit = original_ratelimit.clone();
         loop {
+            // let mut statments_inner = Some(statements_def);
+            // if self.config.settings.engine.base() ==  Database::MySQL {
+            //     statments_inner = Some(self.create_statements(endpoint, current_board,
+            // YotsubaStatement::Medias).await); }
+            // let statements = statments_inner.unwrap();
+
             let now = tokio::time::Instant::now();
 
             // Semaphore. When the result of `acquire` is dropped, the semaphore is released.
@@ -506,7 +496,7 @@ where
             if self.config.settings.strict_mode {
                 _sem = Some(semaphore.acquire().await);
             }
-            if self.finished.load(Ordering::Relaxed) {
+            if self.is_finished() {
                 break;
             }
 
@@ -549,19 +539,16 @@ where
             let mut position = 1_u32;
             let t = tx.clone().unwrap();
             while let Some(thread) = local_threads_list.pop_front() {
-                // No `clone()` method for  the HashMap with the trait, so I have to put this here
-                // in the loop
-                let statements_media = self
-                    .create_statements(YotsubaEndpoint::Media, current_board, file_setting)
-                    .await;
-
                 // Semaphore
                 let mut _sem_thread = None;
                 if self.config.settings.strict_mode {
                     _sem_thread = Some(semaphore.acquire().await);
                 }
-                if self.finished.load(Ordering::Relaxed) {
+                if self.is_finished() {
                     if bs.download_media || bs.download_thumbnails {
+                        let statements_media = self
+                            .create_statements(YotsubaEndpoint::Media, current_board, file_setting)
+                            .await;
                         if let Err(_) = t.send((bs.clone(), statements_media, 0)) {
                             // Don't display an error if we're sending the exit code
                             // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
@@ -574,6 +561,9 @@ where
                 self.assign_to_thread(&bs, endpoint, thread, position, threads_len, &statements)
                     .await;
                 if bs.download_media || bs.download_thumbnails {
+                    let statements_media = self
+                        .create_statements(YotsubaEndpoint::Media, current_board, file_setting)
+                        .await;
                     if let Err(e) = t.send((bs.clone(), statements_media, thread)) {
                         error!(
                             "(media)\t/{}/{}\t[{}/{}] {}",
@@ -587,7 +577,7 @@ where
                 tokio::time::delay_until(now_thread + ratel).await;
             }
 
-            if self.finished.load(Ordering::Relaxed) {
+            if self.is_finished() {
                 break;
             }
 
@@ -607,14 +597,14 @@ where
             //  Board refresh delay ratelimit
             let newrt = (ratelimit.next().unwrap()).into();
             while now.elapsed().as_secs() < newrt {
-                if self.finished.load(Ordering::Relaxed) {
+                if self.is_finished() {
                     break;
                 }
                 sleep(dur).await;
             }
 
             // If the while loop was somehow passed
-            if self.finished.load(Ordering::Relaxed) {
+            if self.is_finished() {
                 break;
             }
         }
@@ -697,7 +687,20 @@ where
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
 
-        match self.query.medias(statements, endpoint, info.board, no).await {
+        let file_setting = if info.download_media && info.download_thumbnails {
+            YotsubaStatement::Medias
+        } else if info.download_media {
+            YotsubaStatement::UpdateHashMedia
+        } else if info.download_thumbnails {
+            YotsubaStatement::UpdateHashThumbs
+        } else {
+            // No media downloading at all
+            // Set this to any. Before downloading media, the board settings is checked
+            // So this is fine
+            YotsubaStatement::Threads
+        };
+
+        match self.query.medias(statements, endpoint, info.board, file_setting, no).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
@@ -711,6 +714,7 @@ where
                         _ms = Some(m);
                     }
                 }
+                // TODO Media for Asagi
                 let ml = pg.unwrap();
                 let mut fut = FuturesUnordered::new();
                 let mut has_media = false;

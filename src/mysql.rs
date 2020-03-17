@@ -10,10 +10,11 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use mysql_async::{prelude::*, Pool};
 use std::{
-    collections::{HashMap, VecDeque},
-    convert::TryFrom
+    boxed::Box,
+    collections::VecDeque,
+    convert::TryFrom,
+    sync::{Arc, Mutex}
 };
-
 pub type Statement = mysql_async::Stmt<mysql_async::Conn>;
 
 #[async_trait]
@@ -25,14 +26,13 @@ impl Archiver for YotsubaArchiver<Statement, Pool, reqwest::Client> {
 
 impl Queries for Pool {
     fn query_init_schema(&self, schema: &str) -> String {
-        // Not really init schema
-        // But here we init commons.sql and functions
+        // init commons.sql and functions
         r#"
         CREATE TABLE IF NOT EXISTS `index_counters` (
             `id` varchar(50) NOT NULL,
             `val` int(10) NOT NULL,
             PRIMARY KEY (`id`)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4;
           
           DROP FUNCTION IF EXISTS doCleanFull;
           CREATE FUNCTION doCleanFull (com TEXT)
@@ -108,7 +108,7 @@ impl Queries for Pool {
                 `threads` json,
                 `archive` json,
                 INDEX metadata_board_idx (`board`)
-            ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+            ) ENGINE=TokuDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
             "
         )
     }
@@ -155,7 +155,7 @@ impl Queries for Pool {
     fn query_update_metadata(&self, column: YotsubaEndpoint) -> String {
         format!(
             r#"INSERT INTO `metadata`(`board`, `{endpoint}`)
-            VALUES (:board, :jj)
+            VALUES (:bb, :jj)
             ON DUPLICATE KEY update
                `{endpoint}` = :jj
              ;
@@ -186,7 +186,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*].threads[*]'
                     COLUMNS(newv json path '$')) w) e
                 on prev->'$.no' = newv->'$.no'
-                where board = :board
+                where board = :bb
                 
                 UNION
                 
@@ -198,7 +198,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*].threads[*]'
                     COLUMNS(newv json path '$')) a) s
                 on prev->'$.no' = newv->'$.no'
-                where board = :board
+                where board = :bb
             ) z
             where newv is null or prev is null or prev->'$.last_modified' != newv->'$.last_modified';
             "#
@@ -214,7 +214,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*]'
                     COLUMNS(newv json path '$')) w) e
                 on prev = newv
-                where board = :board
+                where board = :bb
                 
                 UNION
                 
@@ -226,7 +226,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*]'
                     COLUMNS(newv json path '$')) a) s
                 on prev = newv
-                where board = :board
+                where board = :bb
             ) z
             where newv is null or prev is null;
             "#
@@ -247,16 +247,16 @@ impl Queries for Pool {
 
     fn query_metadata(&self, column: YotsubaEndpoint) -> String {
         format!(
-            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = :board"#,
+            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = :bb
+            ;"#,
             column
         )
     }
 
-    // TODO do not coalesce, see what happens
     fn query_threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String {
         let thread = format!(
             r#"
-        select coalesce (json_array(),JSON_ARRAYAGG(c)) from (
+        select JSON_ARRAYAGG(c) from (
             SELECT coalesce (newv->'$.no', prev->'$.no') as c from (
                 SELECT * from metadata m2 ,
                     JSON_TABLE(threads, '$[*].threads[*]'
@@ -266,7 +266,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*].threads[*]'
                     COLUMNS(newv json path '$')) w) e
                 on prev->'$.no' = newv->'$.no'
-                where board = :board
+                where board = :bb
                 
                 UNION
                 
@@ -278,7 +278,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*].threads[*]'
                     COLUMNS(newv json path '$')) a) s
                 on prev->'$.no' = newv->'$.no'
-                where board = :board
+                where board = :bb
             ) z ) i
             left join
               (select num as nno from `{}` where op=1 and (timestamp_expired is not null or deleted is not null))u
@@ -290,7 +290,7 @@ impl Queries for Pool {
 
         let archive = format!(
             r#"
-        select coalesce (json_array(),JSON_ARRAYAGG(c)) from (
+        select JSON_ARRAYAGG(c) from (
             SELECT coalesce (newv, prev) as c from (
                 SELECT * from metadata m2 ,
                     JSON_TABLE(archive, '$[*]'
@@ -300,7 +300,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*]'
                     COLUMNS(newv json path '$')) w) e
                 on prev = newv
-                where board = :board
+                where board = :bb
                 
                 UNION
                 
@@ -312,7 +312,7 @@ impl Queries for Pool {
                     JSON_TABLE(:jj, '$[*]'
                     COLUMNS(newv json path '$')) a) s
                 on prev = newv
-                where board = :board
+                where board = :bb
             ) z ) i
             left join
               (select num as nno from `{}` where op=1 and (timestamp_expired is not null or deleted is not null))u
@@ -327,6 +327,11 @@ impl Queries for Pool {
         }
     }
 
+
+    // TODO speedup
+    // https://www.mysqltutorial.org/mysql-stored-procedure/mysql-show-function/
+    // https://www.mysqltutorial.org/listing-stored-procedures-in-mysql-database.aspx
+    // https://www.mysqltutorial.org/mysql-exists/
     fn query_init_board(&self, board: YotsubaBoard) -> String {
         // Init boards and triggers
         format!(
@@ -377,7 +382,7 @@ impl Queries for Pool {
             INDEX email_index (`email`),
             INDEX poster_ip_index (`poster_ip`),
             INDEX timestamp_index (`timestamp`)
-          ) engine=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) engine=TokuDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           CREATE TABLE IF NOT EXISTS `{board}_deleted` LIKE `{board}`;
 
@@ -402,7 +407,7 @@ impl Queries for Pool {
             INDEX time_last_modified_index (`time_last_modified`),
             INDEX sticky_index (`sticky`),
             INDEX locked_index (`locked`)
-          ) ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE=TokuDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_users` (
@@ -416,7 +421,7 @@ impl Queries for Pool {
             UNIQUE name_trip_index (`name`, `trip`),
             INDEX firstseen_index (`firstseen`),
             INDEX postcount_index (`postcount`)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_images` (
@@ -432,7 +437,7 @@ impl Queries for Pool {
             UNIQUE media_hash_index (`media_hash`),
             INDEX total_index (`total`),
             INDEX banned_index (`banned`)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_daily` (
@@ -445,233 +450,8 @@ impl Queries for Pool {
             `names` int(10) unsigned NOT NULL,
           
             PRIMARY KEY (`day`)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
-          
-          DROP PROCEDURE IF EXISTS `update_thread_{board}`;
-          
-          
-          CREATE PROCEDURE `update_thread_{board}` (tnum INT)
-          BEGIN
-            UPDATE
-              `{board}_threads` op
-            SET
-              op.time_last = (
-                COALESCE(GREATEST(
-                  op.time_op,
-                  (SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
-                    re.thread_num = tnum AND re.subnum = 0)
-                ), op.time_op)
-              ),
-              op.time_bump = (
-                COALESCE(GREATEST(
-                  op.time_op,
-                  (SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
-                    re.thread_num = tnum AND (re.email <> 'sage' OR re.email IS NULL)
-                    AND re.subnum = 0)
-                ), op.time_op)
-              ),
-              op.time_ghost = (
-                SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
-                  re.thread_num = tnum AND re.subnum <> 0
-              ),
-              op.time_ghost_bump = (
-                SELECT MAX(timestamp) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
-                  re.thread_num = tnum AND re.subnum <> 0 AND (re.email <> 'sage' OR
-                    re.email IS NULL)
-              ),
-              op.time_last_modified = (
-                COALESCE(GREATEST(
-                  op.time_op,
-                  (SELECT GREATEST(MAX(timestamp), MAX(timestamp_expired)) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
-                    re.thread_num = tnum)
-                ), op.time_op)
-              ),
-              op.nreplies = (
-                SELECT COUNT(*) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
-                  re.thread_num = tnum
-              ),
-              op.nimages = (
-                SELECT COUNT(media_hash) FROM `{board}` re FORCE INDEX(thread_num_subnum_index) WHERE
-                  re.thread_num = tnum
-              )
-              WHERE op.thread_num = tnum;
-          END;
-          
-          
-          DROP PROCEDURE IF EXISTS `create_thread_{board}`;
-          
-          
-          CREATE PROCEDURE `create_thread_{board}` (num INT, timestamp INT)
-          BEGIN
-            INSERT IGNORE INTO `{board}_threads` VALUES (num, timestamp, timestamp,
-              timestamp, NULL, NULL, timestamp, 0, 0, 0, 0);
-          END;
-          
-          
-          DROP PROCEDURE IF EXISTS `delete_thread_{board}`;
-          
-          
-          CREATE PROCEDURE `delete_thread_{board}` (tnum INT)
-          BEGIN
-            DELETE FROM `{board}_threads` WHERE thread_num = tnum;
-          END;
-          
-          
-          DROP PROCEDURE IF EXISTS `insert_image_{board}`;
-          
-          
-          CREATE PROCEDURE `insert_image_{board}` (n_media_hash VARCHAR(25),
-           n_media VARCHAR(20), n_preview VARCHAR(20), n_op INT)
-          BEGIN
-            IF n_op = 1 THEN
-              INSERT INTO `{board}_images` (media_hash, media, preview_op, total)
-              VALUES (n_media_hash, n_media, n_preview, 1)
-              ON DUPLICATE KEY UPDATE
-                media_id = LAST_INSERT_ID(media_id),
-                total = (total + 1),
-                preview_op = COALESCE(preview_op, VALUES(preview_op)),
-                media = COALESCE(media, VALUES(media));
-            ELSE
-              INSERT INTO `{board}_images` (media_hash, media, preview_reply, total)
-              VALUES (n_media_hash, n_media, n_preview, 1)
-              ON DUPLICATE KEY UPDATE
-                media_id = LAST_INSERT_ID(media_id),
-                total = (total + 1),
-                preview_reply = COALESCE(preview_reply, VALUES(preview_reply)),
-                media = COALESCE(media, VALUES(media));
-            END IF;
-          END;
-          
-          
-          DROP PROCEDURE IF EXISTS `delete_image_{board}`;
-          
-          
-          CREATE PROCEDURE `delete_image_{board}` (n_media_id INT)
-          BEGIN
-            UPDATE `{board}_images` SET total = (total - 1) WHERE media_id = n_media_id;
-          END;
-          
-          
-          DROP PROCEDURE IF EXISTS `insert_post_{board}`;
-          
-          
-          CREATE PROCEDURE `insert_post_{board}` (p_timestamp INT, p_media_hash VARCHAR(25),
-            p_email VARCHAR(100), p_name VARCHAR(100), p_trip VARCHAR(25))
-          BEGIN
-            DECLARE d_day INT;
-            DECLARE d_image INT;
-            DECLARE d_sage INT;
-            DECLARE d_anon INT;
-            DECLARE d_trip INT;
-            DECLARE d_name INT;
-          
-            SET d_day = FLOOR(p_timestamp/86400)*86400;
-            SET d_image = p_media_hash IS NOT NULL;
-            SET d_sage = COALESCE(p_email = 'sage', 0);
-            SET d_anon = COALESCE(p_name = 'Anonymous' AND p_trip IS NULL, 0);
-            SET d_trip = p_trip IS NOT NULL;
-            SET d_name = COALESCE(p_name <> 'Anonymous' AND p_trip IS NULL, 1);
-          
-            INSERT INTO `{board}_daily` VALUES(d_day, 1, d_image, d_sage, d_anon, d_trip,
-              d_name)
-              ON DUPLICATE KEY UPDATE posts=posts+1, images=images+d_image,
-              sage=sage+d_sage, anons=anons+d_anon, trips=trips+d_trip,
-              names=names+d_name;
-          
-            IF (SELECT trip FROM `{board}_users` WHERE trip = p_trip) IS NOT NULL THEN
-              UPDATE `{board}_users` SET postcount=postcount+1,
-                  firstseen = LEAST(p_timestamp, firstseen),
-                  name = COALESCE(p_name, '')
-                WHERE trip = p_trip;
-            ELSE
-              INSERT INTO `{board}_users` VALUES(
-              NULL, COALESCE(p_name,''), COALESCE(p_trip,''), p_timestamp, 1)
-              ON DUPLICATE KEY UPDATE postcount=postcount+1,
-                firstseen = LEAST(VALUES(firstseen), firstseen),
-                name = COALESCE(p_name, '');
-            END IF;
-          END;
-          
-          
-          DROP PROCEDURE IF EXISTS `delete_post_{board}`;
-          
-          
-          CREATE PROCEDURE `delete_post_{board}` (p_timestamp INT, p_media_hash VARCHAR(25), p_email VARCHAR(100), p_name VARCHAR(100), p_trip VARCHAR(25))
-          BEGIN
-            DECLARE d_day INT;
-            DECLARE d_image INT;
-            DECLARE d_sage INT;
-            DECLARE d_anon INT;
-            DECLARE d_trip INT;
-            DECLARE d_name INT;
-          
-            SET d_day = FLOOR(p_timestamp/86400)*86400;
-            SET d_image = p_media_hash IS NOT NULL;
-            SET d_sage = COALESCE(p_email = 'sage', 0);
-            SET d_anon = COALESCE(p_name = 'Anonymous' AND p_trip IS NULL, 0);
-            SET d_trip = p_trip IS NOT NULL;
-            SET d_name = COALESCE(p_name <> 'Anonymous' AND p_trip IS NULL, 1);
-          
-            UPDATE `{board}_daily` SET posts=posts-1, images=images-d_image,
-              sage=sage-d_sage, anons=anons-d_anon, trips=trips-d_trip,
-              names=names-d_name WHERE day = d_day;
-          
-            IF (SELECT trip FROM `{board}_users` WHERE trip = p_trip) IS NOT NULL THEN
-              UPDATE `{board}_users` SET postcount = postcount-1 WHERE trip = p_trip;
-            ELSE
-              UPDATE `{board}_users` SET postcount = postcount-1 WHERE
-                name = COALESCE(p_name, '') AND trip = COALESCE(p_trip, '');
-            END IF;
-          END;
-          
-          -- TRIGGERS
-          
-          DROP TRIGGER IF EXISTS `before_ins_{board}`;
-          
-          
-          CREATE TRIGGER `before_ins_{board}` BEFORE INSERT ON `{board}`
-          FOR EACH ROW
-          BEGIN
-            IF NEW.media_hash IS NOT NULL THEN
-              CALL insert_image_{board}(NEW.media_hash, NEW.media_orig, NEW.preview_orig, NEW.op);
-              SET NEW.media_id = LAST_INSERT_ID();
-            END IF;
-          END;
-          
-          
-          DROP TRIGGER IF EXISTS `after_ins_{board}`;
-          
-          
-          CREATE TRIGGER `after_ins_{board}` AFTER INSERT ON `{board}`
-          FOR EACH ROW
-          BEGIN
-            IF NEW.op = 1 THEN
-              CALL create_thread_{board}(NEW.num, NEW.timestamp);
-            END IF;
-            CALL update_thread_{board}(NEW.thread_num);
-            CALL insert_post_{board}(NEW.timestamp, NEW.media_hash, NEW.email, NEW.name, NEW.trip);
-          END;
-          
-          
-          DROP TRIGGER IF EXISTS `after_del_{board}`;
-          
-          
-          CREATE TRIGGER `after_del_{board}` AFTER DELETE ON `{board}`
-          FOR EACH ROW
-          BEGIN
-            CALL update_thread_{board}(OLD.thread_num);
-            IF OLD.op = 1 THEN
-              CALL delete_thread_{board}(OLD.num);
-            END IF;
-            CALL delete_post_{board}(OLD.timestamp, OLD.media_hash, OLD.email, OLD.name, OLD.trip);
-            IF OLD.media_hash IS NOT NULL THEN
-              CALL delete_image_{board}(OLD.media_id);
-            END IF;
-          END;
-          
-          
-
           DROP PROCEDURE IF EXISTS `update_thread_{board}`;
 
           CREATE PROCEDURE `update_thread_{board}` (tnum INT, ghost_num INT, p_timestamp INT,
@@ -1001,13 +781,14 @@ impl Queries for Pool {
 #[async_trait]
 impl QueriesExecutor<Statement> for Pool {
     async fn init_schema(&self, schema: &str) {
-        // log::info!("init_schema");
-        self.get_conn()
-            .await
-            .unwrap()
-            .drop_query(&self.query_init_schema(""))
-            .await
-            .expect("Err initializing");
+        log::debug!("init_schema");
+        // // let pool =
+        // mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
+        // let pool = self.clone();
+        let conn = self.get_conn().await.unwrap();
+        // let conn: mysql_async::Conn =
+        conn.drop_query(&self.query_init_schema("")).await.expect("Err initializing");
+        // conn.disconnect().await.unwrap();
     }
 
     async fn init_type(&self) {
@@ -1015,23 +796,25 @@ impl QueriesExecutor<Statement> for Pool {
     }
 
     async fn init_metadata(&self) {
-        // log::info!("init_metadata");
-        self.get_conn()
-            .await
-            .unwrap()
-            .drop_query(&self.query_init_metadata())
-            .await
-            .expect("Err creating metadata");
+        log::debug!("init_metadata");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
+        // let pool = self.clone();
+        let conn = self.get_conn().await.unwrap();
+        // let conn: mysql_async::Conn =
+        conn.drop_query(&self.query_init_metadata()).await.expect("Err creating metadata");
+        // conn.disconnect().await.unwrap();
     }
 
     async fn init_board(&self, board: YotsubaBoard) {
-        // log::info!("init_board");
-        self.get_conn()
-            .await
-            .unwrap()
-            .drop_query(&self.query_init_board(board))
+        log::debug!("init_board /{}/", board);
+
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
+        // let pool = self.clone();
+        let conn = self.get_conn().await.unwrap();
+        conn.drop_query(&self.query_init_board(board))
             .await
             .expect(&format!("Err creating board: {}", board));
+        // conn.disconnect().await.unwrap();
     }
 
     async fn init_views(&self, board: YotsubaBoard) {
@@ -1043,18 +826,37 @@ impl QueriesExecutor<Statement> for Pool {
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
-        // log::info!("update_metadata");
+        log::debug!("update_metadata");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
+        // let pool = self.clone();
         let conn = self.get_conn().await.unwrap();
+        let json = &serde_json::from_slice::<serde_json::Value>(item)?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateMetadata
         // }; let statement = statements.get(&id).unwrap();
-        // let statement = conn.prep(self.query_update_metadata(endpoint)).unwrap();
-        let json = &serde_json::from_slice::<serde_json::Value>(item)?;
-        conn.prep_exec(
-            self.query_update_metadata(endpoint),
-            params! { "board" => board.to_string(), "jj" => json }
-        )
-        .await?;
-        Ok(1)
+        // let statement = conn.prepare(self.query_update_metadata(endpoint)).await.unwrap(); let
+        // arc= std::
+
+        // Ok(statement
+        //     .first(params! { "bb" => board.to_string(), "jj" => json })
+        //     .await
+        //     .map(|(c, r)| r)
+        //     .ok()
+        //     .flatten()
+        //     .unwrap_or(1))
+
+        let r = Ok(conn
+            .prep_exec(
+                self.query_update_metadata(endpoint),
+                params! { "bb" => board.to_string(), "jj" => json }
+            )
+            .await?
+            .collect_and_drop()
+            .await?
+            .1
+            .pop()
+            .unwrap_or(1));
+        // pool.disconnect().await.unwrap();
+        r
     }
 
     async fn update_thread(
@@ -1062,14 +864,33 @@ impl QueriesExecutor<Statement> for Pool {
         board: YotsubaBoard, item: &[u8]
     ) -> Result<u64>
     {
-        // log::info!("update_thread");
+        log::debug!("update_thread");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
+        // let pool = self.clone();
         let conn = self.get_conn().await.unwrap();
-        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateThread
-        // }; let statement = statements.get(&id).unwrap();
-        // let statement = conn.prep(self.query_update_thread(board)).unwrap();
         let json = &serde_json::from_slice::<serde_json::Value>(item)?;
-        conn.prep_exec(self.query_update_thread(board), params! {"jj" => json }).await?;
-        Ok(1)
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateThread
+        // }; let statement =
+        // statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
+        // let statement = conn.prep(self.query_update_thread(board)).unwrap();
+        // Ok(statement
+        //     .first(params! { "jj" => json })
+        //     .await
+        //     .map(|(c, r)| r)
+        //     .ok()
+        //     .flatten()
+        //     .unwrap_or(1))
+
+        let r = Ok(conn
+            .prep_exec(self.query_update_thread(board), params! {"jj" => json })
+            .await?
+            .collect_and_drop()
+            .await?
+            .1
+            .pop()
+            .unwrap_or(1));
+        // pool.disconnect().await.unwrap();
+        r
     }
 
     async fn delete(
@@ -1077,14 +898,25 @@ impl QueriesExecutor<Statement> for Pool {
         board: YotsubaBoard, no: u32
     )
     {
-        // log::info!("delete");
+        log::debug!("delete");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
+        // let pool = self.clone();
         let conn = self.get_conn().await.unwrap();
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Delete };
-        // let statement = statements.get(&id).unwrap();
+        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
         // let statement = conn.prep(self.query_delete(board)).unwrap();
-        conn.drop_exec(self.query_delete(board), (&i64::try_from(no).unwrap(),))
-            .await
-            .expect("Err executing sql: delete");
+        conn.drop_exec(self.query_delete(board), (&i64::try_from(no).unwrap(),)).await.unwrap();
+        //    .await
+        //   .expect("Err executing sql: delete");
+        // pool.disconnect().await.unwrap();
+        // if let Some(_) = statement
+        //     .first((i64::try_from(no).unwrap(),))
+        //     .await
+        //     .map(|(c, r): (mysql_async::Stmt<mysql_async::Conn>, Option<u64>)| r)
+        //     .ok()
+        //     .flatten()
+        // {
+        // };
     }
 
     async fn update_deleteds(
@@ -1092,18 +924,36 @@ impl QueriesExecutor<Statement> for Pool {
         board: YotsubaBoard, thread: u32, item: &[u8]
     ) -> Result<u64>
     {
-        // log::info!("update_deleteds");
+        log::debug!("update_deleteds");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
-        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateDeleteds
-        // }; let statement = statements.get(&id).unwrap();
-        // let statement = conn.prep(self.query_update_deleteds(board)).unwrap();
         let json = &serde_json::from_slice::<serde_json::Value>(item)?;
-        conn.prep_exec(
-            self.query_update_deleteds(board),
-            params! {"jj" => json, "no" => &i64::try_from(thread)? }
-        )
-        .await?;
-        Ok(1)
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateDeleteds
+        // }; let statement =
+        // statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
+        // let statement = conn.prep(self.query_update_deleteds(board)).unwrap();
+
+        // Ok(statement
+        //     .first(params! {"jj" => json, "no" => i64::try_from(thread)? })
+        //     .await
+        //     .map(|(c, r)| r)
+        //     .ok()
+        //     .flatten()
+        //     .unwrap_or(1))
+
+        let r = Ok(conn
+            .prep_exec(
+                self.query_update_deleteds(board),
+                params! {"jj" => json, "no" => &i64::try_from(thread)? }
+            )
+            .await?
+            .collect_and_drop()
+            .await?
+            .1
+            .pop()
+            .unwrap_or(1));
+        // pool.disconnect().await?;
+        r
     }
 
     async fn update_hash(
@@ -1116,24 +966,33 @@ impl QueriesExecutor<Statement> for Pool {
 
     async fn medias(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
-        board: YotsubaBoard, no: u32
+        board: YotsubaBoard, media_mode: YotsubaStatement, no: u32
     ) -> Result<Rows>
     {
-        // log::info!("medias");
+        log::debug!("medias");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
-        // let statement = statements.get(&id).unwrap();
-        // TODO fix YotsubaStatement::Medias =>thumb
-        Ok(Rows::MySQL(
-            conn.prep_exec(
-                self.query_medias(board, YotsubaStatement::Medias),
-                params! {"no" => &(no as i64)}
-            )
-            .await?
-            .collect_and_drop()
-            .await?
-            .1
-        ))
+        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
+
+        // Ok(Rows::MySQL(
+        //     statement
+        //         .execute(params! {"no" => i64::try_from(no)? })
+        //         .await?
+        //         .collect_and_drop()
+        //         .await?
+        //         .1
+        // ))
+
+        let r = Ok(Rows::MySQL(
+            conn.prep_exec(self.query_medias(board, media_mode), params! {"no" => &(no as i64)})
+                .await?
+                .collect_and_drop()
+                .await?
+                .1
+        ));
+        // pool.disconnect().await?;
+        r
     }
 
     async fn threads(
@@ -1141,42 +1000,87 @@ impl QueriesExecutor<Statement> for Pool {
         board: YotsubaBoard, item: &[u8]
     ) -> Result<VecDeque<u32>>
     {
-        // log::info!("inside threads");
+        log::debug!("inside threads");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
-        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
-        // let statement = statements.get(&id).unwrap();
-        // let statement = conn.prep(self.query_threads()).unwrap();
         let json = serde_json::from_slice::<serde_json::Value>(item)?;
 
-        Ok(conn
-            .first_exec(self.query_threads(), params! { "jj"=>json})
-            .await
-            .map(|(c, r)| r)
-            .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
-            .ok()
-            .flatten()
-            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
+        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
+        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
+        // let statement = conn.prep(self.query_threads()).unwrap();
+
+        // Ok(statement
+        //     .first(params! { "jj" => json })
+        //     .await
+        //     .map(|(c, r)| r.ok_or_else(|| anyhow!("Error in executing getting list of
+        // threads")))?     .map(|re| serde_json::from_value(re))??)
+
+        let r = Ok(conn
+            .prep_exec(self.query_threads(), params! { "jj"=>json})
+            .await?
+            .collect_and_drop()
+            .await?
+            .1
+            .pop()
+            .map(|j| serde_json::from_value(j))
+            .ok_or_else(|| anyhow!("Error in executing getting list of threads "))??);
+        // pool.disconnect().await?;
+        r
+        // Ok(conn
+        //     .first_exec(self.query_threads(), params! { "jj"=>json})
+        //     .await
+        //     .map(|(c, r)| r)
+        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
+        //     .ok()
+        //     .flatten()
+        //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
     }
 
     async fn threads_modified(
-        &self, board: YotsubaBoard, new_threads: &[u8], statement: &Statement
-    ) -> Result<VecDeque<u32>> {
-        // log::info!("threads_modified");
+        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, new_threads: &[u8],
+        statements: &StatementStore<Statement>
+    ) -> Result<VecDeque<u32>>
+    {
+        log::debug!("threads_modified");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
-        // let statementt = conn.prep().unwrap();
         let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
-        // TODO this endpoint
-        Ok(conn
-            .first_exec(
-                self.query_threads_modified(YotsubaEndpoint::Threads),
-                params! {"board" => &board.to_string(), "jj" => json}
+        // let id = YotsubaIdentifier::new(YotsubaEndpoint::Threads, board,
+        // YotsubaStatement::ThreadsModified); let statement =
+        // statements.get(&id).unwrap().try_lock().unwrap().take().unwrap(); let statementt
+        // = conn.prep().unwrap();
+        // Ok(statement
+        //     .first(params! {"bb" => board.to_string(), "jj" => json})
+        //     .await
+        //     .map(|(c, r)| r.ok_or_else(|| anyhow!("Error in executing threads_modified")))?
+        //     .map(|re| serde_json::from_value(re))??)
+
+        // Ok(conn
+        //     .first_exec(
+        //         self.query_threads_modified(YotsubaEndpoint::Threads),
+        //         params! {"bb" => &board.to_string(), "jj" => json}
+        //     )
+        //     .await
+        //     .map(|(c, r)| r)
+        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
+        //     .ok()
+        //     .flatten()
+        //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
+
+        let r = Ok(conn
+            .prep_exec(
+                self.query_threads_modified(endpoint),
+                params! {"bb" => &board.to_string(), "jj" => json}
             )
-            .await
-            .map(|(c, r)| r)
-            .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
-            .ok()
-            .flatten()
-            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
+            .await?
+            .collect_and_drop()
+            .await?
+            .1
+            .pop()
+            .map(|j| serde_json::from_value(j))
+            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??);
+        // pool.disconnect().await?;
+        r
     }
 
     async fn threads_combined(
@@ -1184,25 +1088,49 @@ impl QueriesExecutor<Statement> for Pool {
         board: YotsubaBoard, new_threads: &[u8]
     ) -> Result<VecDeque<u32>>
     {
-        // log::info!("threads_combined");
+        log::debug!("threads_combined");
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
-        // let id = YotsubaIdentifier { endpoint, board, statement:
-        // YotsubaStatement::ThreadsCombined }; let statement =
-        // statements.get(&id).unwrap(); let statement =
-        // conn.prep(self.query_threads_combined(board, endpoint)).unwrap();
+        let id =
+            YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::ThreadsCombined };
+        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
         let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        // let statement = conn.prep(self.query_threads_combined(board, endpoint)).unwrap();
 
-        Ok(conn
-            .first_exec(
+        // Ok(statement
+        //     .first(params! {"bb" => board.to_string(), "jj" => json})
+        //     .await
+        //     .map(|(c, r)| r.ok_or_else(|| anyhow!("Error in executing threads_combined")))?
+        //     .map(|re| serde_json::from_value(re))??)
+
+        // Ok(conn
+        //     .first_exec(
+        //         self.query_threads_combined(board, endpoint),
+        //         params! {"bb" => &board.to_string(), "jj" => json}
+        //     )
+        //     .await
+        //     .map(|(c, r)| r)
+        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
+        //     .ok()
+        //     .flatten()
+        //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
+
+        let r = Ok(conn
+            .prep_exec(
                 self.query_threads_combined(board, endpoint),
-                params! {"board" => &board.to_string(), "jj" => json}
+                params! {"bb" => &board.to_string(), "jj" => json}
             )
-            .await
-            .map(|(c, r)| r)
-            .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
-            .ok()
+            .await?
+            .collect_and_drop()
+            .await?
+            .1
+            .pop()
+            .map(|j: Option<serde_json::Value>| j)
             .flatten()
-            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
+            .map(|x| serde_json::from_value(x))
+            .ok_or_else(|| anyhow!("Error in executing query_threads_combined"))??);
+        // pool.disconnect().await?;
+        r
     }
 
     async fn metadata(
@@ -1210,17 +1138,36 @@ impl QueriesExecutor<Statement> for Pool {
         board: YotsubaBoard
     ) -> bool
     {
-        // log::info!("inside metadata");
+        log::debug!("inside metadata /{}/ {}", board, endpoint);
+        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
+        // let pool = self.clone();
         let conn = self.get_conn().await.unwrap();
+        // log::debug!("GOT CONN inside metadata /{}/", board);
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Metadata };
-        // let statement = statements.get(&id).unwrap();
+        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
         // let statement = conn.prep(self.query_metadata(endpoint)).unwrap();
-        conn.first_exec(self.query_metadata(endpoint), params! {"board" => &board.to_string()})
+
+        let c = conn
+            .prep_exec(self.query_metadata(endpoint), params! {"bb" => board.to_string()})
             .await
-            .map(|(c, res)| res)
-            .ok()
-            .flatten()
-            .unwrap_or(false)
+            .map(|x| x.collect_and_drop())
+            .unwrap()
+            .await
+            .unwrap()
+            .1
+            .pop()
+            .unwrap_or(false);
+        log::debug!("DONE inside metadata /{}/", board);
+        // pool.disconnect().await.unwrap();
+        c
+
+        // statement
+        //     .first(params! { "bb" => &board.to_string() })
+        //     .await
+        //     .map(|(c, r)| r)
+        //     .ok()
+        //     .flatten()
+        //     .unwrap_or(false)
     }
 }
 

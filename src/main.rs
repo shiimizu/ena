@@ -63,6 +63,10 @@ async fn async_main() -> Result<u64> {
         unimplemented!("Asagi mode outside of MySQL. Found {}", &config.settings.engine)
     }
 
+    if !config.settings.asagi_mode && config.settings.engine.base() == Database::MySQL {
+        unimplemented!("Only the Asagi schema is implemented for MySQL")
+    }
+
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
         .build()
@@ -92,19 +96,26 @@ async fn async_main() -> Result<u64> {
             archiver::YotsubaArchiver::new(stmt, db_client, http_client, config).await
         ));
     } else {
-        info!("Connected with:\t\t{}", config.settings.db_url);
-        let pool = mysql_async::Pool::new(config.settings.db_url.clone());
+        // The MAX for PoolConstraints seems to make or break the MySQL client.
+        // 15 is the sum of functions that use `conn` and prepare statments
+        // Each board is run on their own thread that's why.
+        let pool_options = mysql_async::PoolOptions::new(
+            mysql_async::PoolConstraints::new(10, config.boards.len() * 15).unwrap(),
+            Duration::from_secs(0),
+            Duration::from_secs(30)
+        );
+
+        let mut builder = mysql_async::OptsBuilder::from_opts(config.settings.db_url.clone());
+        builder
+            .stmt_cache_size(config.boards.len() * 15)
+            .compression(mysql_async::Compression::fast())
+            .pool_options(pool_options);
+
+        let pool = mysql_async::Pool::new(mysql_async::Opts::from(builder));
+
         let conn: mysql_async::Conn = pool.get_conn().await?;
-        let conn = conn.prepare("select 1").await?;
-        // let conn = conn.first(
-        //     r"select 7"
-        // ).await?;
-        // let res:u8 = conn.1.unwrap();
-        // println!("{}", res);
-        // info!("{}", std::mem::size_of_val(&conn));
-        // info!("{}", std::mem::size_of_val(&pool));
-        // sleep(Duration::from_secs(7)).await;
-        // return Ok(1);
+        let conn = conn.prepare("select 1").await.unwrap();
+        info!("Connected with:\t\t{}", config.settings.db_url);
         archiver = MuhArchiver::new(Box::new(
             archiver::YotsubaArchiver::new(conn, pool, http_client, config).await
         ));

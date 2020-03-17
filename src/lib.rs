@@ -1,5 +1,3 @@
-// use crate::{YotsubaArchiver, YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
-
 pub mod archiver;
 pub mod config;
 pub mod enums;
@@ -11,6 +9,7 @@ pub mod sql;
 pub trait Board {}
 
 pub trait Endpoint {}
+#[allow(dead_code)]
 pub struct Identifier<E, B>
 where
     E: Endpoint,
