@@ -45,13 +45,12 @@ pub mod core {
         }
     }
 
-    // PostgreSQL version of the schema. This is also the default one used.  
+    // PostgreSQL version of the schema. This is also the default one used.
     //
     // If another schema is thought of, feel free to use the [`Queries`] to implement it.
-    
+
     // PostgreSQL version is using tokio_postgres
     // #[async_trait]
-    
 }
 
 pub mod asagi {
