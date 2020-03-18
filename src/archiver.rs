@@ -12,8 +12,8 @@ use std::{
     sync::{atomic::AtomicBool, Arc}
 };
 
-use anyhow::anyhow;
 use ::core::sync::atomic::Ordering;
+use anyhow::anyhow;
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
 use log::*;
@@ -633,7 +633,10 @@ where
                             if let Err(e) =
                                 self.query.update_thread(&statements, endpoint, board, &body).await
                             {
-                                error!("Error executing update_thread function! {}", e);
+                                error!(
+                                    "({})\t/{}/{}\t[{}/{}] |update_thread| {}",
+                                    endpoint, board, thread, position, length, e
+                                );
                             }
                             match self
                                 .query
@@ -644,7 +647,10 @@ where
                                     "({})\t/{}/{}\t[{}/{}]",
                                     endpoint, board, thread, position, length
                                 ),
-                                Err(e) => error!("Error running update_deleteds function! {}", e)
+                                Err(e) => error!(
+                                    "({})\t/{}/{}\t[{}/{}] |update_deleteds| {}",
+                                    endpoint, board, thread, position, length, e
+                                )
                             }
                             break;
                         },
@@ -686,8 +692,26 @@ where
                 // If somehow we passed the exit code and continued to fetch medias,
                 // display info on whatever threads have media to download before exiting the
                 // program
-                if len > 0 && downloading == YotsubaEndpoint::Threads {
-                    warn!("({})\t\t/{}/{}\tNew media :: {}", endpoint, info.board, no, len);
+                if len > 0
+                    && downloading == YotsubaEndpoint::Threads
+                    && !(info.board == YotsubaBoard::f && info.download_thumbnails)
+                {
+                    info!(
+                        "({})\t\t/{}/{}\tNew {} :: {}",
+                        endpoint,
+                        info.board,
+                        no,
+                        if info.download_media && info.download_thumbnails {
+                            "media & thumbs"
+                        } else if info.download_media {
+                            "media"
+                        } else if info.download_thumbnails {
+                            "thumbs"
+                        } else {
+                            "media"
+                        },
+                        len
+                    );
                 }
 
                 // Chunk to prevent client congestion and errors
@@ -851,6 +875,29 @@ where
         let domain = &self.config.settings.media_url;
         let board = &info.board;
 
+        // In Asagi there's no rehashing of the file.
+        // So if it exists on disk just skip it.
+        if asagi {
+            let name = if mode.is_thumbs() {
+                row.get::<&str, String>("preview_orig")
+            } else {
+                row.get::<&str, String>("media_orig")
+            };
+            let subdirs = (&name[..4], &name[4..6]);
+            let final_path = format!(
+                "{path}/{board}/{sub0}/{sub1}/{filename}",
+                path = path,
+                board = info.board.to_string(),
+                sub0 = subdirs.0,
+                sub1 = subdirs.1,
+                filename = name
+            );
+            if Path::new(&final_path).exists() {
+                warn!("EXISTS: {}", final_path);
+                return Some((u64::try_from(no).unwrap(), None, mode));
+            }
+        }
+
         let url = if info.board == YotsubaBoard::f {
             // 4chan has HTML entities UNESCAPED in their filenames (and database) and THAT is then
             // encoded into an ascii url RATHER than an escaped html string and then precent
@@ -889,6 +936,7 @@ where
                 )
             }
         };
+
         // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
         for ra in 0..(info.retry_attempts + 1) {
             match self.client.get(&url, None).await {
@@ -949,19 +997,19 @@ where
                             // thumb))
                             //
                             // Only go here if keep media settings are enabled
-                            if (info.keep_thumbnails || mode.is_media())
-                                && (mode.is_thumbs() || info.keep_media)
-                            {
-                                // if info.keep_thumbnails || info.keep_media {
+                            // if (info.keep_thumbnails || mode.is_media())
+                            //     && (mode.is_thumbs() || info.keep_media)
+                            // {
+                            if info.keep_thumbnails || info.keep_media {
                                 if let Ok(mut dest) = std::fs::File::create(&temp_path) {
                                     if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {
-                                        let name;
                                         let final_path_dir;
-                                        if self.config.settings.asagi_mode {
+                                        let final_path;
+                                        if asagi {
                                             // Example:
                                             // 1540970147550
                                             // /1540/97
-                                            name = if mode.is_thumbs() {
+                                            let name = if mode.is_thumbs() {
                                                 row.get::<&str, String>("preview_orig")
                                             } else {
                                                 row.get::<&str, String>("media_orig")
@@ -971,11 +1019,12 @@ where
                                                 "{}/{}/{}/{}",
                                                 path, info.board, subdirs.0, subdirs.1
                                             );
+                                            final_path = format!("{}/{}", final_path_dir, name);
                                         } else {
                                             // Example:
                                             // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
                                             // /1/0a
-                                            name = format!("{:x}", hash_bytes.unwrap());
+                                            let name = format!("{:x}", hash_bytes.unwrap());
                                             let len = name.len();
                                             let subdirs =
                                                 (&name[len - 1..], &name[len - 3..len - 1]);
@@ -983,13 +1032,9 @@ where
                                                 "{}/media/{}/{}",
                                                 path, subdirs.0, subdirs.1
                                             );
+                                            final_path =
+                                                format!("{}/{}{}", final_path_dir, name, ext);
                                         }
-
-                                        let final_path = if asagi {
-                                            format!("{}/{}", final_path_dir, name)
-                                        } else {
-                                            format!("{}/{}{}", final_path_dir, name, ext)
-                                        };
 
                                         if Path::new(&final_path).exists() {
                                             warn!("EXISTS: {}", final_path);
