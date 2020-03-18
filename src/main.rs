@@ -92,34 +92,36 @@ async fn async_main() -> Result<u64> {
         });
         info!("Connected with:\t\t{}", config.settings.db_url);
         archiver = MuhArchiver::new(Box::new(
-            archiver::YotsubaArchiver::new
-            (db_client, http_client, config).await
+            archiver::YotsubaArchiver::new(db_client, http_client, config).await
         ));
     } else {
         // The MAX for PoolConstraints seems to make or break the MySQL client.
         // 15 is the sum of functions that use `conn` and prepare statments
         // Each board is run on their own thread that's why.
-        let pool_options = mysql_async::PoolOptions::new(
-            mysql_async::PoolConstraints::new(1, config.boards.len() * 35).unwrap(),
-            Duration::from_secs(30),
-            Duration::from_secs(30)
-        );
+        // let pool_options = mysql_async::PoolOptions::new(
+        //     mysql_async::PoolConstraints::new(1, config.boards.len() * 35).unwrap(),
+        //     Duration::from_secs(30),
+        //     Duration::from_secs(30)
+        // );
 
-        let mut builder = mysql_async::OptsBuilder::from_opts(config.settings.db_url.clone());
-        builder
-            .stmt_cache_size(config.boards.len() * 15)
-            .compression(mysql_async::Compression::fast())
-            .pool_options(pool_options);
+        // let mut builder = mysql_async::OptsBuilder::from_opts(config.settings.db_url.clone());
+        // builder
+        //     .stmt_cache_size(config.boards.len() * 15)
+        //     .compression(mysql_async::Compression::fast())
+        //     .pool_options(pool_options);
 
-        let pool = mysql_async::Pool::new(mysql_async::Opts::from(builder));
+        // let pool = mysql_async::Pool::new(mysql_async::Opts::from(builder));
+        let pool = mysql_async::Pool::new(&config.settings.db_url);
+        // let conn = pool.get_conn().await.unwrap();
+        // let stmt = conn.prepare("").await.unwrap();
+
+        // {
+        //     let _:(mysql_async::Conn, Vec<u8>) =
+        // stmt.execute(()).await.unwrap().collect().await.unwrap(); }
+
         info!("Connected with:\t\t{}", config.settings.db_url);
         archiver = MuhArchiver::new(Box::new(
-            archiver::YotsubaArchiver::new(
-                pool,
-                http_client,
-                config
-            )
-            .await
+            archiver::YotsubaArchiver::new(pool, http_client, config).await
         ));
     }
 

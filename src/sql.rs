@@ -87,6 +87,12 @@ impl Database {
             _ => Database::MySQL
         }
     }
+    pub fn mysql_engine(&self) -> Database {
+        match self {
+            Database::MySQL => Database::InnoDB,
+            _ => *self
+        }
+    }
 }
 
 pub trait RowTrait {
@@ -254,13 +260,13 @@ impl Add for YotsubaStatement {
 /// Executors for all SQL queries
 #[async_trait]
 pub trait QueriesExecutor<S, R> {
-    async fn init_schema(&self, schema: &str);
+    async fn init_schema(&self, schema: &str, engine: Database);
 
     async fn init_type(&self);
 
-    async fn init_metadata(&self);
+    async fn init_metadata(&self, engine: Database);
 
-    async fn init_board(&self, board: YotsubaBoard);
+    async fn init_board(&self, board: YotsubaBoard, engine: Database);
 
     async fn init_views(&self, board: YotsubaBoard);
 
@@ -317,13 +323,13 @@ pub trait QueriesExecutor<S, R> {
 /// List of all SQL queries to use
 pub trait Queries {
     /// Create the schema if nonexistent and uses it as the search_path
-    fn query_init_schema(&self, schema: &str) -> String;
+    fn query_init_schema(&self, schema: &str, engine: Database) -> String;
 
     /// Create the metadata if nonexistent to store the api endpoints' data
-    fn query_init_metadata(&self) -> String;
+    fn query_init_metadata(&self, engine: Database) -> String;
 
     /// Create a table for the specified board
-    fn query_init_board(&self, board: YotsubaBoard) -> String;
+    fn query_init_board(&self, board: YotsubaBoard, engine: Database) -> String;
 
     /// Create the 4chan schema as a type to be easily referenced
     fn query_init_type(&self) -> String;

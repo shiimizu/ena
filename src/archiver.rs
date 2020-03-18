@@ -5,13 +5,6 @@ use crate::{
     sql::*
 };
 
-use std::{
-    collections::{HashMap, VecDeque},
-    convert::TryFrom,
-    path::Path,
-    sync::{atomic::AtomicBool, Arc}
-};
-use std::marker::PhantomData;
 use ::core::sync::atomic::Ordering;
 use anyhow::anyhow;
 use enum_iterator::IntoEnumIterator;
@@ -20,6 +13,13 @@ use log::*;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use reqwest::{self, StatusCode};
 use sha2::{Digest, Sha256};
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryFrom,
+    marker::PhantomData,
+    path::Path,
+    sync::{atomic::AtomicBool, Arc}
+};
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -50,7 +50,7 @@ where
     pub async fn new(db_client: D, http_client: H, config: Config) -> Self {
         Self {
             _stmt: PhantomData,
-            _row : PhantomData,
+            _row: PhantomData,
             query: db_client,
             client: http_client,
             config,
@@ -64,9 +64,9 @@ where
 
     pub async fn run(&self) {
         self.listen_to_exit();
-        self.query.init_schema(&self.config.settings.schema).await;
+        self.query.init_schema(&self.config.settings.schema, self.config.settings.engine).await;
         self.query.init_type().await;
-        self.query.init_metadata().await;
+        self.query.init_metadata(self.config.settings.engine).await;
 
         // Runs an archive, threads, and media thread concurrently
         let mut fut = FuturesUnordered::new();
@@ -74,16 +74,16 @@ where
         let (tx, rx) = unbounded_channel();
 
         // Media background thread
-        fut.push(self.compute(
-            YotsubaEndpoint::Media,
-            &self.config.board_settings,
-            semaphore.clone(),
-            None,
-            Some(rx)
-        ));
+            fut.push(self.compute(
+                YotsubaEndpoint::Media,
+                &self.config.board_settings,
+                semaphore.clone(),
+                None,
+                Some(rx)
+            ));
 
         for board in self.config.boards.iter() {
-            self.query.init_board(board.board).await;
+            self.query.init_board(board.board, self.config.settings.engine).await;
             self.query.init_views(board.board).await;
 
             if board.download_archives {
@@ -124,13 +124,24 @@ where
         let gen_id = |stmt: YotsubaStatement| -> YotsubaIdentifier {
             YotsubaIdentifier::new(endpoint, board, stmt)
         };
+
+        if self.config.settings.asagi_mode {
+            statement_store.insert(
+                gen_id(YotsubaStatement::Medias),
+                self.query.prepare(&self.query.query_medias(board, YotsubaStatement::Medias)).await
+            );
+            return statement_store;
+        }
+
         if endpoint == YotsubaEndpoint::Media {
             for statement in statements {
                 match statement {
                     YotsubaStatement::Medias => {
                         statement_store.insert(
                             gen_id(statement),
-                            self.query.prepare(&self.query.query_medias(board, YotsubaStatement::Medias)).await
+                            self.query
+                                .prepare(&self.query.query_medias(board, YotsubaStatement::Medias))
+                                .await
                         );
                     }
                     YotsubaStatement::UpdateHashMedia | YotsubaStatement::UpdateHashThumbs => {
@@ -140,7 +151,11 @@ where
                                 .prepare(&self.query.query_update_hash(
                                     board,
                                     YotsubaHash::Sha256,
-                if statement.is_thumbs() {YotsubaStatement::UpdateHashThumbs} else {YotsubaStatement::UpdateHashMedia}
+                                    if statement.is_thumbs() {
+                                        YotsubaStatement::UpdateHashThumbs
+                                    } else {
+                                        YotsubaStatement::UpdateHashMedia
+                                    }
                                 ))
                                 .await
                         );
@@ -170,7 +185,11 @@ where
                         .prepare(&self.query.query_update_hash(
                             board,
                             YotsubaHash::Sha256,
-                            if statement.is_thumbs() {YotsubaStatement::UpdateHashThumbs} else {YotsubaStatement::UpdateHashMedia}
+                            if statement.is_thumbs() {
+                                YotsubaStatement::UpdateHashThumbs
+                            } else {
+                                YotsubaStatement::UpdateHashMedia
+                            }
                         ))
                         .await,
                 YotsubaStatement::Medias =>
@@ -204,21 +223,31 @@ where
                 let dur = Duration::from_millis(250);
                 let mut r = rx.unwrap();
                 let mut downloading = endpoint;
+                let mut EXIT_CODE: u8 = 1;
 
                 // Use a custom poll rate instead of recv().await which polls at around 1s.
                 loop {
+                    if self.is_finished() {
+                        return;
+                    }
+                    sleep(dur).await;
                     // Sequential fetching to prevent client congestion and errors
                     if let Ok(received) = r.try_recv() {
+                        if !(info.download_media || info.download_thumbnails) {
+                            continue;
+                        }
                         if self.is_finished() && downloading == YotsubaEndpoint::Media {
                             info!("({})\tStopping media fetching...", endpoint);
                             downloading = YotsubaEndpoint::Threads;
                         }
+                        info!("({})\t\t/{}/{} DL", endpoint, info.board, received.2);
 
                         // Only leave here
                         // The signal to stop is a thread no of: 0
                         if received.2 == 0 {
-                            break;
+                            EXIT_CODE = received.2 as u8;
                         }
+
                         let media_info = received.0;
                         if media_info.download_thumbnails || media_info.download_media {
                             self.fetch_media(
@@ -226,12 +255,20 @@ where
                                 &received.1,
                                 endpoint,
                                 received.2,
-                                downloading
+                                downloading,
+                                EXIT_CODE
                             )
                             .await;
                         }
+                    } else {
+                        // info!("({})\t\t finished DL", endpoint);
+                        if self.is_finished()
+                            && downloading == YotsubaEndpoint::Media
+                            && EXIT_CODE == 0
+                        {
+                            break;
+                        }
                     }
-                    sleep(dur).await;
                 }
                 r.close();
                 if self.is_finished() {
@@ -455,13 +492,11 @@ where
         let mut has_archives = true;
 
         // Default statements
-        let statements =
-            self.create_statements(endpoint, current_board).await;
+        let statements = self.create_statements(endpoint, current_board).await;
 
         // Media Statements
-        let statements_media = Arc::new(
-            self.create_statements(YotsubaEndpoint::Media, current_board).await
-        );
+        let statements_media =
+            Arc::new(self.create_statements(YotsubaEndpoint::Media, current_board).await);
 
         let dur = Duration::from_millis(250);
         let ratel = Duration::from_millis(bs.throttle_millisec.into());
@@ -668,11 +703,14 @@ where
     /// FETCH MEDIA
     async fn fetch_media(
         &self, info: &BoardSettings, statements: &StatementStore<S>, endpoint: YotsubaEndpoint,
-        no: u32, downloading: YotsubaEndpoint
+        no: u32, downloading: YotsubaEndpoint, EXIT_CODE: u8
     )
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
+        if EXIT_CODE == 0 {
+            return;
+        }
         match self.query.medias(statements, endpoint, info.board, no).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
