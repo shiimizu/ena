@@ -74,13 +74,13 @@ where
         let (tx, rx) = unbounded_channel();
 
         // Media background thread
-            fut.push(self.compute(
-                YotsubaEndpoint::Media,
-                &self.config.board_settings,
-                semaphore.clone(),
-                None,
-                Some(rx)
-            ));
+        fut.push(self.compute(
+            YotsubaEndpoint::Media,
+            &self.config.board_settings,
+            semaphore.clone(),
+            None,
+            Some(rx)
+        ));
 
         for board in self.config.boards.iter() {
             self.query.init_board(board.board, self.config.settings.engine).await;
@@ -223,48 +223,57 @@ where
                 let dur = Duration::from_millis(250);
                 let mut r = rx.unwrap();
                 let mut downloading = endpoint;
-                let mut EXIT_CODE: u8 = 1;
+                let mut exit_code: u8 = 1;
 
                 // Use a custom poll rate instead of recv().await which polls at around 1s.
                 loop {
-                    if self.is_finished() {
-                        return;
-                    }
                     sleep(dur).await;
                     // Sequential fetching to prevent client congestion and errors
                     if let Ok(received) = r.try_recv() {
-                        if !(info.download_media || info.download_thumbnails) {
-                            continue;
-                        }
+                        let media_info = received.0;
                         if self.is_finished() && downloading == YotsubaEndpoint::Media {
-                            info!("({})\tStopping media fetching...", endpoint);
+                            if media_info.download_media || media_info.download_thumbnails {
+                                info!("({})\tStopping media fetching...", endpoint);
+                            }
                             downloading = YotsubaEndpoint::Threads;
                         }
-                        info!("({})\t\t/{}/{} DL", endpoint, info.board, received.2);
+                        // info!("({})\t\t/{}/{} DL", endpoint, media_info.board, received.2);
 
                         // Only leave here
                         // The signal to stop is a thread no of: 0
                         if received.2 == 0 {
-                            EXIT_CODE = received.2 as u8;
+                            exit_code = received.2 as u8;
                         }
 
-                        let media_info = received.0;
-                        if media_info.download_thumbnails || media_info.download_media {
+                        // We need the current board info
+                        // No Media at all for the current board
+                        if !(media_info.download_media || media_info.download_thumbnails) {
+                            // Continue because this media thread is a single thread.
+                            // Don't return unless everyone is done.
+                            continue;
+                        }
+
+                        // Exit code is so that the loop continues
+                        // Exhausting the channel until no threads can be recieved
+                        // Only one that go through this block are valid threads
+                        if received.2 != 0
+                            && (media_info.download_thumbnails || media_info.download_media)
+                        {
                             self.fetch_media(
                                 &media_info,
                                 &received.1,
                                 endpoint,
                                 received.2,
-                                downloading,
-                                EXIT_CODE
+                                downloading
                             )
                             .await;
                         }
                     } else {
+                        // This is our exit out of the loop.
                         // info!("({})\t\t finished DL", endpoint);
                         if self.is_finished()
-                            && downloading == YotsubaEndpoint::Media
-                            && EXIT_CODE == 0
+                            && downloading == YotsubaEndpoint::Threads
+                            && exit_code == 0
                         {
                             break;
                         }
@@ -287,6 +296,10 @@ where
     )
     {
         if endpoint == YotsubaEndpoint::Archive && !*has_archives {
+            return;
+        }
+
+        if self.is_finished() {
             return;
         }
 
@@ -566,27 +579,27 @@ where
                     _sem_thread = Some(semaphore.acquire().await);
                 }
                 if self.is_finished() {
-                    if bs.download_media || bs.download_thumbnails {
-                        if let Err(_) = t.send((bs.clone(), statements_media.clone(), 0)) {
-                            // Don't display an error if we're sending the exit code
-                            // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
-                        }
-                        sleep(Duration::from_millis(1500)).await;
+                    // if bs.download_media || bs.download_thumbnails {
+                    if let Err(_) = t.send((bs.clone(), statements_media.clone(), 0)) {
+                        // Don't display an error if we're sending the exit code
+                        // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                     }
+                    sleep(Duration::from_millis(1500)).await;
+                    // }
                     break;
                 }
 
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, endpoint, thread, position, threads_len, &statements)
                     .await;
-                if bs.download_media || bs.download_thumbnails {
-                    if let Err(e) = t.send((bs.clone(), statements_media.clone(), thread)) {
-                        error!(
-                            "(media)\t\t/{}/{}\t[{}/{}] {}",
-                            &bs.board, thread, position, threads_len, e
-                        );
-                    }
+                // if bs.download_media || bs.download_thumbnails {
+                if let Err(e) = t.send((bs.clone(), statements_media.clone(), thread)) {
+                    error!(
+                        "(media)\t\t/{}/{}\t[{}/{}] {}",
+                        &bs.board, thread, position, threads_len, e
+                    );
                 }
+                // }
                 position += 1;
 
                 // Ratelimit
@@ -703,14 +716,11 @@ where
     /// FETCH MEDIA
     async fn fetch_media(
         &self, info: &BoardSettings, statements: &StatementStore<S>, endpoint: YotsubaEndpoint,
-        no: u32, downloading: YotsubaEndpoint, EXIT_CODE: u8
+        no: u32, downloading: YotsubaEndpoint
     )
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
-        if EXIT_CODE == 0 {
-            return;
-        }
         match self.query.medias(statements, endpoint, info.board, no).await {
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
@@ -1017,7 +1027,7 @@ where
                                 let mut hasher = Sha256::new();
                                 hasher.input(&body);
                                 hash_bytes = Some(hasher.result());
-                                hashsum = Some(hash_bytes.unwrap().as_slice().to_vec()); // Computed hash. Can send to db.
+                                hashsum = Some(hash_bytes.unwrap().as_slice().to_vec());
                                 // hashsum = Some(format!("{:x}", hash_bytes));
                             }
                             // info!("INSIDE Recieved hash: {:x}", &hash_bytes);
@@ -1031,8 +1041,6 @@ where
                             // if (info.keep_thumbnails || mode.is_media())
                             //     && (mode.is_thumbs() || info.keep_media)
                             // {
-                            // TODO postgres not upserting thumbs hash
-                            // prob has to do with statemetns
                             if info.keep_thumbnails || info.keep_media {
                                 if let Ok(mut dest) = std::fs::File::create(&temp_path) {
                                     if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {

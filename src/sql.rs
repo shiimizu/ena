@@ -87,6 +87,7 @@ impl Database {
             _ => Database::MySQL
         }
     }
+
     pub fn mysql_engine(&self) -> Database {
         match self {
             Database::MySQL => Database::InnoDB,
