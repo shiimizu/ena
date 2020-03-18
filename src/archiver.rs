@@ -11,7 +11,7 @@ use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc}
 };
-
+use std::marker::PhantomData;
 use ::core::sync::atomic::Ordering;
 use anyhow::anyhow;
 use enum_iterator::IntoEnumIterator;
@@ -29,8 +29,11 @@ use tokio::{
 };
 
 pub struct YotsubaArchiver<S, R, D: DatabaseTrait<S, R>, H: request::HttpClient> {
-    _stmt:    S,
-    _row:     R,
+    // PhantomData
+    // https://is.gd/CYXIJO
+    // https://doc.rust-lang.org/std/marker/struct.PhantomData.html
+    _stmt:    PhantomData<S>,
+    _row:     PhantomData<R>,
     query:    D,
     client:   H,
     config:   Config,
@@ -44,10 +47,10 @@ where
     D: DatabaseTrait<S, R>,
     H: request::HttpClient
 {
-    pub async fn new(_stmt: S, _row: R, db_client: D, http_client: H, config: Config) -> Self {
+    pub async fn new(db_client: D, http_client: H, config: Config) -> Self {
         Self {
-            _stmt,
-            _row,
+            _stmt: PhantomData,
+            _row : PhantomData,
             query: db_client,
             client: http_client,
             config,
@@ -114,7 +117,7 @@ where
     }
 
     async fn create_statements(
-        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, media_mode: YotsubaStatement
+        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard
     ) -> StatementStore<S> {
         let mut statement_store = HashMap::new();
         let statements: Vec<_> = YotsubaStatement::into_enum_iter().collect();
@@ -127,7 +130,7 @@ where
                     YotsubaStatement::Medias => {
                         statement_store.insert(
                             gen_id(statement),
-                            self.query.prepare(&self.query.query_medias(board, media_mode)).await
+                            self.query.prepare(&self.query.query_medias(board, YotsubaStatement::Medias)).await
                         );
                     }
                     YotsubaStatement::UpdateHashMedia | YotsubaStatement::UpdateHashThumbs => {
@@ -137,7 +140,7 @@ where
                                 .prepare(&self.query.query_update_hash(
                                     board,
                                     YotsubaHash::Sha256,
-                                    media_mode
+                if statement.is_thumbs() {YotsubaStatement::UpdateHashThumbs} else {YotsubaStatement::UpdateHashMedia}
                                 ))
                                 .await
                         );
@@ -167,11 +170,11 @@ where
                         .prepare(&self.query.query_update_hash(
                             board,
                             YotsubaHash::Sha256,
-                            media_mode
+                            if statement.is_thumbs() {YotsubaStatement::UpdateHashThumbs} else {YotsubaStatement::UpdateHashMedia}
                         ))
                         .await,
                 YotsubaStatement::Medias =>
-                    self.query.prepare(&self.query.query_medias(board, media_mode)).await,
+                    self.query.prepare(&self.query.query_medias(board, statement)).await,
                 YotsubaStatement::Threads => self.query.prepare(&self.query.query_threads()).await,
                 YotsubaStatement::ThreadsModified =>
                     self.query.prepare(&self.query.query_threads_modified(endpoint)).await,
@@ -453,23 +456,11 @@ where
 
         // Default statements
         let statements =
-            self.create_statements(endpoint, current_board, YotsubaStatement::Medias).await;
+            self.create_statements(endpoint, current_board).await;
 
         // Media Statements
-        let file_setting = if bs.download_media && bs.download_thumbnails {
-            YotsubaStatement::Medias
-        } else if bs.download_media {
-            YotsubaStatement::UpdateHashMedia
-        } else if bs.download_thumbnails {
-            YotsubaStatement::UpdateHashThumbs
-        } else {
-            // No media downloading at all
-            // Set this to any. Before downloading media, the board settings is checked
-            // So this is fine
-            YotsubaStatement::Threads
-        };
         let statements_media = Arc::new(
-            self.create_statements(YotsubaEndpoint::Media, current_board, file_setting).await
+            self.create_statements(YotsubaEndpoint::Media, current_board).await
         );
 
         let dur = Duration::from_millis(250);
@@ -530,6 +521,7 @@ where
             drop(_sem);
 
             // Download each thread
+            // TODO postgres not getting last thread's media when exiting
             let mut position = 1_u32;
             let t = tx.clone().unwrap();
             while let Some(thread) = local_threads_list.pop_front() {
@@ -544,6 +536,7 @@ where
                             // Don't display an error if we're sending the exit code
                             // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                         }
+                        sleep(Duration::from_millis(1500)).await;
                     }
                     break;
                 }
@@ -554,7 +547,7 @@ where
                 if bs.download_media || bs.download_thumbnails {
                     if let Err(e) = t.send((bs.clone(), statements_media.clone(), thread)) {
                         error!(
-                            "(media)\t/{}/{}\t[{}/{}] {}",
+                            "(media)\t\t/{}/{}\t[{}/{}] {}",
                             &bs.board, thread, position, threads_len, e
                         );
                     }
@@ -1000,6 +993,8 @@ where
                             // if (info.keep_thumbnails || mode.is_media())
                             //     && (mode.is_thumbs() || info.keep_media)
                             // {
+                            // TODO postgres not upserting thumbs hash
+                            // prob has to do with statemetns
                             if info.keep_thumbnails || info.keep_media {
                                 if let Ok(mut dest) = std::fs::File::create(&temp_path) {
                                     if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {

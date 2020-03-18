@@ -90,12 +90,10 @@ async fn async_main() -> Result<u64> {
                 error!("Connection error: {}", e);
             }
         });
-        let stmt = db_client.prepare("select 1;").await.unwrap();
-        let mut rowq: Vec<tokio_postgres::Row> = db_client.query(&stmt, &[]).await.unwrap();
-        let row = rowq.pop().unwrap();
         info!("Connected with:\t\t{}", config.settings.db_url);
         archiver = MuhArchiver::new(Box::new(
-            archiver::YotsubaArchiver::new(stmt, row, db_client, http_client, config).await
+            archiver::YotsubaArchiver::new
+            (db_client, http_client, config).await
         ));
     } else {
         // The MAX for PoolConstraints seems to make or break the MySQL client.
@@ -114,16 +112,9 @@ async fn async_main() -> Result<u64> {
             .pool_options(pool_options);
 
         let pool = mysql_async::Pool::new(mysql_async::Opts::from(builder));
-
-        let conn: mysql_async::Conn = pool.get_conn().await?;
-        let conn = conn.prepare("select 1").await.unwrap();
-        let row: mysql_async::Row = conn.execute(()).await?.collect().await?.1.pop().unwrap();
-        // let row :mysql_async::Row= v.pop().unwrap();
         info!("Connected with:\t\t{}", config.settings.db_url);
         archiver = MuhArchiver::new(Box::new(
             archiver::YotsubaArchiver::new(
-                pool.get_conn().await?.prepare("select 1").await.unwrap(),
-                row,
                 pool,
                 http_client,
                 config
