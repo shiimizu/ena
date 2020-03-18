@@ -5,6 +5,7 @@ cache
 Cargo.lock
 
 # Local stuff
+*doc*
 src/other
 docker
 json
