@@ -205,7 +205,7 @@ where
                 // Use a custom poll rate instead of recv().await which polls at around 1s.
                 loop {
                     // Sequential fetching to prevent client congestion and errors
-                    while let Ok(received) = r.try_recv() {
+                    if let Ok(received) = r.try_recv() {
                         if self.is_finished() && downloading == YotsubaEndpoint::Media {
                             info!("({})\tStopping media fetching...", endpoint);
                             downloading = YotsubaEndpoint::Threads;
@@ -216,9 +216,7 @@ where
                         if received.2 == 0 {
                             break;
                         }
-
                         let media_info = received.0;
-
                         if media_info.download_thumbnails || media_info.download_media {
                             self.fetch_media(
                                 &media_info,
@@ -230,11 +228,7 @@ where
                             .await;
                         }
                     }
-
                     sleep(dur).await;
-                    if self.is_finished() {
-                        break;
-                    }
                 }
                 r.close();
                 if self.is_finished() {
@@ -685,25 +679,16 @@ where
             Err(e) =>
                 error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
             Ok(media_list) => {
-                // let mut pg = None;
-                // let mut _ms = None;
-                // match media_list {
-                //     Rows::Wrap(p) => {
-                //         pg = Some(p);
-                //     }
-                //     // Rows::MySQL(m) => {
-                //     //     _ms = Some(m);
-                //     // }
-                // }
                 let mut fut = FuturesUnordered::new();
                 let mut has_media = false;
                 let dur = Duration::from_millis(200);
                 let len = media_list.len();
 
-                // Display info on whatever threads have media to download before exiting the
+                // If somehow we passed the exit code and continued to fetch medias,
+                // display info on whatever threads have media to download before exiting the
                 // program
                 if len > 0 && downloading == YotsubaEndpoint::Threads {
-                    info!("({})\t/{}/{}\tNew media :: {}", endpoint, info.board, no, len);
+                    warn!("({})\t\t/{}/{}\tNew media :: {}", endpoint, info.board, no, len);
                 }
 
                 // Chunk to prevent client congestion and errors
@@ -717,14 +702,21 @@ where
                         // Preliminary checks before downloading
                         let sha256: Option<Vec<u8>>;
                         let sha256t: Option<Vec<u8>>;
+
+                        // This is for sha256 checks
+                        // To skip or not to skip if present
+                        let mut dl_media = false;
+                        let mut dl_thumb = false;
+
                         if self.config.settings.asagi_mode {
                             sha256 = None;
                             sha256t = None;
+                            dl_media = info.download_media;
+                            dl_thumb = info.download_thumbnails;
                         } else {
                             sha256 = row.get::<&str, Option<Vec<u8>>>("sha256");
                             sha256t = row.get::<&str, Option<Vec<u8>>>("sha256t");
                         }
-                        let mut dl_media = false;
                         if info.download_media {
                             match sha256 {
                                 Some(h) => {
@@ -739,10 +731,13 @@ where
                                 }
                             }
                             if dl_media {
-                                fut.push(self.dl_media_post2(row, info, false));
+                                fut.push(self.dl_media_post2(
+                                    row,
+                                    info,
+                                    YotsubaStatement::UpdateHashMedia
+                                ));
                             }
                         }
-                        let mut dl_thumb = false;
                         if info.download_thumbnails {
                             match sha256t {
                                 Some(h) => {
@@ -757,12 +752,16 @@ where
                                 }
                             }
                             if dl_thumb {
-                                fut.push(self.dl_media_post2(row, info, true));
+                                fut.push(self.dl_media_post2(
+                                    row,
+                                    info,
+                                    YotsubaStatement::UpdateHashThumbs
+                                ));
                             }
                         }
                     }
                     if has_media {
-                        while let Some(Some((no, hashsum, thumb))) = fut.next().await {
+                        while let Some(Some((no, hashsum, mode))) = fut.next().await {
                             // if let Some((no, hashsum, thumb)) = hh {
                             if let Some(hsum) = hashsum {
                                 // Media info
@@ -777,20 +776,22 @@ where
                                 // );
 
                                 // Recieved hash. Proceed to upsert
-                                self.query
-                                    .update_hash(
-                                        statements,
-                                        endpoint,
-                                        info.board,
-                                        no,
-                                        if thumb {
-                                            YotsubaStatement::UpdateHashThumbs
-                                        } else {
-                                            YotsubaStatement::UpdateHashMedia
-                                        },
-                                        hsum
-                                    )
-                                    .await;
+                                if !self.config.settings.asagi_mode {
+                                    self.query
+                                        .update_hash(
+                                            statements,
+                                            endpoint,
+                                            info.board,
+                                            no,
+                                            if mode.is_thumbs() {
+                                                YotsubaStatement::UpdateHashThumbs
+                                            } else {
+                                                YotsubaStatement::UpdateHashMedia
+                                            },
+                                            hsum
+                                        )
+                                        .await;
+                                }
                             }
                             // This is usually due to 404. We are already notified of that.
                             // else {
@@ -811,10 +812,10 @@ where
     // This method is volatile! Any misses in the db will
     // cause a panic! when calling `get()` to get a value.
     async fn dl_media_post2(
-        &self, row: &R, info: &BoardSettings, thumb: bool
-    ) -> Option<(u64, Option<Vec<u8>>, bool)> {
-        if info.board == YotsubaBoard::f && thumb {
-            return Some((u64::try_from(0).unwrap(), None, thumb));
+        &self, row: &R, info: &BoardSettings, mode: YotsubaStatement
+    ) -> Option<(u64, Option<Vec<u8>>, YotsubaStatement)> {
+        if info.board == YotsubaBoard::f && mode.is_thumbs() {
+            return Some((u64::try_from(0).unwrap(), None, mode));
         }
 
         let asagi = self.config.settings.asagi_mode;
@@ -875,14 +876,20 @@ where
                     "{}/{}/{}",
                     domain,
                     board,
-                    if thumb {
+                    if mode.is_thumbs() {
                         row.get::<&str, String>("preview_orig")
                     } else {
                         row.get::<&str, String>("media_orig")
                     }
                 )
             } else {
-                format!("{}/{}/{}{}", domain, board, tim, if thumb { "s.jpg" } else { &ext })
+                format!(
+                    "{}/{}/{}{}",
+                    domain,
+                    board,
+                    tim,
+                    if mode.is_thumbs() { "s.jpg" } else { &ext }
+                )
             }
         };
         // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
@@ -918,7 +925,7 @@ where
                                     "{}/tmp/{}_{}",
                                     path,
                                     no,
-                                    if thumb {
+                                    if mode.is_thumbs() {
                                         row.get::<&str, String>("preview_orig")
                                     } else {
                                         row.get::<&str, String>("media_orig")
@@ -945,7 +952,9 @@ where
                             // thumb))
                             //
                             // Only go here if keep media settings are enabled
-                            if (info.keep_thumbnails || !thumb) && (thumb || info.keep_media) {
+                            if (info.keep_thumbnails || mode.is_media())
+                                && (mode.is_thumbs() || info.keep_media)
+                            {
                                 // if info.keep_thumbnails || info.keep_media {
                                 if let Ok(mut dest) = std::fs::File::create(&temp_path) {
                                     if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {
@@ -955,7 +964,7 @@ where
                                             // Example:
                                             // 1540970147550
                                             // /1540/97
-                                            name = if thumb {
+                                            name = if mode.is_thumbs() {
                                                 row.get::<&str, String>("preview_orig")
                                             } else {
                                                 row.get::<&str, String>("media_orig")
@@ -986,7 +995,7 @@ where
                                         };
 
                                         if Path::new(&final_path).exists() {
-                                            warn!("Already exists: {}", final_path);
+                                            warn!("EXISTS: {}", final_path);
                                             if let Err(e) = std::fs::remove_file(&temp_path) {
                                                 error!("Remove temp: {}", e);
                                             }
@@ -1011,7 +1020,7 @@ where
                         }
                     }
                     _e => {
-                        error!("/{}/{}\t<{}> {}", board, no, status, &url);
+                        error!("()\t\t/{}/{}\t<{}> {}", endpoint, board, no, status, &url);
                         sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -1019,9 +1028,9 @@ where
         }
 
         if self.config.settings.asagi_mode {
-            None
+            Some((u64::try_from(no).unwrap(), None, mode))
         } else {
-            Some((u64::try_from(no).unwrap(), hashsum, thumb))
+            Some((u64::try_from(no).unwrap(), hashsum, mode))
         }
     }
 }

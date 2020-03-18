@@ -226,6 +226,15 @@ pub enum YotsubaStatement {
     Metadata
 }
 
+impl YotsubaStatement {
+    pub fn is_thumbs(&self) -> bool {
+        matches!(self, Self::UpdateHashThumbs)
+    }
+
+    pub fn is_media(&self) -> bool {
+        matches!(self, Self::UpdateHashMedia)
+    }
+}
 impl fmt::Display for YotsubaStatement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
