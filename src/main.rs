@@ -55,12 +55,12 @@ async fn async_main() -> Result<u64> {
     for info in &config.boards {
         let count = &config.boards.iter().filter(|&n| n.board == info.board).count();
         if *count > 1 {
-            panic!("Multiple occurrences of `{}` found :: {}", info.board, count);
+            panic!("Multiple occurrences of `{}` found :: `{}`", info.board, count);
         }
     }
 
     if config.settings.asagi_mode && config.settings.engine.base() != Database::MySQL {
-        unimplemented!("Asagi mode outside of MySQL. Found {}", &config.settings.engine)
+        unimplemented!("Asagi mode outside of MySQL. Found: `{}`", &config.settings.engine)
     }
 
     if !config.settings.asagi_mode && config.settings.engine.base() == Database::MySQL {
@@ -91,17 +91,19 @@ async fn async_main() -> Result<u64> {
             }
         });
         let stmt = db_client.prepare("select 1;").await.unwrap();
+        let mut rowq: Vec<tokio_postgres::Row> = db_client.query(&stmt, &[]).await.unwrap();
+        let row = rowq.pop().unwrap();
         info!("Connected with:\t\t{}", config.settings.db_url);
         archiver = MuhArchiver::new(Box::new(
-            archiver::YotsubaArchiver::new(stmt, db_client, http_client, config).await
+            archiver::YotsubaArchiver::new(stmt, row, db_client, http_client, config).await
         ));
     } else {
         // The MAX for PoolConstraints seems to make or break the MySQL client.
         // 15 is the sum of functions that use `conn` and prepare statments
         // Each board is run on their own thread that's why.
         let pool_options = mysql_async::PoolOptions::new(
-            mysql_async::PoolConstraints::new(10, config.boards.len() * 15).unwrap(),
-            Duration::from_secs(0),
+            mysql_async::PoolConstraints::new(1, config.boards.len() * 35).unwrap(),
+            Duration::from_secs(30),
             Duration::from_secs(30)
         );
 
@@ -115,9 +117,18 @@ async fn async_main() -> Result<u64> {
 
         let conn: mysql_async::Conn = pool.get_conn().await?;
         let conn = conn.prepare("select 1").await.unwrap();
+        let row: mysql_async::Row = conn.execute(()).await?.collect().await?.1.pop().unwrap();
+        // let row :mysql_async::Row= v.pop().unwrap();
         info!("Connected with:\t\t{}", config.settings.db_url);
         archiver = MuhArchiver::new(Box::new(
-            archiver::YotsubaArchiver::new(conn, pool, http_client, config).await
+            archiver::YotsubaArchiver::new(
+                pool.get_conn().await?.prepare("select 1").await.unwrap(),
+                row,
+                pool,
+                http_client,
+                config
+            )
+            .await
         ));
     }
 

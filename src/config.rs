@@ -1,3 +1,7 @@
+//! Configuration.
+//!
+//! Used to parse the config file or read from environment variables.  
+//! Also supplied are various helper functions for a CLI program.
 use crate::{
     enums::{StringExt, YotsubaBoard},
     sql::Database
@@ -10,6 +14,7 @@ use std::{
     iter::{Chain, Repeat, StepBy, Take}
 };
 
+/// Display an ascii art with the crate version
 pub fn display() {
     println!(
         r#"
@@ -32,6 +37,7 @@ pub fn display() {
     )
 }
 
+/// Upper level configuration hold json fields and values
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)] // https://github.com/serde-rs/serde/pull/780
@@ -53,15 +59,18 @@ impl Default for Config {
 
 #[allow(dead_code)]
 impl Config {
+    /// Return a pretty json by calling [`serde_json::to_string_pretty`]
     pub fn pretty(&self) -> String {
         serde_json::to_string_pretty(self).unwrap()
     }
 
+    /// Return the json as a string by calling [`serde_json::to_string`]
     pub fn string(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
 }
 
+/// Archiver settings
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
@@ -135,6 +144,7 @@ impl Default for Settings {
     }
 }
 
+/// Settings for a board
 #[derive(Deserialize, Serialize, Debug, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
@@ -158,7 +168,7 @@ pub struct BoardSettings {
 impl Default for BoardSettings {
     fn default() -> Self {
         // Use a deserialized BoardSettings as base for all other boards
-        let new: BoardSettingsInner = read_json2::<ConfigInner>("ena_config.json").board_settings;
+        let new: BoardSettingsInner = read_json::<ConfigInner>("ena_config.json").board_settings;
         BoardSettings {
             board:               new.board,
             retry_attempts:      new.retry_attempts,
@@ -229,10 +239,10 @@ impl Default for BoardSettingsInner {
 #[allow(unused_assignments)]
 pub fn read_config(config_path: &str) -> Config {
     // Normally we'd be done here
-    // read_json2(config_path)
+    // read_json(config_path)
 
     // This is all to accomodate for a DB URL
-    let mut config: Config = read_json2(config_path);
+    let mut config: Config = read_json(config_path);
     let mut settings = config.settings;
     let mut result: Option<Config> = None;
 
@@ -289,14 +299,40 @@ pub fn read_config(config_path: &str) -> Config {
     computed_config
 }
 
+/// Return the current version of the crate
+///
+/// # Example
+///
+/// ```
+/// use ena::config;
+/// let version = config::version();
+/// ```
 pub fn version() -> String {
     option_env!("CARGO_PKG_VERSION").unwrap_or("?.?.?").to_string()
 }
 
+/// Return the value of the `ENA_RESUME` environment variable
+///
+/// # Example
+///
+/// ```
+/// use ena::config;
+/// let resume = config::ena_resume();
+/// ```
 pub fn ena_resume() -> bool {
     var("ENA_RESUME").ok().map(|a| a.parse::<bool>().ok()).flatten().unwrap_or(false)
 }
 
+/// Check to see if the first argument passed to the program is `-v` or `--version`  
+///
+/// Then display build information
+///
+/// # Example
+///
+/// ```
+/// use ena::config;
+/// config::check_version();
+/// ```
 pub fn check_version() {
     std::env::args().nth(1).filter(|arg| matches!(arg.as_str(), "-v" | "--version")).map(|_| {
         display_full_version();
@@ -304,6 +340,14 @@ pub fn check_version() {
     });
 }
 
+/// Display the build information
+///
+/// # Example
+///
+/// ```
+/// use ena::config;
+/// config::display_full_version();
+/// ```
 pub fn display_full_version() {
     println!(
         "{} v{}-{}\n    {}",
@@ -317,6 +361,37 @@ pub fn display_full_version() {
     println!("    {}", env!("VERGEN_SHA"));
 }
 
+/// Create an iterator that mimics the thread refresh system  
+///
+/// It repeats indefintely so `take` is required to limit how many `step_by`.  
+/// If the stream has reached or passed its last value, it will keep repeating that last value.  
+/// If an initial `refreshDelay` was set to `20`, `5` is added to each and subsequent requests
+/// that return `NOT_MODIFIED`. If the next request is `OK`, the stream can be reset back to it's
+/// initial value by calling `clone()` on it.
+///
+/// # Arguments
+///
+/// * `initial` - Initial value in seconds
+/// * `step_by` - Add this much every time `next()` is called
+/// * `take`    - Limit this to how many additions to make from `step_by`
+///
+/// # Example
+///
+/// ```
+/// use ena::config;
+/// let orig = config::refresh_rate(20, 5, 10);
+/// let mut rate = orig.clone();
+/// rate.next(); // 20
+/// rate.next(); // 25
+/// rate.next(); // 30
+/// //
+/// /* continued calls to rate.next(); */
+/// rate.next(); // 75
+/// rate.next(); // 75 .. repeating
+///
+/// rate = orig.clone();
+/// rate.next(); // 20
+/// ```
 pub fn refresh_rate(
     initial: u16, step_by: usize, take: usize
 ) -> Chain<Take<StepBy<std::ops::RangeFrom<u16>>>, Repeat<u16>> {
@@ -326,9 +401,9 @@ pub fn refresh_rate(
     ratelimit
 }
 
-/// Reads a json file
+/// Safe read a json file
 #[allow(dead_code)]
-pub fn read_json<T>(path: &str) -> Option<T>
+pub fn read_json_try<T>(path: &str) -> Option<T>
 where T: serde::de::DeserializeOwned {
     std::fs::File::open(path)
         .and_then(|file| Ok(std::io::BufReader::new(file)))
@@ -336,7 +411,20 @@ where T: serde::de::DeserializeOwned {
         .and_then(|reader| serde_json::from_reader(reader).ok())
         .flatten()
 }
-pub fn read_json2<T>(path: &str) -> T
+
+/// Read a json file
+///
+/// # Arguments
+///
+/// * `path` - The path to the file
+///
+/// # Example
+///
+/// ```
+/// use ena::config::*;
+/// let config: Config = read_json(config_path);
+/// ```
+pub fn read_json<T>(path: &str) -> T
 where T: serde::de::DeserializeOwned {
     let file = std::fs::File::open(path).unwrap();
     let reader = std::io::BufReader::new(file);
@@ -346,6 +434,20 @@ where T: serde::de::DeserializeOwned {
     res
 }
 
+/// Create the default headers for [`reqwest::Client`]
+///
+/// This is used to create one with a user agent.
+/// # Arguments
+///
+/// * `user_agent` - A specified user agent
+///
+/// # Example
+///
+/// ```
+/// use ena::config::*;
+/// let headers =
+///     default_headers("Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0");
+/// ```
 pub fn default_headers(
     user_agent: &str
 ) -> Result<reqwest::header::HeaderMap, reqwest::header::InvalidHeaderValue> {

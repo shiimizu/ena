@@ -1,9 +1,10 @@
+//! SQL commons.
 // #![cold]
 
-use crate::{
-    enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier},
-    mysql
-};
+pub mod mysql;
+pub mod pgsql;
+
+use crate::enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
 use anyhow::Result;
 use async_trait::async_trait;
 use enum_iterator::IntoEnumIterator;
@@ -58,6 +59,7 @@ impl StatementTrait<mysql::Statement> for Pool {
     }
 }
 
+/// List of acceptable databases
 #[derive(
     Debug,
     Copy,
@@ -86,10 +88,80 @@ impl Database {
         }
     }
 }
-pub enum Rows {
-    PostgreSQL(Vec<tokio_postgres::row::Row>),
-    MySQL(Vec<mysql_async::Row>)
+
+pub trait RowTrait {
+    fn get<'a, I, T>(&'a self, idx: I) -> T
+    where
+        I: RowIndex,
+        T: RowFrom<'a>;
 }
+pub trait RowIndex:
+    tokio_postgres::row::RowIndex + mysql_common::row::ColumnIndex + std::fmt::Display {
+}
+pub trait RowFrom<'a>: tokio_postgres::types::FromSql<'a> + FromValue {}
+
+impl<'a> RowFrom<'a> for String {}
+impl<'a> RowFrom<'a> for Option<Vec<u8>> {}
+impl<'a> RowFrom<'a> for Option<String> {}
+impl<'a> RowFrom<'a> for i64 {}
+// impl RowFrom for &str{}
+
+// impl RowIndex for String{}
+// impl RowIndex for &str{}
+impl<'a> RowIndex for &'a str {}
+
+impl RowTrait for tokio_postgres::Row {
+    fn get<'a, I, T>(&'a self, idx: I) -> T
+    where
+        I: RowIndex,
+        T: RowFrom<'a> {
+        self.get::<'a>(&idx)
+        // match self.get(&idx) {
+        // Some(ok) => ok,
+        // Err(err) => panic!("error retrieving column {}: {}", idx, err),
+        // }
+    }
+}
+impl RowTrait for mysql_async::Row {
+    fn get<'a, I, T>(&'a self, idx: I) -> T
+    where
+        I: RowIndex,
+        T: RowFrom<'a> {
+        self.get(idx).unwrap()
+        // match self.get(idx) {
+        //     Some(ok) => ok,
+        //     // Err(err) => panic!("error retrieving column {}: {}", idx, err),
+        // }
+    }
+}
+
+// pub struct RowStruct {}
+
+// impl RowStruct {
+
+//     pub fn get<'a, I, T>(&'a self, idx: I) -> T
+//     where
+//         I: tokio_postgres::row::RowIndex + fmt::Display,
+//         T: tokio_postgres::types::FromSql<'a>,
+//     {
+//         match self.get_inner(&idx) {
+//             Ok(ok) => ok,
+//             Err(err) => panic!("error retrieving column {}: {}", idx, err),
+//         }
+//     }
+// }
+
+// impl RowTrait<String> for tokio_postgres::Row {
+//     fn get(&self, s: &str) -> String {
+//         self.get(s)
+//     }
+// }
+
+// impl RowTrait<String> for mysql_async::Row {
+//     fn get(&self, s: &str) -> String {
+//         self.get(s).unwrap()
+//     }
+// }
 
 impl fmt::Display for Database {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -172,92 +244,62 @@ impl Add for YotsubaStatement {
 
 /// Executors for all SQL queries
 #[async_trait]
-pub trait QueriesExecutor<S> {
-    /// Creates the schema if nonexistent and uses it as the search_path
+pub trait QueriesExecutor<S, R> {
     async fn init_schema(&self, schema: &str);
 
-    /// Creates the 4chan schema as a type to be easily referenced
     async fn init_type(&self);
 
-    /// Creates the metadata if nonexistent to store the api endpoints' data
     async fn init_metadata(&self);
 
-    /// Creates a table for the specified board
     async fn init_board(&self, board: YotsubaBoard);
 
-    /// Creates views for asagi
     async fn init_views(&self, board: YotsubaBoard);
 
-    /// Upserts an endpoint to the metadata
-    ///
-    /// Converts bytes to json object and feeds that into the query
     async fn update_metadata(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         item: &[u8]
     ) -> Result<u64>;
 
-    /// Upserts a thread
-    ///
-    /// This method updates an existing post or inserts a new one.
-    /// Posts are only updated where there's a field change.
-    /// A majority of posts in a thread don't change, this minimizes I/O writes.
-    /// <T>(sha256, sha25t, and deleted are handled seperately as they are special
-    /// cases) https://stackoverflow.com/a/36406023
-    /// https://dba.stackexchange.com/a/39821
-    ///
-    /// 4chan inserts a backslash in their md5.
-    /// https://stackoverflow.com/a/11449627
     async fn update_thread(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         item: &[u8]
     ) -> Result<u64>;
 
-    /// Marks a post as deleted
     async fn delete(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         no: u32
     );
 
-    // deleted before updating. PgSQL needs to do this >_>..
-    /// Compares between the thread in db and the one fetched and marks any
-    /// posts missing in the fetched thread as deleted
     async fn update_deleteds(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         thread: u32, item: &[u8]
     ) -> Result<u64>;
 
-    /// Upserts a media hash to a post
     async fn update_hash(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
     );
 
-    /// Gets the list of posts in a thread that have media
     async fn medias(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
-        media_mode: YotsubaStatement, no: u32
-    ) -> Result<Rows>;
+        no: u32
+    ) -> Result<Vec<R>>;
 
-    /// Gets a list of threads from the corresponding endpoint
     async fn threads(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         item: &[u8]
     ) -> Result<VecDeque<u32>>;
 
-    /// Gets only the deleted and modified threads when comparing the metadata
-    /// and the fetched endpoint
     async fn threads_modified(
         &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, new_threads: &[u8],
         statements: &StatementStore<S>
     ) -> Result<VecDeque<u32>>;
 
-    /// Gets the list of threads from the one in the metadata + the fetched one
     async fn threads_combined(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         new_threads: &[u8]
     ) -> Result<VecDeque<u32>>;
 
-    /// Checks for the existence of an endpoint in the metadata
     async fn metadata(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard
     ) -> bool;
@@ -265,26 +307,68 @@ pub trait QueriesExecutor<S> {
 
 /// List of all SQL queries to use
 pub trait Queries {
+    /// Create the schema if nonexistent and uses it as the search_path
     fn query_init_schema(&self, schema: &str) -> String;
+
+    /// Create the metadata if nonexistent to store the api endpoints' data
     fn query_init_metadata(&self) -> String;
+
+    /// Create a table for the specified board
+    fn query_init_board(&self, board: YotsubaBoard) -> String;
+
+    /// Create the 4chan schema as a type to be easily referenced
     fn query_init_type(&self) -> String;
+
+    /// Create views for asagi
     fn query_init_views(&self, board: YotsubaBoard) -> String;
+
+    /// Mark a post as deleted
     fn query_delete(&self, board: YotsubaBoard) -> String;
+
+    /// Compare between the thread in db and the one fetched and marks any
+    /// posts missing in the fetched thread as deleted
     fn query_update_deleteds(&self, board: YotsubaBoard) -> String;
+
+    /// Upsert a media hash to a post
     fn query_update_hash(
         &self, board: YotsubaBoard, hash_type: YotsubaHash, media_mode: YotsubaStatement
     ) -> String;
+
+    /// Upsert an endpoint to the metadata  
+    ///
+    /// Converts bytes to json object and feeds that into the query
     fn query_update_metadata(&self, column: YotsubaEndpoint) -> String;
-    fn query_medias(&self, board: YotsubaBoard, media_mode: YotsubaStatement) -> String;
-    fn query_threads_modified(&self, endpoint: YotsubaEndpoint) -> String;
-    fn query_threads(&self) -> String;
+
+    /// Check for the existence of an endpoint in the metadata
     fn query_metadata(&self, column: YotsubaEndpoint) -> String;
+
+    /// Get a list of posts in a thread that have media
+    fn query_medias(&self, board: YotsubaBoard, media_mode: YotsubaStatement) -> String;
+
+    /// Get a list of only the deleted and modified threads when comparing the metadata
+    /// and the fetched endpoint threads
+    fn query_threads_modified(&self, endpoint: YotsubaEndpoint) -> String;
+
+    /// Get a list of threads from the corresponding endpoint
+    fn query_threads(&self) -> String;
+
+    /// Get a list of threads from the one in the metadata + the fetched one
     fn query_threads_combined(&self, board: YotsubaBoard, endpoint: YotsubaEndpoint) -> String;
-    fn query_init_board(&self, board: YotsubaBoard) -> String;
+
+    /// Upsert a thread  
+    ///
+    /// This method updates an existing post or inserts a new one
+    /// <sup>[1](https://stackoverflow.com/a/36406023) [2](https://dba.stackexchange.com/a/39821)</sup>.  
+    /// Posts are only updated where there's a field change.  
+    /// A majority of posts in a thread don't change, this minimizes I/O writes.  
+    /// (sha256, sha256t, and deleted are handled seperately as they are special cases)  
+    ///
+    /// 4chan inserts a [backslash in their md5](https://stackoverflow.com/a/11449627).
     fn query_update_thread(&self, board: YotsubaBoard) -> String;
 }
-
 #[async_trait]
-pub trait DatabaseTrait<T>: Queries + QueriesExecutor<T> + StatementTrait<T> + Send + Sync {}
-impl DatabaseTrait<tokio_postgres::Statement> for tokio_postgres::Client {}
-impl DatabaseTrait<mysql::Statement> for Pool {}
+pub trait DatabaseTrait<T, R>:
+    Queries + QueriesExecutor<T, R> + StatementTrait<T> + Send + Sync {
+}
+impl DatabaseTrait<tokio_postgres::Statement, tokio_postgres::Row> for tokio_postgres::Client {}
+impl DatabaseTrait<mysql::Statement, mysql_async::Row> for Pool {}
