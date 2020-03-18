@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use core::sync::atomic::Ordering;
+use ::core::sync::atomic::Ordering;
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
 use log::*;
@@ -544,7 +544,6 @@ where
                             // Don't display an error if we're sending the exit code
                             // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                         }
-                        sleep(Duration::from_millis(1500)).await;
                     }
                     break;
                 }
@@ -711,8 +710,6 @@ where
                         if self.config.settings.asagi_mode {
                             sha256 = None;
                             sha256t = None;
-                            dl_media = info.download_media;
-                            dl_thumb = info.download_thumbnails;
                         } else {
                             sha256 = row.get::<&str, Option<Vec<u8>>>("sha256");
                             sha256t = row.get::<&str, Option<Vec<u8>>>("sha256t");
@@ -1020,7 +1017,7 @@ where
                         }
                     }
                     _e => {
-                        error!("()\t\t/{}/{}\t<{}> {}", endpoint, board, no, status, &url);
+                        error!("(media)\t\t/{}/{}\t<{}> {}", board, no, status, &url);
                         sleep(Duration::from_secs(1)).await;
                     }
                 }
