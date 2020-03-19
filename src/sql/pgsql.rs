@@ -67,7 +67,15 @@ pub mod core {
     /// - [`archived`](struct.Post.html#structfield.archived) Redundant with
     ///   [`archived_on`](struct.Post.html#structfield.archived_on)  
     /// ## Modified  
-    /// - [`md5`](struct.Post.html#structfield.md5) From base64 to binary, to save space  
+    /// - [`md5`](struct.Post.html#structfield.md5) From base64 to binary, to save space
+    /// - To boolean, to save space
+    ///     - [`sticky`](struct.Post.html#structfield.sticky)
+    ///     - [`closed`](struct.Post.html#structfield.closed)
+    ///     - [`filedeleted`](struct.Post.html#structfield.filedeleted)
+    ///     - [`spoiler`](struct.Post.html#structfield.spoiler)
+    ///     - [`m_img`](struct.Post.html#structfield.m_img)
+    ///     - [`bumplimit`](struct.Post.html#structfield.bumplimit)
+    ///     - [`imagelimit`](struct.Post.html#structfield.imagelimit)
     /// ## Side notes  
     /// Postgres doesn't have a numeric smaller than [`i16`] or unsigned integers.  
     /// For example: [`custom_spoiler`](struct.Post.html#structfield.custom_spoiler) should ideally
@@ -77,8 +85,9 @@ pub mod core {
     /// The following below is taken from the [official docs](https://github.com/4chan/4chan-API) where applicable.  
     #[cold]
     #[allow(dead_code)]
-    #[derive(Debug, Clone)]
     #[rustfmt::skip]
+    #[derive(Deserialize, Serialize, Debug, Clone)]
+    #[serde(default)]
     pub struct Post {
         /// Appears: `always`  
         /// Possible values: `any positive integer`  
@@ -176,42 +185,42 @@ pub mod core {
         /// Appears: `OP only, if thread is currently stickied`  
         /// Possible values: `1` or not set  
         /// <font style="color:#789922;">> If the thread is being pinned to the top of the page</font>
-        pub sticky: bool,
+        pub sticky: Option<bool>,
     
         /// Appears: `OP only, if thread is currently closed`  
         /// Possible values: `1` or not set  
         /// <font style="color:#789922;">> If the thread is closed to replies</font>
-        pub closed: bool,
-    
+        pub closed: Option<bool>,
+        
         /// Appears: `if post had attachment and attachment is deleted`  
         /// Possible values: `1` or not set  
         /// <font style="color:#789922;">> If the file was deleted from the post</font>
-        pub filedeleted: bool,
-    
+        pub filedeleted: Option<bool>,
+        
         /// Appears: `if post has attachment and attachment is spoilered`  
         /// Possible values: `1` or not set  
         /// <font style="color:#789922;">> If the image was spoilered or not</font>
-        pub spoiler: bool,
-    
+        pub spoiler: Option<bool>,
+        
         /// Appears: `any post that has a mobile-optimized image`  
         /// Possible values: `1` or not set  
         /// <font style="color:#789922;">> Mobile optimized image exists for post</font>
-        pub m_img: bool,
-    
+        pub m_img: Option<bool>,
+        
         /// Appears: `OP only, only if bump limit has been reached`  
         /// Possible values: `1` or not set  
         /// <font style="color:#789922;">> If a thread has reached bumplimit, it will no longer bump</font>
-        pub bumplimit: bool,
-    
+        pub bumplimit: Option<bool>,
+        
         /// Appears: `OP only, only if image limit has been reached`  
         /// Possible values: `1` or not set  
         /// <font style="color:#789922;">> If an image has reached image limit, no more image replies can be made</font>
-        pub imagelimit: bool,
+        pub imagelimit: Option<bool>,
     
-        /// Appears: `always`  
+        /// Appears: `always` <sup><b>Note:</b> Can be empty if user has a tripcode and opted out of a name</sup>  
         /// Possible values: `any string`  
         /// <font style="color:#789922;">> Name user posted with. Defaults to `Anonymous`</font>
-        pub name: String,
+        pub name: Option<String>,
     
         /// Appears: `OP only, if subject was included`  
         /// Possible values: `any string`  
@@ -271,7 +280,7 @@ pub mod core {
         /// Appears: `always if post has attachment`  
         /// Possible values:   
         /// <font style="color:#789922;">> 24 character (base64), decoded binary MD5 hash of file</font>
-        pub md5: Option<Vec<u8>>,
+        pub md5: Option<String>,
     
         /// Appears: `always if post has attachment`  
         /// Possible values:   
@@ -282,6 +291,55 @@ pub mod core {
         /// Possible values:  
         /// <font style="color:#789922;">> 65 character (hex), binary SHA256 hash of thumbnail</font>
         pub sha256t: Option<Vec<u8>>
+    }
+    
+    impl Default for Post {
+        fn default() -> Self {
+        let t= std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
+            Self {
+                no: t.as_secs() as i64,
+                subnum: None,
+                tim: None,
+                resto: t.as_secs() as i64,
+                time: t.as_secs() as i64,
+                last_modified: t.as_secs() as i64,
+                archived_on: None,
+                deleted_on: None,
+                fsize: None,
+                w: None,
+                h: None,
+                tn_w: None,
+                tn_h: None,
+                replies: None,
+                images: None,
+                unique_ips: None,
+                custom_spoiler: None,
+                since4pass: None,
+                sticky: None,
+                closed: None,
+                filedeleted: None,
+                spoiler: None,
+                m_img: None,
+                bumplimit: None,
+                imagelimit: None,
+                name: None,
+                sub: None,
+                com: None,
+                filename: None,
+                ext: None,
+                trip: None,
+                id: None,
+                capcode: None,
+                country: None,
+                country_name: None,
+                semantic_url: None,
+                tag: None,
+                md5: None,
+                sha256: None,
+                sha256t: None
+            }
+        }
+        
     }
 }
 
@@ -548,7 +606,7 @@ impl Queries for tokio_postgres::Client {
           m_img boolean,
           bumplimit boolean,
           imagelimit boolean,
-          name text NOT NULL DEFAULT 'Anonymous',
+          name text,
           sub text,
           com text,
           filename text,

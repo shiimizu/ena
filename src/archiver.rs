@@ -63,7 +63,7 @@ where
     }
 
     pub async fn run(&self) -> Result<()> {
-        self.listen_to_exit();
+        self.listen_to_exit()?;
         self.query.init_schema(&self.config.settings.schema, self.config.settings.engine).await?;
         self.query.init_type().await?;
         self.query.init_metadata(self.config.settings.engine).await?;
@@ -112,12 +112,11 @@ where
         Ok(())
     }
 
-    fn listen_to_exit(&self) {
+    fn listen_to_exit(&self) -> Result<()>{
         let finished_clone = Arc::clone(&self.finished);
-        ctrlc::set_handler(move || {
+        Ok(ctrlc::set_handler(move || {
             finished_clone.compare_and_swap(false, true, Ordering::Relaxed);
-        })
-        .expect("Error setting Ctrl-C handler");
+        })?)
     }
 
     async fn create_statements(
@@ -160,11 +159,7 @@ where
                                 .prepare(&self.query.query_update_hash(
                                     board,
                                     YotsubaHash::Sha256,
-                                    if statement.is_thumbs() {
-                                        YotsubaStatement::UpdateHashThumbs
-                                    } else {
-                                        YotsubaStatement::UpdateHashMedia
-                                    }
+                                    statement.is_thumbs_val()
                                 ))
                                 .await
                         );
@@ -194,11 +189,7 @@ where
                         .prepare(&self.query.query_update_hash(
                             board,
                             YotsubaHash::Sha256,
-                            if statement.is_thumbs() {
-                                YotsubaStatement::UpdateHashThumbs
-                            } else {
-                                YotsubaStatement::UpdateHashMedia
-                            }
+                            statement.is_thumbs_val()
                         ))
                         .await,
                 YotsubaStatement::Medias =>
@@ -320,6 +311,10 @@ where
                 )
                 .await
             {
+                Err(e) => error!(
+                    "({})\t/{}/\t\tFetching {}.json: {}",
+                    endpoint, current_board, endpoint, e
+                ),
                 Ok((last_modified_recieved, status, body)) => {
                     if last_modified_recieved.is_empty() {
                         error!(
@@ -366,8 +361,7 @@ where
                                 *fetched_threads = Some(body.to_owned());
 
                                 // Check if there's an entry in the metadata
-                                if let Ok(_) =
-                                    self.query.metadata(&statements, endpoint, current_board).await
+                                if self.query.metadata(&statements, endpoint, current_board).await.unwrap_or(false)
                                 {
                                     let ena_resume = config::ena_resume();
 
@@ -382,7 +376,7 @@ where
                                     // if *init && (!ena_resume || (ena_resume && endpoint ==
                                     // YotsubaEndpoint::Archive))
                                     if *init
-                                        && (endpoint == YotsubaEndpoint::Archive || !ena_resume)
+                                        && (!ena_resume || endpoint == YotsubaEndpoint::Archive)
                                     {
                                         // going here means the program was restarted
                                         // use combination of ALL threads from cache + new threads,
@@ -437,7 +431,7 @@ where
                                         *init = false;
                                     }
                                 } else {
-                                    // No cache found, use fetched_threads
+                                    // No cache found, use fetched_threads to update it
                                     if let Err(e) = self
                                         .query
                                         .update_metadata(
@@ -482,10 +476,6 @@ where
                         )
                     };
                 }
-                Err(e) => error!(
-                    "({})\t/{}/\t\tFetching {}.json: {}",
-                    endpoint, current_board, endpoint, e
-                )
             }
             if endpoint == YotsubaEndpoint::Archive {
                 *has_archives = true;
@@ -573,7 +563,6 @@ where
             drop(_sem);
 
             // Download each thread
-            // TODO postgres not getting last thread's media when exiting
             let mut position = 1_u32;
             let t = tx.clone().ok_or_else(|| anyhow!("|fetch_board| UnboundedSender is empty"))?;
             while let Some(thread) = local_threads_list.pop_front() {

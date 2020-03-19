@@ -179,8 +179,7 @@ impl Queries for Pool {
         )
     }
 
-    // TODO Fix FULL JOINs
-    // this query takes too long
+    // This query is probably inefficient because we query the same things twice
     fn query_update_deleteds(&self, board: YotsubaBoard) -> String {
         // This simulates a FULL JOIN
         format!(
@@ -971,7 +970,6 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     ) -> Result<u64>
     {
         log::debug!("update_deleteds");
-        // return Ok(1); // TODO FIX FULL JOINs
         let mut conn = self.get_conn().await?;
         let json = &serde_json::from_slice::<serde_json::Value>(item)?;
         // let id = YotsubaIdentifier::new(endpoint, board, YotsubaStatement::UpdateDeleteds);
@@ -1067,8 +1065,10 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
             .await?
             .1
             .pop()
+            .map(|j: Option<serde_json::Value>| j)
+            .flatten()
             .map(|j| serde_json::from_value(j))
-            .ok_or_else(|| anyhow!("Error in executing getting list of threads "))??);
+            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??);
         // pool.disconnect().await?;
         r
         // Ok(conn
@@ -1118,8 +1118,12 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
             .await?
             .1
             .pop()
+            .map(|j: Option<serde_json::Value>| j)
+            .flatten()
             .map(|j| serde_json::from_value(j))
-            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??);
+            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??
+            )
+            ;
         // pool.disconnect().await?;
         r
     }
@@ -1154,7 +1158,7 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         //     .flatten()
         //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
 
-        let r = Ok(conn
+        Ok(conn
             .prep_exec(
                 self.query_threads_combined(board, endpoint),
                 params! {"bb" => &board.to_string(), "jj" => json}
@@ -1167,9 +1171,7 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
             .map(|j: Option<serde_json::Value>| j)
             .flatten()
             .map(|x| serde_json::from_value(x))
-            .ok_or_else(|| anyhow!("Error in executing query_threads_combined"))??);
-        // pool.disconnect().await?;
-        r
+            .ok_or_else(|| anyhow!("Error in executing query_threads_combined"))??)
     }
 
     async fn metadata(

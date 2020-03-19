@@ -7,7 +7,7 @@
 use ena::*;
 
 use crate::sql::*;
-
+use serde::{self, Deserialize, Serialize};
 use tokio::{
     runtime::Builder,
     time::{delay_for as sleep, Duration}
@@ -17,7 +17,10 @@ use anyhow::{Context, Result};
 use chrono::Local;
 
 use log::*;
-
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct Thread {
+    posts: Vec<ena::sql::pgsql::core::Post>
+}
 fn main() {
     config::check_version();
     config::display();
