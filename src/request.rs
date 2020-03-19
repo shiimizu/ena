@@ -11,6 +11,7 @@ use std::ops::Deref;
 /// A wrapper for [`reqwest`]
 pub struct Client<T>(T);
 
+#[allow(dead_code)]
 impl<T> Client<T> {
     fn new(x: T) -> Client<T> {
         Client(x)

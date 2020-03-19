@@ -11,11 +11,14 @@ use std::{collections::VecDeque, convert::TryFrom};
 use tokio_postgres::{Row, Statement};
 
 /// Unused for now. This is just for the Cargo doc.
+#[cold]
+#[allow(dead_code)]
 pub mod core {
     //! Implementation of the default schema.  
     //!
     //! - [`Client`] The PostgreSQL implementation ([`tokio_postgres`]) to run the SQL queries
     //! - [`Schema`] The schema and list of SQL queries that `ena` uses
+    #[allow(unused_imports)]
     use super::*;
     use std::ops::Deref;
 
@@ -45,12 +48,241 @@ pub mod core {
         }
     }
 
-    // PostgreSQL version of the schema. This is also the default one used.
-    //
-    // If another schema is thought of, feel free to use the [`Queries`] to implement it.
-
-    // PostgreSQL version is using tokio_postgres
-    // #[async_trait]
+    /// The schema for each row.  
+    ///
+    /// This is just for documentation.  
+    /// Optimized specifically for Postgres by using column tetris to save space.  
+    /// Reasonable changes were also made to the original schema.
+    ///
+    /// ## Added
+    /// - [`subnum`](struct.Post.html#structfield.subnum) For ghost posts
+    /// - [`deleted_on`](struct.Post.html#structfield.deleted_on) For context
+    /// - [`last_modified`](struct.Post.html#structfield.last_modified) For context and possible use
+    ///   of search engines
+    /// - [`sha256`](struct.Post.html#structfield.sha256) For file dedup and to prevent [MD5 collisions](https://github.com/4chan/4chan-API/issues/70)
+    /// - [`sha256t`](struct.Post.html#structfield.sha256t) For file dedup and to prevent [MD5 collisions](https://github.com/4chan/4chan-API/issues/70)
+    /// ## Removed
+    /// - [`now`](struct.Post.html#structfield.now) Redundant with
+    ///   [`time`](struct.Post.html#structfield.time)
+    /// - [`archived`](struct.Post.html#structfield.archived) Redundant with
+    ///   [`archived_on`](struct.Post.html#structfield.archived_on)  
+    /// ## Modified  
+    /// - [`md5`](struct.Post.html#structfield.md5) From base64 to binary, to save space  
+    /// ## Side notes  
+    /// Postgres doesn't have a numeric smaller than [`i16`] or unsigned integers.  
+    /// For example: [`custom_spoiler`](struct.Post.html#structfield.custom_spoiler) should ideally
+    /// be [`u8`].
+    ///
+    /// ---  
+    /// The following below is taken from the [official docs](https://github.com/4chan/4chan-API) where applicable.  
+    #[cold]
+    #[allow(dead_code)]
+    #[derive(Debug, Clone)]
+    #[rustfmt::skip]
+    pub struct Post {
+        /// Appears: `always`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> The numeric post ID</font>
+        pub no: i64,
+    
+        /// Appears: `always if post is a ghost post`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Used in FF for ghost posting</font>
+        pub subnum: Option<i64>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `integer`  
+        /// <font style="color:#789922;">> Unix timestamp + microtime that an image was
+        /// uploaded</font>
+        pub tim: Option<i64>,
+    
+        /// Appears: `always`  
+        /// Possible values: `0` or `any positive integer`  
+        /// <font style="color:#789922;">> For replies: this is the ID of the thread being replied
+        /// to. For OP: this value is zero</font>
+        pub resto: i64,
+    
+        /// Appears: `always`  
+        /// Possible values: `UNIX timestamp`  
+        /// <font style="color:#789922;">> UNIX timestamp the post was created</font>
+        pub time: i64,
+    
+        /// Appears: `always`  
+        /// Possible values: `UNIX timestamp`  
+        /// <font style="color:#789922;">> UNIX timestamp the post had any of its fields
+        /// modified</font>
+        pub last_modified: i64,
+    
+        /// Appears: `OP only, if thread has been archived`  
+        /// Possible values: `UNIX timestamp`  
+        /// <font style="color:#789922;">> UNIX timestamp the post was archived</font>
+        pub archived_on: Option<i64>,
+    
+        /// Appears: `always if post has been deleted`  
+        /// Possible values: `UNIX timestamp`  
+        /// <font style="color:#789922;">> UNIX timestamp the post was deleted</font>
+        pub deleted_on: Option<i64>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Size of uploaded file in bytes</font>
+        pub fsize: Option<i64>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Image width dimension</font>
+        pub w: Option<i32>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Image height dimension</font>
+        pub h: Option<i32>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Thumbnail image width dimension</font>
+        pub tn_w: Option<i32>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Thumbnail image height dimension</font>
+        pub tn_h: Option<i32>,
+    
+        /// Appears: `OP only`  
+        /// Possible values: `0` or `any positive integer`  
+        /// <font style="color:#789922;">> Total number of replies to a thread</font>
+        pub replies: Option<i32>,
+    
+        /// Appears: `TODO`  
+        /// Possible values: `0` or `any positive integer`  
+        /// <font style="color:#789922;">> Total number of image replies to a thread</font>
+        pub images: Option<i32>,
+    
+        /// Appears: `OP only, only if thread has NOT been archived`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Number of unique posters in a thread</font>
+        pub unique_ips: Option<i32>,
+    
+        /// Appears: `if post has attachment and attachment is spoilered`  
+        /// Possible values: `1-10` or not set  
+        /// <font style="color:#789922;">> The custom spoiler ID for a spoilered image </font>
+        pub custom_spoiler: Option<i16>,
+    
+        /// Appears: `if poster put 'since4pass' in the options field`  
+        /// Possible values: `any 4 digit year`  
+        /// <font style="color:#789922;">> Year 4chan pass bought</font>
+        pub since4pass: Option<i16>,
+    
+        /// Appears: `OP only, if thread is currently stickied`  
+        /// Possible values: `1` or not set  
+        /// <font style="color:#789922;">> If the thread is being pinned to the top of the page</font>
+        pub sticky: bool,
+    
+        /// Appears: `OP only, if thread is currently closed`  
+        /// Possible values: `1` or not set  
+        /// <font style="color:#789922;">> If the thread is closed to replies</font>
+        pub closed: bool,
+    
+        /// Appears: `if post had attachment and attachment is deleted`  
+        /// Possible values: `1` or not set  
+        /// <font style="color:#789922;">> If the file was deleted from the post</font>
+        pub filedeleted: bool,
+    
+        /// Appears: `if post has attachment and attachment is spoilered`  
+        /// Possible values: `1` or not set  
+        /// <font style="color:#789922;">> If the image was spoilered or not</font>
+        pub spoiler: bool,
+    
+        /// Appears: `any post that has a mobile-optimized image`  
+        /// Possible values: `1` or not set  
+        /// <font style="color:#789922;">> Mobile optimized image exists for post</font>
+        pub m_img: bool,
+    
+        /// Appears: `OP only, only if bump limit has been reached`  
+        /// Possible values: `1` or not set  
+        /// <font style="color:#789922;">> If a thread has reached bumplimit, it will no longer bump</font>
+        pub bumplimit: bool,
+    
+        /// Appears: `OP only, only if image limit has been reached`  
+        /// Possible values: `1` or not set  
+        /// <font style="color:#789922;">> If an image has reached image limit, no more image replies can be made</font>
+        pub imagelimit: bool,
+    
+        /// Appears: `always`  
+        /// Possible values: `any string`  
+        /// <font style="color:#789922;">> Name user posted with. Defaults to `Anonymous`</font>
+        pub name: String,
+    
+        /// Appears: `OP only, if subject was included`  
+        /// Possible values: `any string`  
+        /// <font style="color:#789922;">> OP Subject text</font>
+        pub sub: Option<String>,
+    
+        /// Appears: `if comment was included`  
+        /// Possible values: `any HTML escaped string`  
+        /// <font style="color:#789922;">> Comment (HTML escaped)</font>
+        pub com: Option<String>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any string`  
+        /// <font style="color:#789922;">> Filename as it appeared on the poster's device</font>
+        pub filename: Option<String>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `.jpg`, `.png`, `.gif`, `.pdf`, `.swf`, `.webm`  
+        /// <font style="color:#789922;">> Filetype</font>
+        pub ext: Option<String>,
+    
+        /// Appears: `if post has tripcode`  
+        /// Possible values: `any string`  
+        /// <font style="color:#789922;">> The user's tripcode, in format: `!tripcode` or `!!securetripcode`</font>
+        pub trip: Option<String>,
+    
+        /// Appears: `if post has ID`  
+        /// Possible values: `any 8 characters`  
+        /// <font style="color:#789922;">> The poster's ID</font>
+        pub id: Option<String>,
+    
+        /// Appears: `if post has capcode`  
+        /// Possible values: Not set, `mod`, `admin`, `admin_highlight`, `manager`, `developer`, `founder`  
+        /// <font style="color:#789922;">> The capcode identifier for a post</font>
+        pub capcode: Option<String>,
+    
+        /// Appears: `if country flags are enabled`  
+        /// Possible values: `2 character string` or `XX` if unknown  
+        /// <font style="color:#789922;">> Poster's [ISO 3166-1 alpha-2 country code](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2)</font>
+        pub country: Option<String>,
+    
+        /// Appears: `Name of any country`  
+        /// Possible values: `any string`  
+        /// <font style="color:#789922;">> Poster's country name</font>
+        pub country_name: Option<String>,
+    
+        /// Appears: `OP only`  
+        /// Possible values: `string`  
+        /// <font style="color:#789922;">> SEO URL slug for thread</font>
+        pub semantic_url: Option<String>,
+    
+        /// Appears: `OP only`, `/f/ only`  
+        /// Possible values: `Game`, `Loop`, etc..  
+        /// <font style="color:#789922;">> The category of `.swf` upload</font>
+        pub tag: Option<String>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values:   
+        /// <font style="color:#789922;">> 24 character (base64), decoded binary MD5 hash of file</font>
+        pub md5: Option<Vec<u8>>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values:   
+        /// <font style="color:#789922;">> 65 character (hex), binary SHA256 hash of file</font>
+        pub sha256: Option<Vec<u8>>,
+    
+        /// Appears: `always if post has attachment`, excludes `/f/`  
+        /// Possible values:  
+        /// <font style="color:#789922;">> 65 character (hex), binary SHA256 hash of thumbnail</font>
+        pub sha256t: Option<Vec<u8>>
+    }
 }
 
 pub mod asagi {
@@ -66,8 +298,8 @@ pub mod asagi {
 impl Archiver
     for YotsubaArchiver<Statement, tokio_postgres::Row, tokio_postgres::Client, reqwest::Client>
 {
-    async fn run_inner(&self) {
-        self.run().await
+    async fn run_inner(&self) -> Result<()> {
+        Ok(self.run().await?)
     }
 }
 
@@ -316,7 +548,7 @@ impl Queries for tokio_postgres::Client {
           m_img boolean,
           bumplimit boolean,
           imagelimit boolean,
-          name text,
+          name text NOT NULL DEFAULT 'Anonymous',
           sub text,
           com text,
           filename text,
@@ -759,30 +991,28 @@ impl Queries for tokio_postgres::Client {
 /// PostgreSQL version is using tokio_postgres
 #[async_trait]
 impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
-    async fn init_type(&self) {
-        self.execute(self.query_init_type().as_str(), &[])
-            .await
-            .expect("Err initializing 4chan schema as a type");
+    async fn init_type(&self) -> Result<u64> {
+        Ok(self.execute(self.query_init_type().as_str(), &[]).await?)
     }
 
-    async fn init_schema(&self, schema: &str, engine: Database) {
-        self.batch_execute(&self.query_init_schema(schema, engine))
-            .await
-            .expect(&format!("Err creating schema: {}", schema));
+    async fn init_schema(&self, schema: &str, engine: Database) -> Result<u64> {
+        self.batch_execute(&self.query_init_schema(schema, engine)).await?;
+        Ok(1)
     }
 
-    async fn init_metadata(&self, engine: Database) {
-        self.batch_execute(&self.query_init_metadata(engine)).await.expect("Err creating metadata");
+    async fn init_metadata(&self, engine: Database) -> Result<u64> {
+        self.batch_execute(&self.query_init_metadata(engine)).await?;
+        Ok(1)
     }
 
-    async fn init_board(&self, board: YotsubaBoard, engine: Database) {
-        self.batch_execute(&self.query_init_board(board, engine))
-            .await
-            .expect(&format!("Err creating board: {}", board));
+    async fn init_board(&self, board: YotsubaBoard, engine: Database) -> Result<u64> {
+        self.batch_execute(&self.query_init_board(board, engine)).await?;
+        Ok(1)
     }
 
-    async fn init_views(&self, board: YotsubaBoard) {
-        self.batch_execute(&self.query_init_views(board)).await.expect("Err create views");
+    async fn init_views(&self, board: YotsubaBoard) -> Result<u64> {
+        self.batch_execute(&self.query_init_views(board)).await?;
+        Ok(1)
     }
 
     async fn update_metadata(
@@ -792,7 +1022,9 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
     {
         log::debug!("update_metadata");
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateMetadata };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|update_metadata| Empty statement from id: {:?}", id))?;
         Ok(self
             .execute(statement, &[
                 &board.to_string(),
@@ -808,36 +1040,37 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
     {
         log::debug!("medias");
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|medias| Empty statement from id: {:?}", id))?;
         Ok(self.query(statement, &[&(no as i64)]).await?)
     }
 
     async fn update_hash(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
-    )
+    ) -> Result<u64>
     {
         // info!("Creating Identifier");
         let id = YotsubaIdentifier { endpoint, board, statement: hash_type };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|medias| Empty statement from id: {:?}", id))?;
         log::debug!("update_hash {:?} hash: {:?}", id, &hashsum);
-        self.execute(statement, &[&(no as i64), &hashsum])
-            .await
-            .expect("Err executing sql: update_hash");
+        self.execute(statement, &[&(no as i64), &hashsum]).await?;
+        Ok(1)
     }
 
     /// Mark a single post as deleted.
     async fn delete(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u32
-    )
+    ) -> Result<u64>
     {
         log::debug!("delete");
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Delete };
-        let statement = statements.get(&id).unwrap();
-        self.execute(statement, &[&i64::try_from(no).unwrap()])
-            .await
-            .expect("Err executing sql: delete");
+        let statement = statements.get(&id).ok_or_else(|| anyhow!("Empty statment"))?;
+        Ok(self.execute(statement, &[&i64::try_from(no)?]).await?)
     }
 
     /// Mark posts from a thread where it's deleted.
@@ -848,11 +1081,13 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
     {
         log::debug!("update_deleteds");
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateDeleteds };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|update_deleteds| Empty statement from id: {:?}", id))?;
         Ok(self
             .execute(statement, &[
                 &serde_json::from_slice::<serde_json::Value>(item)?,
-                &i64::try_from(thread).unwrap()
+                &i64::try_from(thread)?
             ])
             .await?)
     }
@@ -864,25 +1099,29 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
     {
         log::debug!("update_thread");
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateThread };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|update_thread| Empty statement from id: {:?}", id))?;
         Ok(self.execute(statement, &[&serde_json::from_slice::<serde_json::Value>(item)?]).await?)
     }
 
     async fn metadata(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard
-    ) -> bool
+    ) -> Result<bool>
     {
         log::debug!("metadata");
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Metadata };
-        let statement = statements.get(&id).unwrap();
-        self.query(statement, &[&board.to_string()])
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|metadata| Empty statement from id: {:?}", id))?;
+        Ok(self
+            .query(statement, &[&board.to_string()])
             .await
             .ok()
             .filter(|re| !re.is_empty())
-            .map(|re| re[0].try_get(0).ok())
-            .flatten()
-            .unwrap_or(false)
+            .map(|re| re[0].try_get(0))
+            .ok_or_else(|| anyhow!("|metadata| An error occurred"))??)
     }
 
     async fn threads(
@@ -892,7 +1131,9 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
     {
         log::debug!("threads");
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|threads| Empty statement from id: {:?}", id))?;
         let i = serde_json::from_slice::<serde_json::Value>(item)?;
         Ok(self
             .query(statement, &[&i])
@@ -921,7 +1162,9 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
         log::debug!("threads_combined");
         let id =
             YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::ThreadsCombined };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|threads_combined| Empty statement from id: {:?}", id))?;
         let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
         Ok(self
             .query(statement, &[&board.to_string(), &i])
@@ -932,7 +1175,7 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
             .flatten()
             .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
             .flatten()
-            .ok_or_else(|| anyhow!("Error in get_combined_threads"))?)
+            .ok_or_else(|| anyhow!("|threads_combined| An error occurred"))?)
     }
 
     /// Combine new and prev threads.json into one. This retains the prev
@@ -947,10 +1190,12 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
         statements: &StatementStore<Statement>
     ) -> Result<VecDeque<u32>>
     {
-        log::debug!("threads_combined");
+        log::debug!("threads_modified");
         let id =
             YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::ThreadsModified };
-        let statement = statements.get(&id).unwrap();
+        let statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|threads_modified| Empty statement from id: {:?}", id))?;
         let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
         Ok(self
             .query(statement, &[&board.to_string(), &i])
@@ -961,6 +1206,6 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
             .flatten()
             .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
             .flatten()
-            .ok_or_else(|| anyhow!("Error in get_combined_threads"))?)
+            .ok_or_else(|| anyhow!("|threads_modified| An error occurred"))?)
     }
 }

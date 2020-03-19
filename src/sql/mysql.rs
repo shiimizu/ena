@@ -19,10 +19,57 @@ use std::{
 };
 pub type Statement = mysql_async::Stmt<mysql_async::Conn>;
 
+#[cold]
+#[allow(dead_code)]
+pub mod asagi {
+
+    #[cold]
+    #[allow(dead_code)]
+    pub struct Post {
+        pub poster_ip:            i32,
+        pub num:                  i32,
+        pub subnum:               i32,
+        pub thread_num:           i32,
+        pub unique_ips:           i32,
+        pub since4pass:           i32,
+        pub op:                   bool,
+        pub date:                 i64,
+        pub preview_orig:         String,
+        pub preview_w:            i32,
+        pub preview_h:            i32,
+        pub media_id:             i32,
+        pub media_orig:           String,
+        pub media_w:              i32,
+        pub media_h:              i32,
+        pub media_size:           i32,
+        pub media_hash:           String,
+        pub media_filename:       String,
+        pub spoiler:              bool,
+        pub deleted:              bool,
+        pub capcode:              String,
+        pub email:                String,
+        pub name:                 String,
+        pub trip:                 String,
+        pub title:                String,
+        pub comment:              String,
+        pub delpass:              String,
+        pub sticky:               bool,
+        pub closed:               bool,
+        pub archived:             bool,
+        pub poster_hash:          String,
+        pub poster_country:       String,
+        pub poster_troll_country: String,
+        pub exif:                 String,
+        pub link:                 String,
+        pub r#type:               String,
+        pub omitted:              bool
+    }
+}
+
 #[async_trait]
 impl Archiver for YotsubaArchiver<Statement, mysql_async::Row, Pool, reqwest::Client> {
-    async fn run_inner(&self) {
-        self.run().await
+    async fn run_inner(&self) -> Result<()> {
+        Ok(self.run().await?)
     }
 }
 
@@ -182,7 +229,7 @@ impl Queries for Pool {
         format!(
             "SELECT * FROM `{0}`
                 WHERE (media_hash is not null) AND (num=:no or thread_num=:no)
-                ORDER BY num desc;",
+                ORDER BY num desc LOCK IN SHARE MODE;",
             board
         )
     }
@@ -214,7 +261,7 @@ impl Queries for Pool {
                 on prev->'$.no' = newv->'$.no'
                 where board = :bb
             ) z
-            where newv is null or prev is null or prev->'$.last_modified' != newv->'$.last_modified';
+            where newv is null or prev is null or prev->'$.last_modified' != newv->'$.last_modified' LOCK IN SHARE MODE;
             "#
             ),
             _ => format!(
@@ -254,15 +301,14 @@ impl Queries for Pool {
             FROM
             ( SELECT * FROM JSON_TABLE(:jj, "$[*].threads[*]" COLUMNS(
             `no`				bigint		PATH "$.no")
-            ) w )z;
+            ) w )z LOCK IN SHARE MODE;
         "#
         .to_string()
     }
 
     fn query_metadata(&self, column: YotsubaEndpoint) -> String {
         format!(
-            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = :bb
-            ;"#,
+            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = :bb LOCK IN SHARE MODE;"#,
             column
         )
     }
@@ -297,7 +343,7 @@ impl Queries for Pool {
             left join
               (select num as nno from `{}` where op=1 and (timestamp_expired is not null or deleted is not null))u
               ON c = nno
-            where  nno is null;
+            where  nno is null LOCK IN SHARE MODE;
         "#,
             board
         );
@@ -331,7 +377,7 @@ impl Queries for Pool {
             left join
               (select num as nno from `{}` where op=1 and (timestamp_expired is not null or deleted is not null))u
               ON c = nno
-            where  nno is null;
+            where  nno is null LOCK IN SHARE MODE;
         "#,
             board
         );
@@ -791,48 +837,40 @@ impl Queries for Pool {
     }
 }
 
-// https://www.reddit.com/r/rust/comments/6rll9j/example_of_async_hyper_async_mysql/
+// Attempt to fix MySQL's lack of concurrency
+// [Locking rows in MySQL](https://is.gd/lzJG8M)
+// [PostgreSQL Concurrency with MVCC](https://devcenter.heroku.com/articles/postgresql-concurrency)
 #[async_trait]
 impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
-    async fn init_schema(&self, schema: &str, engine: Database) {
+    async fn init_schema(&self, schema: &str, engine: Database) -> Result<u64> {
         log::debug!("init_schema");
-        // // let pool =
-        // mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
-        // let pool = self.clone();
-        let conn = self.get_conn().await.unwrap();
-        // let conn: mysql_async::Conn =
-        conn.drop_query(&self.query_init_schema("", engine)).await.expect("Err initializing");
-        // conn.disconnect().await.unwrap();
+        let conn = self.get_conn().await?;
+        conn.drop_query(&self.query_init_schema("", engine)).await?;
+        Ok(1)
     }
 
-    async fn init_type(&self) {
+    async fn init_type(&self) -> Result<u64> {
         // Do nothing
+        Ok(1)
     }
 
-    async fn init_metadata(&self, engine: Database) {
+    async fn init_metadata(&self, engine: Database) -> Result<u64> {
         log::debug!("init_metadata");
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
-        // let pool = self.clone();
-        let conn = self.get_conn().await.unwrap();
-        // let conn: mysql_async::Conn =
+        let conn = self.get_conn().await?;
         conn.drop_query(&self.query_init_metadata(engine)).await.expect("Err creating metadata");
-        // conn.disconnect().await.unwrap();
+        Ok(1)
     }
 
-    async fn init_board(&self, board: YotsubaBoard, engine: Database) {
+    async fn init_board(&self, board: YotsubaBoard, engine: Database) -> Result<u64> {
         log::debug!("init_board /{}/", board);
-
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
-        // let pool = self.clone();
-        let conn = self.get_conn().await.unwrap();
-        conn.drop_query(&self.query_init_board(board, engine))
-            .await
-            .expect(&format!("Err creating board: {}", board));
-        // conn.disconnect().await.unwrap();
+        let conn = self.get_conn().await?;
+        conn.drop_query(&self.query_init_board(board, engine)).await?;
+        Ok(1)
     }
 
-    async fn init_views(&self, board: YotsubaBoard) {
+    async fn init_views(&self, board: YotsubaBoard) -> Result<u64> {
         // Do nothing
+        Ok(1)
     }
 
     async fn update_metadata(
@@ -841,14 +879,9 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     ) -> Result<u64>
     {
         log::debug!("update_metadata");
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
-        // let pool = self.clone();
-        let conn = self.get_conn().await.unwrap();
+        let mut conn = self.get_conn().await?;
         let json = &serde_json::from_slice::<serde_json::Value>(item)?;
-        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateMetadata
-        // }; let statement = statements.get(&id).unwrap();
-        // let statement = conn.prepare(self.query_update_metadata(endpoint)).await.unwrap(); let
-        // arc= std::
+        // let id = YotsubaIdentifier::new(endpoint, board, YotsubaStatement::UpdateMetadata);
 
         // Ok(statement
         //     .first(params! { "bb" => board.to_string(), "jj" => json })
@@ -857,8 +890,10 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         //     .ok()
         //     .flatten()
         //     .unwrap_or(1))
-
-        let r = Ok(conn
+        conn = conn
+            .drop_query(format!("SELECT *,1 from `metadata` WHERE board = '{}' for update;", board))
+            .await?;
+        Ok(conn
             .prep_exec(
                 self.query_update_metadata(endpoint),
                 params! { "bb" => board.to_string(), "jj" => json }
@@ -868,9 +903,7 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
             .await?
             .1
             .pop()
-            .unwrap_or(1));
-        // pool.disconnect().await.unwrap();
-        r
+            .unwrap_or(1))
     }
 
     async fn update_thread(
@@ -879,14 +912,9 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     ) -> Result<u64>
     {
         log::debug!("update_thread");
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
-        // let pool = self.clone();
-        let conn = self.get_conn().await.unwrap();
+        let mut conn = self.get_conn().await?;
         let json = &serde_json::from_slice::<serde_json::Value>(item)?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateThread
-        // }; let statement =
-        // statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
-        // let statement = conn.prep(self.query_update_thread(board)).unwrap();
         // Ok(statement
         //     .first(params! { "jj" => json })
         //     .await
@@ -895,36 +923,40 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         //     .flatten()
         //     .unwrap_or(1))
 
-        let r = Ok(conn
+        conn = conn.drop_query(format!("SELECT *,1 from `{}` limit 1 for update;", board)).await?;
+
+        Ok(conn
             .prep_exec(self.query_update_thread(board), params! {"jj" => json })
             .await?
             .collect_and_drop()
             .await?
             .1
             .pop()
-            .unwrap_or(1));
-        // pool.disconnect().await.unwrap();
-        r
+            .unwrap_or(1))
     }
 
     async fn delete(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u32
-    )
+    ) -> Result<u64>
     {
         log::debug!("delete");
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
-        // let pool = self.clone();
-        let conn = self.get_conn().await.unwrap();
+        let conn = self.get_conn().await?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Delete };
-        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
-        // let statement = conn.prep(self.query_delete(board)).unwrap();
-        conn.drop_exec(self.query_delete(board), (&i64::try_from(no).unwrap(),)).await.unwrap();
+        conn.drop_query(format!(
+            "SELECT num, deleted, timestamp_expired,1 from `{}` WHERE num = {} for update;",
+            board, no
+        ))
+        .await?
+        .drop_exec(self.query_delete(board), (&i64::try_from(no)?,))
+        .await?;
+        Ok(1)
+
         //    .await
         //   .expect("Err executing sql: delete");
-        // pool.disconnect().await.unwrap();
+        // pool.disconnect().await?;
         // if let Some(_) = statement
-        //     .first((i64::try_from(no).unwrap(),))
+        //     .first((i64::try_from(no)?,))
         //     .await
         //     .map(|(c, r): (mysql_async::Stmt<mysql_async::Conn>, Option<u64>)| r)
         //     .ok()
@@ -938,15 +970,11 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         board: YotsubaBoard, thread: u32, item: &[u8]
     ) -> Result<u64>
     {
-        log::debug!("SKIPPING update_deleteds");
-        return Ok(1); // TODO FIX FULL JOINs
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
-        let conn = self.get_conn().await?;
+        log::debug!("update_deleteds");
+        // return Ok(1); // TODO FIX FULL JOINs
+        let mut conn = self.get_conn().await?;
         let json = &serde_json::from_slice::<serde_json::Value>(item)?;
-        // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::UpdateDeleteds
-        // }; let statement =
-        // statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
-        // let statement = conn.prep(self.query_update_deleteds(board)).unwrap();
+        // let id = YotsubaIdentifier::new(endpoint, board, YotsubaStatement::UpdateDeleteds);
 
         // Ok(statement
         //     .first(params! {"jj" => json, "no" => i64::try_from(thread)? })
@@ -955,8 +983,14 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         //     .ok()
         //     .flatten()
         //     .unwrap_or(1))
+        conn = conn
+            .drop_query(format!(
+                "SELECT *,1 from `{}` where thread_num={} for update;",
+                board, thread
+            ))
+            .await?;
 
-        let r = Ok(conn
+        Ok(conn
             .prep_exec(
                 self.query_update_deleteds(board),
                 params! {"jj" => json, "no" => &i64::try_from(thread)? }
@@ -966,17 +1000,16 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
             .await?
             .1
             .pop()
-            .unwrap_or(1));
-        // pool.disconnect().await?;
-        r
+            .unwrap_or(1))
     }
 
     async fn update_hash(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard, no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
-    )
+    ) -> Result<u64>
     {
         // Do nothing
+        Ok(1)
     }
 
     async fn medias(
@@ -985,10 +1018,8 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     ) -> Result<Vec<Row>>
     {
         log::debug!("medias");
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Medias };
-        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
 
         // Ok(Rows::MySQL(
         //     statement
@@ -1019,13 +1050,9 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     ) -> Result<VecDeque<u32>>
     {
         log::debug!("inside threads");
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
         let json = serde_json::from_slice::<serde_json::Value>(item)?;
-
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
-        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
-        // let statement = conn.prep(self.query_threads()).unwrap();
 
         // Ok(statement
         //     .first(params! { "jj" => json })
@@ -1060,13 +1087,9 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     ) -> Result<VecDeque<u32>>
     {
         log::debug!("threads_modified");
-        // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
         let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
         // let id = YotsubaIdentifier::new(YotsubaEndpoint::Threads, board,
-        // YotsubaStatement::ThreadsModified); let statement =
-        // statements.get(&id).unwrap().try_lock().unwrap().take().unwrap(); let statementt
-        // = conn.prep().unwrap();
         // Ok(statement
         //     .first(params! {"bb" => board.to_string(), "jj" => json})
         //     .await
@@ -1111,9 +1134,7 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         let conn = self.get_conn().await?;
         let id =
             YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::ThreadsCombined };
-        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
         let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
-        // let statement = conn.prep(self.query_threads_combined(board, endpoint)).unwrap();
 
         // Ok(statement
         //     .first(params! {"bb" => board.to_string(), "jj" => json})
@@ -1154,30 +1175,19 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     async fn metadata(
         &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
         board: YotsubaBoard
-    ) -> bool
+    ) -> Result<bool>
     {
         log::debug!("inside metadata /{}/ {}", board, endpoint);
-        let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
-        // let pool = self.clone();
-        let conn = pool.get_conn().await.unwrap();
-        // log::debug!("GOT CONN inside metadata /{}/", board);
+        let conn = self.get_conn().await?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Metadata };
-        // let statement = statements.get(&id).unwrap().try_lock().unwrap().take().unwrap();
-        // let statement = conn.prep(self.query_metadata(endpoint)).unwrap();
-
-        let c = conn
+        Ok(conn
             .prep_exec(self.query_metadata(endpoint), params! {"bb" => board.to_string()})
             .await
-            .map(|x| x.collect_and_drop())
-            .unwrap()
-            .await
-            .unwrap()
+            .map(|x| x.collect_and_drop())?
+            .await?
             .1
             .pop()
-            .unwrap_or(false);
-        log::debug!("DONE inside metadata /{}/", board);
-        pool.disconnect().await.unwrap();
-        c
+            .unwrap_or(false))
 
         // statement
         //     .first(params! { "bb" => &board.to_string() })

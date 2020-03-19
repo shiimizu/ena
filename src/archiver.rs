@@ -6,7 +6,7 @@ use crate::{
 };
 
 use ::core::sync::atomic::Ordering;
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use enum_iterator::IntoEnumIterator;
 use futures::stream::{FuturesUnordered, StreamExt as FutureStreamExt};
 use log::*;
@@ -62,18 +62,19 @@ where
         self.finished.load(Ordering::Relaxed)
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&self) -> Result<()> {
         self.listen_to_exit();
-        self.query.init_schema(&self.config.settings.schema, self.config.settings.engine).await;
-        self.query.init_type().await;
-        self.query.init_metadata(self.config.settings.engine).await;
+        self.query.init_schema(&self.config.settings.schema, self.config.settings.engine).await?;
+        self.query.init_type().await?;
+        self.query.init_metadata(self.config.settings.engine).await?;
 
-        // Runs an archive, threads, and media thread concurrently
+        // Run archive, threads, and media concurrently
         let mut fut = FuturesUnordered::new();
         let semaphore = Arc::new(Semaphore::new(1));
         let (tx, rx) = unbounded_channel();
 
-        // Media background thread
+        // Media background thread. On its own single thread.
+        // Has to know which board to run on, that's where channels come in.
         fut.push(self.compute(
             YotsubaEndpoint::Media,
             &self.config.board_settings,
@@ -83,8 +84,8 @@ where
         ));
 
         for board in self.config.boards.iter() {
-            self.query.init_board(board.board, self.config.settings.engine).await;
-            self.query.init_views(board.board).await;
+            self.query.init_board(board.board, self.config.settings.engine).await?;
+            self.query.init_views(board.board).await?;
 
             if board.download_archives {
                 fut.push(self.compute(
@@ -105,7 +106,10 @@ where
             ));
         }
 
-        while let Some(_) = fut.next().await {}
+        while let Some(Err(e)) = fut.next().await {
+            error!("{}", e);
+        }
+        Ok(())
     }
 
     fn listen_to_exit(&self) {
@@ -125,6 +129,11 @@ where
             YotsubaIdentifier::new(endpoint, board, stmt)
         };
 
+        // Can't use statments for Asagi and MySQL due to the way [`mysql_async`] is implemented.
+        // Connections don't hold a shared reference and statements can only be run once because it
+        // ALSO moves itself out... wtf.. Therefore new connections need to be taken from
+        // the pool, and statments are always constanly being remade for each query..
+        // Here just give a placeholder statement.
         if self.config.settings.asagi_mode {
             statement_store.insert(
                 gen_id(YotsubaStatement::Medias),
@@ -211,26 +220,28 @@ where
         &self, endpoint: YotsubaEndpoint, info: &BoardSettings, semaphore: Arc<Semaphore>,
         tx: Option<UnboundedSender<(BoardSettings, Arc<StatementStore<S>>, u32)>>,
         rx: Option<UnboundedReceiver<(BoardSettings, Arc<StatementStore<S>>, u32)>>
-    )
+    ) -> Result<()>
     {
         match endpoint {
             YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
-                if self.fetch_board(endpoint, info, semaphore, tx, rx).await.is_some() {};
+                if let Err(e) = self.fetch_board(endpoint, info, semaphore, tx, rx).await {
+                    error!("|fetch_board| An error has occurred {}", e);
+                }
             }
             YotsubaEndpoint::Media => {
                 sleep(Duration::from_secs(2)).await;
 
                 let dur = Duration::from_millis(250);
-                let mut r = rx.unwrap();
+                let mut r =
+                    rx.ok_or_else(|| anyhow!("|compute::Media| UnboundedReceiver was empty"))?;
                 let mut downloading = endpoint;
                 let mut exit_code: u8 = 1;
 
-                // Use a custom poll rate instead of recv().await which polls at around 1s.
+                // Custom poll rate instead of recv().await which polls at around 1s
+                // Sequential fetching to prevent client congestion and errors
                 loop {
                     sleep(dur).await;
-                    // Sequential fetching to prevent client congestion and errors
-                    if let Ok(received) = r.try_recv() {
-                        let media_info = received.0;
+                    if let Ok((media_info, statments, thread)) = r.try_recv() {
                         if self.is_finished() && downloading == YotsubaEndpoint::Media {
                             if media_info.download_media || media_info.download_thumbnails {
                                 info!("({})\tStopping media fetching...", endpoint);
@@ -241,8 +252,8 @@ where
 
                         // Only leave here
                         // The signal to stop is a thread no of: 0
-                        if received.2 == 0 {
-                            exit_code = received.2 as u8;
+                        if thread == 0 {
+                            exit_code = thread as u8;
                         }
 
                         // We need the current board info
@@ -256,21 +267,18 @@ where
                         // Exit code is so that the loop continues
                         // Exhausting the channel until no threads can be recieved
                         // Only one that go through this block are valid threads
-                        if received.2 != 0
+                        if thread != 0
                             && (media_info.download_thumbnails || media_info.download_media)
                         {
-                            self.fetch_media(
-                                &media_info,
-                                &received.1,
-                                endpoint,
-                                received.2,
-                                downloading
-                            )
-                            .await;
+                            if let Err(e) = self
+                                .fetch_media(&media_info, &statments, endpoint, thread, downloading)
+                                .await
+                            {
+                                error!("({})\t\t/{}/{} {}", endpoint, media_info.board, thread, e)
+                            }
                         }
                     } else {
                         // This is our exit out of the loop.
-                        // info!("({})\t\t finished DL", endpoint);
                         if self.is_finished()
                             && downloading == YotsubaEndpoint::Threads
                             && exit_code == 0
@@ -280,11 +288,9 @@ where
                     }
                 }
                 r.close();
-                if self.is_finished() {
-                    return;
-                }
             }
         }
+        Ok(())
     }
 
     /// Downloads the endpoint threads
@@ -295,11 +301,7 @@ where
         statements: &StatementStore<S>
     )
     {
-        if endpoint == YotsubaEndpoint::Archive && !*has_archives {
-            return;
-        }
-
-        if self.is_finished() {
+        if self.is_finished() || (endpoint == YotsubaEndpoint::Archive && !*has_archives) {
             return;
         }
 
@@ -364,7 +366,9 @@ where
                                 *fetched_threads = Some(body.to_owned());
 
                                 // Check if there's an entry in the metadata
-                                if self.query.metadata(&statements, endpoint, current_board).await {
+                                if let Ok(_) =
+                                    self.query.metadata(&statements, endpoint, current_board).await
+                                {
                                     let ena_resume = config::ena_resume();
 
                                     // if there's cache
@@ -495,7 +499,7 @@ where
         &self, endpoint: YotsubaEndpoint, bs: &BoardSettings, semaphore: Arc<Semaphore>,
         tx: Option<UnboundedSender<(BoardSettings, Arc<StatementStore<S>>, u32)>>,
         _rx: Option<UnboundedReceiver<(BoardSettings, Arc<StatementStore<S>>, u32)>>
-    ) -> Option<()>
+    ) -> Result<()>
     {
         let current_board = bs.board;
         let mut threads_last_modified = String::new();
@@ -571,7 +575,7 @@ where
             // Download each thread
             // TODO postgres not getting last thread's media when exiting
             let mut position = 1_u32;
-            let t = tx.clone().unwrap();
+            let t = tx.clone().ok_or_else(|| anyhow!("|fetch_board| UnboundedSender is empty"))?;
             while let Some(thread) = local_threads_list.pop_front() {
                 // Semaphore
                 let mut _sem_thread = None;
@@ -624,7 +628,7 @@ where
                 }
             }
             //  Board refresh delay ratelimit
-            let newrt = (ratelimit.next().unwrap()).into();
+            let newrt = ratelimit.next().unwrap_or(bs.refresh_delay).into();
             while now.elapsed().as_secs() < newrt {
                 if self.is_finished() {
                     break;
@@ -638,7 +642,7 @@ where
             }
         }
         // channel.close();
-        Some(())
+        Ok(())
     }
 
     // Download a single thread and its media
@@ -696,7 +700,14 @@ where
                             break;
                         },
                     StatusCode::NOT_FOUND => {
-                        self.query.delete(&statements, endpoint, board, thread).await;
+                        if let Err(e) =
+                            self.query.delete(&statements, endpoint, board, thread).await
+                        {
+                            error!(
+                                "({})\t/{}/{}\t[{}/{}] |delete| {}",
+                                endpoint, board, thread, position, length, e
+                            );
+                        }
                         warn!(
                             "({})\t/{}/{}\t[{}/{}] <DELETED>",
                             endpoint, board, thread, position, length
@@ -717,7 +728,7 @@ where
     async fn fetch_media(
         &self, info: &BoardSettings, statements: &StatementStore<S>, endpoint: YotsubaEndpoint,
         no: u32, downloading: YotsubaEndpoint
-    )
+    ) -> Result<bool>
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
@@ -761,113 +772,60 @@ where
                 // at the same time
                 for chunks in media_list.as_slice().chunks(20) {
                     for row in chunks {
-                        has_media = true;
-
-                        // Preliminary checks before downloading
-                        let sha256: Option<Vec<u8>>;
-                        let sha256t: Option<Vec<u8>>;
-
-                        // This is for sha256 checks
-                        // To skip or not to skip if present
-                        let mut dl_media = false;
-                        let mut dl_thumb = false;
-
-                        if self.config.settings.asagi_mode {
-                            sha256 = None;
-                            sha256t = None;
-                        } else {
-                            sha256 = row.get::<&str, Option<Vec<u8>>>("sha256");
-                            sha256t = row.get::<&str, Option<Vec<u8>>>("sha256t");
-                        }
-                        if info.download_media {
-                            match sha256 {
-                                Some(h) => {
-                                    // Improper sha, re-dl
-                                    if h.len() < (65 / 2) {
-                                        dl_media = true;
-                                    }
-                                }
-                                None => {
-                                    // No thumbs, proceed to dl
-                                    dl_media = true;
-                                }
+                        let sha256 = row.get::<&str, Option<Vec<u8>>>("sha256")?;
+                        let sha256t = row.get::<&str, Option<Vec<u8>>>("sha256t")?;
+                        [
+                            (sha256, YotsubaStatement::UpdateHashMedia),
+                            (sha256t, YotsubaStatement::UpdateHashThumbs)
+                        ]
+                        .iter()
+                        .for_each(|(current_hash, mode)| {
+                            let hash_exists =
+                                matches!(current_hash, Some(hash) if hash.len() >= (65 / 2));
+                            if !hash_exists
+                                && ((info.download_media
+                                    && matches!(mode, YotsubaStatement::UpdateHashMedia))
+                                    || (info.download_thumbnails
+                                        && matches!(mode, YotsubaStatement::UpdateHashThumbs)))
+                            {
+                                has_media = true;
+                                fut.push(self.dl_media_post2(row, info, *mode));
                             }
-                            if dl_media {
-                                fut.push(self.dl_media_post2(
-                                    row,
-                                    info,
-                                    YotsubaStatement::UpdateHashMedia
-                                ));
-                            }
-                        }
-                        if info.download_thumbnails {
-                            match sha256t {
-                                Some(h) => {
-                                    // Improper sha, re-dl
-                                    if h.len() < (65 / 2) {
-                                        dl_thumb = true;
-                                    }
-                                }
-                                None => {
-                                    // No thumbs, proceed to dl
-                                    dl_thumb = true;
-                                }
-                            }
-                            if dl_thumb {
-                                fut.push(self.dl_media_post2(
-                                    row,
-                                    info,
-                                    YotsubaStatement::UpdateHashThumbs
-                                ));
-                            }
-                        }
+                        });
                     }
-                    if has_media {
-                        while let Some(Some((no, hashsum, mode))) = fut.next().await {
-                            // if let Some((no, hashsum, thumb)) = hh {
-                            if let Some(hsum) = hashsum {
-                                // Media info
-                                // info!(
-                                //     "({})\t/{}/{}#{} Creating string hashsum{} {}",
-                                //     if thumb { "thumb" } else { "media" },
-                                //     &info.board,
-                                //     thread,
-                                //     no,
-                                //     if thumb { "t" } else { "" },
-                                //     &hsum
-                                // );
 
-                                // Recieved hash. Proceed to upsert
-                                if !self.config.settings.asagi_mode {
-                                    self.query
-                                        .update_hash(
-                                            statements,
-                                            endpoint,
-                                            info.board,
-                                            no,
-                                            if mode.is_thumbs() {
-                                                YotsubaStatement::UpdateHashThumbs
-                                            } else {
-                                                YotsubaStatement::UpdateHashMedia
-                                            },
-                                            hsum
-                                        )
-                                        .await;
+                    if !has_media {
+                        continue;
+                    }
+
+                    while let Some(Ok((no, hashsum, mode))) = fut.next().await {
+                        if let Some(hsum) = hashsum {
+                            if !self.config.settings.asagi_mode {
+                                if let Err(e) = self
+                                    .query
+                                    .update_hash(
+                                        statements,
+                                        endpoint,
+                                        info.board,
+                                        no,
+                                        mode.is_thumbs_val(),
+                                        hsum
+                                    )
+                                    .await
+                                {
+                                    error!(
+                                        "({})\t\t/{}/{}\t|update_hash| {}",
+                                        endpoint, info.board, no, e
+                                    )
                                 }
                             }
-                            // This is usually due to 404. We are already notified of that.
-                            // else {
-                            //     error!("Error getting hashsum");
-                            // }
-                            // } else {
-                            //     error!("Error running hashsum function");
-                            // }
                         }
                     }
                     sleep(dur).await;
                 }
             }
         }
+        Ok(true)
     }
 
     // Downloads any missing media from a thread
@@ -875,38 +833,35 @@ where
     // cause a panic! when calling `get()` to get a value.
     async fn dl_media_post2(
         &self, row: &R, info: &BoardSettings, mode: YotsubaStatement
-    ) -> Option<(u64, Option<Vec<u8>>, YotsubaStatement)> {
+    ) -> Result<(u64, Option<Vec<u8>>, YotsubaStatement)> {
         if info.board == YotsubaBoard::f && mode.is_thumbs() {
-            return Some((u64::try_from(0).unwrap(), None, mode));
+            return Ok((0, None, mode));
         }
 
         let asagi = self.config.settings.asagi_mode;
         let path: &str = &self.config.settings.path;
-
-        let no: i64; // = row.get::<&str, i64>(if asagi { "num" } else { "no" } );
-
-        //log::warn!("ext");
-        let tim: i64; // = row.get::<&str, i64>(if asagi { "media_orig" } else { "tim" });
-        let ext: String; // = row.get::<&str, String>("ext");
-        let resto: i64; // = row.get::<&str, i64>("resto");
-        let thread: u32; // = (if resto == 0 { no } else { resto }) as u32;
+        let no: i64;
+        let tim: i64;
+        let ext: String;
+        let resto: i64;
+        let thread: u32;
 
         if asagi {
             //log::warn!("num");
-            no = row.get::<&str, i64>("num");
+            no = row.get::<&str, i64>("num")?;
 
             //log::warn!("timestamp");
             // `tim` is actually from media_orig/preview_orig but we're not using `tim` here
-            tim = row.get::<&str, i64>("timestamp");
+            tim = row.get::<&str, i64>("timestamp")?;
             ext = "".into();
             //log::warn!("thread_num");
-            resto = row.get::<&str, i64>("thread_num");
-            thread = resto as u32; //(if resto == 0 { no } else { resto }) as u32;
+            resto = row.get::<&str, i64>("thread_num")?;
+            thread = resto as u32;
         } else {
-            no = row.get::<&str, i64>("no");
-            tim = row.get::<&str, i64>("tim");
-            ext = row.get::<&str, String>("ext");
-            resto = row.get::<&str, i64>("resto");
+            no = row.get::<&str, i64>("no")?;
+            tim = row.get::<&str, i64>("tim")?;
+            ext = row.get::<&str, String>("ext")?;
+            resto = row.get::<&str, i64>("resto")?;
 
             // For display purposes. Only show the thread no
             thread = (if resto == 0 { no } else { resto }) as u32;
@@ -920,9 +875,9 @@ where
         // So if it exists on disk just skip it.
         if asagi {
             let name = if mode.is_thumbs() {
-                row.get::<&str, String>("preview_orig")
+                row.get::<&str, String>("preview_orig")?
             } else {
-                row.get::<&str, String>("media_orig")
+                row.get::<&str, String>("media_orig")?
             };
             let subdirs = (&name[..4], &name[4..6]);
             let final_path = format!(
@@ -935,7 +890,7 @@ where
             );
             if Path::new(&final_path).exists() {
                 warn!("EXISTS: {}", final_path);
-                return Some((u64::try_from(no).unwrap(), None, mode));
+                return Ok((u64::try_from(no)?, None, mode));
             }
         }
 
@@ -946,11 +901,11 @@ where
             let filename: String;
             if asagi {
                 filename =
-                    row.get::<&str, Option<String>>("media_filename").unwrap_or("<EMPTY>".into());
+                    row.get::<&str, Option<String>>("media_filename")?.unwrap_or("<EMPTY>".into());
                 let filename_encoded = utf8_percent_encode(&filename, FRAGMENT).to_string();
                 format!("{}/{}/{}", domain, board, filename_encoded)
             } else {
-                filename = row.get::<&str, Option<String>>("filename").unwrap_or("<EMPTY>".into());
+                filename = row.get::<&str, Option<String>>("filename")?.unwrap_or("<EMPTY>".into());
                 let filename_encoded = utf8_percent_encode(&filename, FRAGMENT).to_string();
                 format!("{}/{}/{}{}", domain, board, filename_encoded, &ext)
             }
@@ -962,9 +917,9 @@ where
                     domain,
                     board,
                     if mode.is_thumbs() {
-                        row.get::<&str, String>("preview_orig")
+                        row.get::<&str, String>("preview_orig")?
                     } else {
-                        row.get::<&str, String>("media_orig")
+                        row.get::<&str, String>("media_orig")?
                     }
                 )
             } else {
@@ -978,7 +933,7 @@ where
             }
         };
 
-        // info!("(some)\t/{}/{}#{}\t Download {}", board, thread, no, &url);
+        debug!("(media)\t\t/{}/{}#{}\t {}", board, thread, no, &url);
         for ra in 0..(info.retry_attempts + 1) {
             match self.client.get(&url, None).await {
                 Err(e) => {
@@ -1012,16 +967,16 @@ where
                                     path,
                                     no,
                                     if mode.is_thumbs() {
-                                        row.get::<&str, String>("preview_orig")
+                                        row.get::<&str, String>("preview_orig")?
                                     } else {
-                                        row.get::<&str, String>("media_orig")
+                                        row.get::<&str, String>("media_orig")?
                                     }
                                 )
                             } else {
                                 format!("{}/tmp/{}_{}{}", path, no, tim, ext)
                             };
 
-                            // HASHING
+                            // Hashing
                             let mut hash_bytes = None;
                             if !asagi {
                                 let mut hasher = Sha256::new();
@@ -1030,75 +985,62 @@ where
                                 hashsum = Some(hash_bytes.unwrap().as_slice().to_vec());
                                 // hashsum = Some(format!("{:x}", hash_bytes));
                             }
-                            // info!("INSIDE Recieved hash: {:x}", &hash_bytes);
-                            // Clippy lint
-                            // if (info.keep_media && !thumb)
-                            //     || (info.keep_thumbnails && thumb)
-                            //     || ((info.keep_media && !thumb) && (info.keep_thumbnails &&
-                            // thumb))
-                            //
-                            // Only go here if keep media settings are enabled
-                            // if (info.keep_thumbnails || mode.is_media())
-                            //     && (mode.is_thumbs() || info.keep_media)
-                            // {
-                            if info.keep_thumbnails || info.keep_media {
-                                if let Ok(mut dest) = std::fs::File::create(&temp_path) {
-                                    if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {
-                                        let final_path_dir;
-                                        let final_path;
-                                        if asagi {
-                                            // Example:
-                                            // 1540970147550
-                                            // /1540/97
-                                            let name = if mode.is_thumbs() {
-                                                row.get::<&str, String>("preview_orig")
-                                            } else {
-                                                row.get::<&str, String>("media_orig")
-                                            };
-                                            let subdirs = (&name[..4], &name[4..6]);
-                                            final_path_dir = format!(
-                                                "{}/{}/{}/{}",
-                                                path, info.board, subdirs.0, subdirs.1
-                                            );
-                                            final_path = format!("{}/{}", final_path_dir, name);
-                                        } else {
-                                            // Example:
-                                            // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
-                                            // /1/0a
-                                            let name = format!("{:x}", hash_bytes.unwrap());
-                                            let len = name.len();
-                                            let subdirs =
-                                                (&name[len - 1..], &name[len - 3..len - 1]);
-                                            final_path_dir = format!(
-                                                "{}/media/{}/{}",
-                                                path, subdirs.0, subdirs.1
-                                            );
-                                            final_path =
-                                                format!("{}/{}{}", final_path_dir, name, ext);
-                                        }
 
-                                        if Path::new(&final_path).exists() {
-                                            warn!("EXISTS: {}", final_path);
-                                            if let Err(e) = std::fs::remove_file(&temp_path) {
-                                                error!("Remove temp: {}", e);
-                                            }
+                            if !(info.keep_thumbnails || info.keep_media) {
+                                break;
+                            }
+
+                            if let Ok(mut dest) = std::fs::File::create(&temp_path) {
+                                if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {
+                                    let final_path_dir;
+                                    let final_path;
+                                    if asagi {
+                                        // Example:
+                                        // 1540970147550
+                                        // /1540/97
+                                        let name = if mode.is_thumbs() {
+                                            row.get::<&str, String>("preview_orig")?
                                         } else {
-                                            if let Err(e) = std::fs::create_dir_all(&final_path_dir)
-                                            {
-                                                error!("Create final dir: {}", e);
-                                            }
-                                            if let Err(e) = std::fs::rename(&temp_path, &final_path)
-                                            {
-                                                error!("Rename temp to final: {}", e);
-                                            }
+                                            row.get::<&str, String>("media_orig")?
+                                        };
+                                        let subdirs = (&name[..4], &name[4..6]);
+                                        final_path_dir = format!(
+                                            "{}/{}/{}/{}",
+                                            path, info.board, subdirs.0, subdirs.1
+                                        );
+                                        final_path = format!("{}/{}", final_path_dir, name);
+                                    } else {
+                                        // Example:
+                                        // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
+                                        // /1/0a
+                                        let name = format!("{:x}", hash_bytes.unwrap());
+                                        let len = name.len();
+                                        let subdirs = (&name[len - 1..], &name[len - 3..len - 1]);
+                                        final_path_dir =
+                                            format!("{}/media/{}/{}", path, subdirs.0, subdirs.1);
+                                        final_path = format!("{}/{}{}", final_path_dir, name, ext);
+                                    }
+
+                                    if Path::new(&final_path).exists() {
+                                        warn!("EXISTS: {}", final_path);
+                                        if let Err(e) = std::fs::remove_file(&temp_path) {
+                                            error!("Remove temp: {}", e);
                                         }
                                     } else {
-                                        error!("Error copying file to a temporary path");
+                                        if let Err(e) = std::fs::create_dir_all(&final_path_dir) {
+                                            error!("Create final dir: {}", e);
+                                        }
+                                        if let Err(e) = std::fs::rename(&temp_path, &final_path) {
+                                            error!("Rename temp to final: {}", e);
+                                        }
                                     }
                                 } else {
-                                    error!("Error creating a temporary file path");
+                                    error!("Error copying file to a temporary path");
                                 }
+                            } else {
+                                error!("Error creating a temporary file path");
                             }
+
                             break;
                         }
                     }
@@ -1111,9 +1053,9 @@ where
         }
 
         if self.config.settings.asagi_mode {
-            Some((u64::try_from(no).unwrap(), None, mode))
+            Ok((u64::try_from(no)?, None, mode))
         } else {
-            Some((u64::try_from(no).unwrap(), hashsum, mode))
+            Ok((u64::try_from(no)?, hashsum, mode))
         }
     }
 }

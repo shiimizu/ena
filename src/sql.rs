@@ -5,7 +5,7 @@ pub mod mysql;
 pub mod pgsql;
 
 use crate::enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use enum_iterator::IntoEnumIterator;
 use mysql_async::{prelude::*, Pool};
@@ -21,7 +21,7 @@ use std::{
 /// a way to pass generic implementations of `YotsubaArchiver` for different databases.
 #[async_trait]
 pub trait Archiver: Sync + Send {
-    async fn run_inner(&self) {}
+    async fn run_inner(&self) -> Result<()>;
 }
 
 /// A struct to hold a generic implementation of `Archiver`  
@@ -34,7 +34,9 @@ impl MuhArchiver {
     }
 
     pub async fn run(&self) {
-        self.0.run_inner().await;
+        if let Err(e) = self.0.run_inner().await {
+            log::error!("{}", e);
+        }
     }
 }
 
@@ -97,7 +99,7 @@ impl Database {
 }
 
 pub trait RowTrait {
-    fn get<'a, I, T>(&'a self, idx: I) -> T
+    fn get<'a, I, T>(&'a self, idx: I) -> Result<T>
     where
         I: RowIndex,
         T: RowFrom<'a>;
@@ -111,64 +113,25 @@ impl<'a> RowFrom<'a> for String {}
 impl<'a> RowFrom<'a> for Option<Vec<u8>> {}
 impl<'a> RowFrom<'a> for Option<String> {}
 impl<'a> RowFrom<'a> for i64 {}
-// impl RowFrom for &str{}
 
-// impl RowIndex for String{}
-// impl RowIndex for &str{}
 impl<'a> RowIndex for &'a str {}
 
 impl RowTrait for tokio_postgres::Row {
-    fn get<'a, I, T>(&'a self, idx: I) -> T
+    fn get<'a, I, T>(&'a self, idx: I) -> Result<T>
     where
         I: RowIndex,
         T: RowFrom<'a> {
-        self.get::<'a>(&idx)
-        // match self.get(&idx) {
-        // Some(ok) => ok,
-        // Err(err) => panic!("error retrieving column {}: {}", idx, err),
-        // }
+        Ok(self.try_get::<'a>(&idx)?)
     }
 }
 impl RowTrait for mysql_async::Row {
-    fn get<'a, I, T>(&'a self, idx: I) -> T
+    fn get<'a, I, T>(&'a self, idx: I) -> Result<T>
     where
         I: RowIndex,
         T: RowFrom<'a> {
-        self.get(idx).unwrap()
-        // match self.get(idx) {
-        //     Some(ok) => ok,
-        //     // Err(err) => panic!("error retrieving column {}: {}", idx, err),
-        // }
+        Ok(self.get_opt(idx).ok_or_else(|| anyhow!("Was an empty value"))??)
     }
 }
-
-// pub struct RowStruct {}
-
-// impl RowStruct {
-
-//     pub fn get<'a, I, T>(&'a self, idx: I) -> T
-//     where
-//         I: tokio_postgres::row::RowIndex + fmt::Display,
-//         T: tokio_postgres::types::FromSql<'a>,
-//     {
-//         match self.get_inner(&idx) {
-//             Ok(ok) => ok,
-//             Err(err) => panic!("error retrieving column {}: {}", idx, err),
-//         }
-//     }
-// }
-
-// impl RowTrait<String> for tokio_postgres::Row {
-//     fn get(&self, s: &str) -> String {
-//         self.get(s)
-//     }
-// }
-
-// impl RowTrait<String> for mysql_async::Row {
-//     fn get(&self, s: &str) -> String {
-//         self.get(s).unwrap()
-//     }
-// }
 
 impl fmt::Display for Database {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -179,7 +142,7 @@ impl fmt::Display for Database {
     }
 }
 
-/// Implement `into`.
+/// Implement [`Into`].
 /// Help taken from this [blog](https://is.gd/94QtP0)
 /// [archive](http://archive.is/vIW5Y)
 impl Into<Database> for String {
@@ -199,20 +162,6 @@ impl Into<Database> for String {
         }
     }
 }
-
-// impl From<Database> for String {
-//     fn from(d: Database) -> String {
-//     println!("INSIDE  FROM TRAIT");
-//         d.to_string().to_lowercase()
-//         // if let Some(found) =
-//         //     Database::into_enum_iter().find(|db| db.to_string() == d.to_lowercase())
-//         // {
-//         //     found
-//         // } else {
-//         //     Database::PostgreSQL
-//         // }
-//     }
-// }
 
 /// A list of actions that can be done.  
 /// Basically an enum of `QueriesExecutor`.
@@ -234,14 +183,24 @@ pub enum YotsubaStatement {
 }
 
 impl YotsubaStatement {
+    /// Return whether if thumbs or not
     pub fn is_thumbs(&self) -> bool {
         matches!(self, Self::UpdateHashThumbs)
+    }
+
+    /// Return the enum if thumb
+    pub fn is_thumbs_val(&self) -> YotsubaStatement {
+        match self {
+            Self::UpdateHashThumbs => Self::UpdateHashThumbs,
+            _ => Self::UpdateHashMedia
+        }
     }
 
     pub fn is_media(&self) -> bool {
         matches!(self, Self::UpdateHashMedia)
     }
 }
+
 impl fmt::Display for YotsubaStatement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -261,15 +220,15 @@ impl Add for YotsubaStatement {
 /// Executors for all SQL queries
 #[async_trait]
 pub trait QueriesExecutor<S, R> {
-    async fn init_schema(&self, schema: &str, engine: Database);
+    async fn init_schema(&self, schema: &str, engine: Database) -> Result<u64>;
 
-    async fn init_type(&self);
+    async fn init_type(&self) -> Result<u64>;
 
-    async fn init_metadata(&self, engine: Database);
+    async fn init_metadata(&self, engine: Database) -> Result<u64>;
 
-    async fn init_board(&self, board: YotsubaBoard, engine: Database);
+    async fn init_board(&self, board: YotsubaBoard, engine: Database) -> Result<u64>;
 
-    async fn init_views(&self, board: YotsubaBoard);
+    async fn init_views(&self, board: YotsubaBoard) -> Result<u64>;
 
     async fn update_metadata(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
@@ -284,7 +243,7 @@ pub trait QueriesExecutor<S, R> {
     async fn delete(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         no: u32
-    );
+    ) -> Result<u64>;
 
     async fn update_deleteds(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
@@ -294,7 +253,7 @@ pub trait QueriesExecutor<S, R> {
     async fn update_hash(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
         no: u64, hash_type: YotsubaStatement, hashsum: Vec<u8>
-    );
+    ) -> Result<u64>;
 
     async fn medias(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard,
@@ -318,7 +277,7 @@ pub trait QueriesExecutor<S, R> {
 
     async fn metadata(
         &self, statements: &StatementStore<S>, endpoint: YotsubaEndpoint, board: YotsubaBoard
-    ) -> bool;
+    ) -> Result<bool>;
 }
 
 /// List of all SQL queries to use
@@ -382,9 +341,11 @@ pub trait Queries {
     /// 4chan inserts a [backslash in their md5](https://stackoverflow.com/a/11449627).
     fn query_update_thread(&self, board: YotsubaBoard) -> String;
 }
+
 #[async_trait]
 pub trait DatabaseTrait<T, R>:
     Queries + QueriesExecutor<T, R> + StatementTrait<T> + Send + Sync {
 }
+
 impl DatabaseTrait<tokio_postgres::Statement, tokio_postgres::Row> for tokio_postgres::Client {}
 impl DatabaseTrait<mysql::Statement, mysql_async::Row> for Pool {}

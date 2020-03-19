@@ -15,7 +15,6 @@ use tokio::{
 
 use anyhow::{Context, Result};
 use chrono::Local;
-use mysql_async::prelude::*;
 
 use log::*;
 
@@ -67,6 +66,12 @@ async fn async_main() -> Result<u64> {
         unimplemented!("Only the Asagi schema is implemented for MySQL")
     }
 
+    if config.settings.asagi_mode && !config.settings.strict_mode {
+        unimplemented!(
+            "The Asagi schema can only be used in strict mode because of MySQL's lack of concurrency"
+        )
+    }
+
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
         .build()
@@ -95,31 +100,9 @@ async fn async_main() -> Result<u64> {
             archiver::YotsubaArchiver::new(db_client, http_client, config).await
         ));
     } else {
-        // The MAX for PoolConstraints seems to make or break the MySQL client.
-        // 15 is the sum of functions that use `conn` and prepare statments
-        // Each board is run on their own thread that's why.
-        // let pool_options = mysql_async::PoolOptions::new(
-        //     mysql_async::PoolConstraints::new(1, config.boards.len() * 35).unwrap(),
-        //     Duration::from_secs(30),
-        //     Duration::from_secs(30)
-        // );
-
-        // let mut builder = mysql_async::OptsBuilder::from_opts(config.settings.db_url.clone());
-        // builder
-        //     .stmt_cache_size(config.boards.len() * 15)
-        //     .compression(mysql_async::Compression::fast())
-        //     .pool_options(pool_options);
-
-        // let pool = mysql_async::Pool::new(mysql_async::Opts::from(builder));
         let pool = mysql_async::Pool::new(&config.settings.db_url);
-        // let conn = pool.get_conn().await.unwrap();
-        // let stmt = conn.prepare("").await.unwrap();
-
-        // {
-        //     let _:(mysql_async::Conn, Vec<u8>) =
-        // stmt.execute(()).await.unwrap().collect().await.unwrap(); }
-
         info!("Connected with:\t\t{}", config.settings.db_url);
+
         archiver = MuhArchiver::new(Box::new(
             archiver::YotsubaArchiver::new(pool, http_client, config).await
         ));
