@@ -27,14 +27,21 @@ impl Archiver for YotsubaArchiver<Statement, mysql_async::Row, Pool, reqwest::Cl
 }
 
 impl Queries for Pool {
-    fn query_init_schema(&self, schema: &str) -> String {
+    // MySQL concurrency and lock [issues](https://dba.stackexchange.com/a/206279)
+    fn query_init_schema(&self, schema: &str, engine: Database) -> String {
         // init commons.sql and functions
-        r#"
+        format!(
+            r#"
+        SET SESSION transaction_isolation='READ-COMMITTED';
+        begin;
+        -- SET GLOBAL binlog_format = 'ROW';
+        
         CREATE TABLE IF NOT EXISTS `index_counters` (
             `id` varchar(50) NOT NULL,
             `val` int(10) NOT NULL,
             PRIMARY KEY (`id`)
-          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4;
+          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4;
+          
           
           DROP FUNCTION IF EXISTS doCleanFull;
           CREATE FUNCTION doCleanFull (com TEXT)
@@ -99,10 +106,12 @@ impl Queries for Pool {
               , '</s>', '[/spoiler]')
               , '<wbr>', '')
               , '<br\\s*/?>', '\n');
-          "#.to_string()
+          "#,
+            engine = engine.mysql_engine()
+        )
     }
 
-    fn query_init_metadata(&self) -> String {
+    fn query_init_metadata(&self, engine: Database) -> String {
         format!(
             "
             CREATE TABLE IF NOT EXISTS `metadata` (
@@ -110,8 +119,9 @@ impl Queries for Pool {
                 `threads` json,
                 `archive` json,
                 INDEX metadata_board_idx (`board`)
-            ) ENGINE=TokuDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-            "
+            ) ENGINE={engine} CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+            ",
+            engine = engine.mysql_engine()
         )
     }
 
@@ -122,6 +132,8 @@ impl Queries for Pool {
         )
     }
 
+    // TODO Fix FULL JOINs
+    // this query takes too long
     fn query_update_deleteds(&self, board: YotsubaBoard) -> String {
         // This simulates a FULL JOIN
         format!(
@@ -333,7 +345,7 @@ impl Queries for Pool {
     // https://www.mysqltutorial.org/mysql-stored-procedure/mysql-show-function/
     // https://www.mysqltutorial.org/listing-stored-procedures-in-mysql-database.aspx
     // https://www.mysqltutorial.org/mysql-exists/
-    fn query_init_board(&self, board: YotsubaBoard) -> String {
+    fn query_init_board(&self, board: YotsubaBoard, engine: Database) -> String {
         // Init boards and triggers
         format!(
             r#"CREATE TABLE IF NOT EXISTS `{board}` (
@@ -383,7 +395,7 @@ impl Queries for Pool {
             INDEX email_index (`email`),
             INDEX poster_ip_index (`poster_ip`),
             INDEX timestamp_index (`timestamp`)
-          ) engine=TokuDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) engine={engine} CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           CREATE TABLE IF NOT EXISTS `{board}_deleted` LIKE `{board}`;
 
@@ -408,7 +420,7 @@ impl Queries for Pool {
             INDEX time_last_modified_index (`time_last_modified`),
             INDEX sticky_index (`sticky`),
             INDEX locked_index (`locked`)
-          ) ENGINE=TokuDB CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_users` (
@@ -422,7 +434,7 @@ impl Queries for Pool {
             UNIQUE name_trip_index (`name`, `trip`),
             INDEX firstseen_index (`firstseen`),
             INDEX postcount_index (`postcount`)
-          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_images` (
@@ -438,7 +450,7 @@ impl Queries for Pool {
             UNIQUE media_hash_index (`media_hash`),
             INDEX total_index (`total`),
             INDEX banned_index (`banned`)
-          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_daily` (
@@ -451,7 +463,7 @@ impl Queries for Pool {
             `names` int(10) unsigned NOT NULL,
           
             PRIMARY KEY (`day`)
-          ) ENGINE=TokuDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
           
           DROP PROCEDURE IF EXISTS `update_thread_{board}`;
 
@@ -647,7 +659,8 @@ impl Queries for Pool {
           END;
           
           "#,
-            board = board
+            board = board,
+            engine = engine.mysql_engine()
         )
     }
 
@@ -781,14 +794,14 @@ impl Queries for Pool {
 // https://www.reddit.com/r/rust/comments/6rll9j/example_of_async_hyper_async_mysql/
 #[async_trait]
 impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
-    async fn init_schema(&self, schema: &str) {
+    async fn init_schema(&self, schema: &str, engine: Database) {
         log::debug!("init_schema");
         // // let pool =
         // mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
         // let pool = self.clone();
         let conn = self.get_conn().await.unwrap();
         // let conn: mysql_async::Conn =
-        conn.drop_query(&self.query_init_schema("")).await.expect("Err initializing");
+        conn.drop_query(&self.query_init_schema("", engine)).await.expect("Err initializing");
         // conn.disconnect().await.unwrap();
     }
 
@@ -796,23 +809,23 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         // Do nothing
     }
 
-    async fn init_metadata(&self) {
+    async fn init_metadata(&self, engine: Database) {
         log::debug!("init_metadata");
         // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
         // let pool = self.clone();
         let conn = self.get_conn().await.unwrap();
         // let conn: mysql_async::Conn =
-        conn.drop_query(&self.query_init_metadata()).await.expect("Err creating metadata");
+        conn.drop_query(&self.query_init_metadata(engine)).await.expect("Err creating metadata");
         // conn.disconnect().await.unwrap();
     }
 
-    async fn init_board(&self, board: YotsubaBoard) {
+    async fn init_board(&self, board: YotsubaBoard, engine: Database) {
         log::debug!("init_board /{}/", board);
 
         // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi").unwrap();
         // let pool = self.clone();
         let conn = self.get_conn().await.unwrap();
-        conn.drop_query(&self.query_init_board(board))
+        conn.drop_query(&self.query_init_board(board, engine))
             .await
             .expect(&format!("Err creating board: {}", board));
         // conn.disconnect().await.unwrap();
@@ -925,7 +938,8 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         board: YotsubaBoard, thread: u32, item: &[u8]
     ) -> Result<u64>
     {
-        log::debug!("update_deleteds");
+        log::debug!("SKIPPING update_deleteds");
+        return Ok(1); // TODO FIX FULL JOINs
         // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
         let json = &serde_json::from_slice::<serde_json::Value>(item)?;

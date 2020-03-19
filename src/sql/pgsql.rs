@@ -75,7 +75,7 @@ impl Archiver
 ///
 /// If another schema is thought of, feel free to use the [`Queries`] to implement it.
 impl Queries for tokio_postgres::Client {
-    fn query_init_schema(&self, schema: &str) -> String {
+    fn query_init_schema(&self, schema: &str, _engine: Database) -> String {
         format!(
             r#"
         CREATE SCHEMA IF NOT EXISTS "{0}";
@@ -85,7 +85,7 @@ impl Queries for tokio_postgres::Client {
         )
     }
 
-    fn query_init_metadata(&self) -> String {
+    fn query_init_metadata(&self, _engine: Database) -> String {
         format!(
             r#"
     CREATE TABLE IF NOT EXISTS metadata (
@@ -287,7 +287,7 @@ impl Queries for tokio_postgres::Client {
         )
     }
 
-    fn query_init_board(&self, board: YotsubaBoard) -> String {
+    fn query_init_board(&self, board: YotsubaBoard, _engine: Database) -> String {
         format!(
             r#"
         CREATE TABLE IF NOT EXISTS "{board}" (
@@ -765,18 +765,18 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
             .expect("Err initializing 4chan schema as a type");
     }
 
-    async fn init_schema(&self, schema: &str) {
-        self.batch_execute(&self.query_init_schema(schema))
+    async fn init_schema(&self, schema: &str, engine: Database) {
+        self.batch_execute(&self.query_init_schema(schema, engine))
             .await
             .expect(&format!("Err creating schema: {}", schema));
     }
 
-    async fn init_metadata(&self) {
-        self.batch_execute(&self.query_init_metadata()).await.expect("Err creating metadata");
+    async fn init_metadata(&self, engine: Database) {
+        self.batch_execute(&self.query_init_metadata(engine)).await.expect("Err creating metadata");
     }
 
-    async fn init_board(&self, board: YotsubaBoard) {
-        self.batch_execute(&self.query_init_board(board))
+    async fn init_board(&self, board: YotsubaBoard, engine: Database) {
+        self.batch_execute(&self.query_init_board(board, engine))
             .await
             .expect(&format!("Err creating board: {}", board));
     }
