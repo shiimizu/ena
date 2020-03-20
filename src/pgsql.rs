@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, convert::TryFrom};
 use tokio_postgres::{Row, Statement};
 
@@ -366,7 +367,7 @@ impl Archiver
 ///
 /// If another schema is thought of, feel free to use the [`Queries`] to implement it.
 impl Queries for tokio_postgres::Client {
-    fn query_init_schema(&self, schema: &str, _engine: Database) -> String {
+    fn query_init_schema(&self, schema: &str, _engine: Database, _charset: &str) -> String {
         format!(
             r#"
         CREATE SCHEMA IF NOT EXISTS "{0}";
@@ -376,7 +377,7 @@ impl Queries for tokio_postgres::Client {
         )
     }
 
-    fn query_init_metadata(&self, _engine: Database) -> String {
+    fn query_init_metadata(&self, _engine: Database, _charset: &str) -> String {
         format!(
             r#"
     CREATE TABLE IF NOT EXISTS metadata (
@@ -578,7 +579,7 @@ impl Queries for tokio_postgres::Client {
         )
     }
 
-    fn query_init_board(&self, board: YotsubaBoard, _engine: Database) -> String {
+    fn query_init_board(&self, board: YotsubaBoard, _engine: Database, _charset: &str) -> String {
         format!(
             r#"
         CREATE TABLE IF NOT EXISTS "{board}" (
@@ -1044,18 +1045,20 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
         Ok(self.execute(self.query_init_type().as_str(), &[]).await?)
     }
 
-    async fn init_schema(&self, schema: &str, engine: Database) -> Result<u64> {
-        self.batch_execute(&self.query_init_schema(schema, engine)).await?;
+    async fn init_schema(&self, schema: &str, engine: Database, charset: &str) -> Result<u64> {
+        self.batch_execute(&self.query_init_schema(schema, engine, charset)).await?;
         Ok(1)
     }
 
-    async fn init_metadata(&self, engine: Database) -> Result<u64> {
-        self.batch_execute(&self.query_init_metadata(engine)).await?;
+    async fn init_metadata(&self, engine: Database, charset: &str) -> Result<u64> {
+        self.batch_execute(&self.query_init_metadata(engine, charset)).await?;
         Ok(1)
     }
 
-    async fn init_board(&self, board: YotsubaBoard, engine: Database) -> Result<u64> {
-        self.batch_execute(&self.query_init_board(board, engine)).await?;
+    async fn init_board(
+        &self, board: YotsubaBoard, engine: Database, charset: &str
+    ) -> Result<u64> {
+        self.batch_execute(&self.query_init_board(board, engine, charset)).await?;
         Ok(1)
     }
 

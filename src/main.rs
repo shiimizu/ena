@@ -19,7 +19,7 @@ use chrono::Local;
 use log::*;
 #[derive(Deserialize, Serialize, Debug, Clone)]
 struct Thread {
-    posts: Vec<ena::sql::pgsql::core::Post>
+    posts: Vec<ena::pgsql::core::Post>
 }
 fn main() {
     config::check_version();

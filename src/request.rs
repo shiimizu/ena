@@ -96,3 +96,14 @@ impl HttpClient for reqwest::Client {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    #[allow(unused_imports)]
+    use super::*;
+    #[test]
+    fn get_http_improper_body() {}
+
+    #[test]
+    fn get_http_proper_body() {}
+}

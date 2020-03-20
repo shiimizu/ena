@@ -64,9 +64,17 @@ where
 
     pub async fn run(&self) -> Result<()> {
         self.listen_to_exit()?;
-        self.query.init_schema(&self.config.settings.schema, self.config.settings.engine).await?;
+        self.query
+            .init_schema(
+                &self.config.settings.schema,
+                self.config.settings.engine,
+                &self.config.settings.charset
+            )
+            .await?;
         self.query.init_type().await?;
-        self.query.init_metadata(self.config.settings.engine).await?;
+        self.query
+            .init_metadata(self.config.settings.engine, &self.config.settings.charset)
+            .await?;
 
         // Run archive, threads, and media concurrently
         let mut fut = FuturesUnordered::new();
@@ -84,7 +92,9 @@ where
         ));
 
         for board in self.config.boards.iter() {
-            self.query.init_board(board.board, self.config.settings.engine).await?;
+            self.query
+                .init_board(board.board, self.config.settings.engine, &self.config.settings.charset)
+                .await?;
             self.query.init_views(board.board).await?;
 
             if board.download_archives {

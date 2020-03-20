@@ -17,6 +17,7 @@ use std::{
     convert::TryFrom,
     sync::{Arc, Mutex}
 };
+
 pub type Statement = mysql_async::Stmt<mysql_async::Conn>;
 
 #[cold]
@@ -75,7 +76,7 @@ impl Archiver for YotsubaArchiver<Statement, mysql_async::Row, Pool, reqwest::Cl
 
 impl Queries for Pool {
     // MySQL concurrency and lock [issues](https://dba.stackexchange.com/a/206279)
-    fn query_init_schema(&self, schema: &str, engine: Database) -> String {
+    fn query_init_schema(&self, schema: &str, engine: Database, charset: &str) -> String {
         // init commons.sql and functions
         format!(
             r#"
@@ -87,7 +88,7 @@ impl Queries for Pool {
             `id` varchar(50) NOT NULL,
             `val` int(10) NOT NULL,
             PRIMARY KEY (`id`)
-          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4;
+          ) ENGINE={engine} DEFAULT CHARSET={charset};
           
           
           DROP FUNCTION IF EXISTS doCleanFull;
@@ -154,11 +155,12 @@ impl Queries for Pool {
               , '<wbr>', '')
               , '<br\\s*/?>', '\n');
           "#,
-            engine = engine.mysql_engine()
+            engine = engine.mysql_engine(),
+            charset = charset
         )
     }
 
-    fn query_init_metadata(&self, engine: Database) -> String {
+    fn query_init_metadata(&self, engine: Database, charset: &str) -> String {
         format!(
             "
             CREATE TABLE IF NOT EXISTS `metadata` (
@@ -166,9 +168,10 @@ impl Queries for Pool {
                 `threads` json,
                 `archive` json,
                 INDEX metadata_board_idx (`board`)
-            ) ENGINE={engine} CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+            ) ENGINE={engine} CHARSET={charset} COLLATE={charset}_general_ci;
             ",
-            engine = engine.mysql_engine()
+            engine = engine.mysql_engine(),
+            charset = charset
         )
     }
 
@@ -390,7 +393,7 @@ impl Queries for Pool {
     // https://www.mysqltutorial.org/mysql-stored-procedure/mysql-show-function/
     // https://www.mysqltutorial.org/listing-stored-procedures-in-mysql-database.aspx
     // https://www.mysqltutorial.org/mysql-exists/
-    fn query_init_board(&self, board: YotsubaBoard, engine: Database) -> String {
+    fn query_init_board(&self, board: YotsubaBoard, engine: Database, charset: &str) -> String {
         // Init boards and triggers
         format!(
             r#"CREATE TABLE IF NOT EXISTS `{board}` (
@@ -440,7 +443,7 @@ impl Queries for Pool {
             INDEX email_index (`email`),
             INDEX poster_ip_index (`poster_ip`),
             INDEX timestamp_index (`timestamp`)
-          ) engine={engine} CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) engine={engine} CHARSET={charset} COLLATE={charset}_general_ci;
           
           CREATE TABLE IF NOT EXISTS `{board}_deleted` LIKE `{board}`;
 
@@ -465,7 +468,7 @@ impl Queries for Pool {
             INDEX time_last_modified_index (`time_last_modified`),
             INDEX sticky_index (`sticky`),
             INDEX locked_index (`locked`)
-          ) ENGINE={engine} CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} CHARSET={charset} COLLATE={charset}_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_users` (
@@ -479,7 +482,7 @@ impl Queries for Pool {
             UNIQUE name_trip_index (`name`, `trip`),
             INDEX firstseen_index (`firstseen`),
             INDEX postcount_index (`postcount`)
-          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} DEFAULT CHARSET={charset} COLLATE={charset}_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_images` (
@@ -495,7 +498,7 @@ impl Queries for Pool {
             UNIQUE media_hash_index (`media_hash`),
             INDEX total_index (`total`),
             INDEX banned_index (`banned`)
-          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} DEFAULT CHARSET={charset} COLLATE={charset}_general_ci;
           
           
           CREATE TABLE IF NOT EXISTS `{board}_daily` (
@@ -508,7 +511,7 @@ impl Queries for Pool {
             `names` int(10) unsigned NOT NULL,
           
             PRIMARY KEY (`day`)
-          ) ENGINE={engine} DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+          ) ENGINE={engine} DEFAULT CHARSET={charset} COLLATE={charset}_general_ci;
           
           DROP PROCEDURE IF EXISTS `update_thread_{board}`;
 
@@ -705,7 +708,8 @@ impl Queries for Pool {
           
           "#,
             board = board,
-            engine = engine.mysql_engine()
+            engine = engine.mysql_engine(),
+            charset = charset
         )
     }
 
@@ -844,10 +848,10 @@ impl Queries for Pool {
 // [PostgreSQL Concurrency with MVCC](https://devcenter.heroku.com/articles/postgresql-concurrency)
 #[async_trait]
 impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
-    async fn init_schema(&self, schema: &str, engine: Database) -> Result<u64> {
+    async fn init_schema(&self, schema: &str, engine: Database, charset: &str) -> Result<u64> {
         log::debug!("init_schema");
         let conn = self.get_conn().await?;
-        conn.drop_query(&self.query_init_schema("", engine)).await?;
+        conn.drop_query(&self.query_init_schema("", engine, charset)).await?;
         Ok(1)
     }
 
@@ -856,17 +860,21 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         Ok(1)
     }
 
-    async fn init_metadata(&self, engine: Database) -> Result<u64> {
+    async fn init_metadata(&self, engine: Database, charset: &str) -> Result<u64> {
         log::debug!("init_metadata");
         let conn = self.get_conn().await?;
-        conn.drop_query(&self.query_init_metadata(engine)).await.expect("Err creating metadata");
+        conn.drop_query(&self.query_init_metadata(engine, charset))
+            .await
+            .expect("Err creating metadata");
         Ok(1)
     }
 
-    async fn init_board(&self, board: YotsubaBoard, engine: Database) -> Result<u64> {
+    async fn init_board(
+        &self, board: YotsubaBoard, engine: Database, charset: &str
+    ) -> Result<u64> {
         log::debug!("init_board /{}/", board);
         let conn = self.get_conn().await?;
-        conn.drop_query(&self.query_init_board(board, engine)).await?;
+        conn.drop_query(&self.query_init_board(board, engine, charset)).await?;
         Ok(1)
     }
 

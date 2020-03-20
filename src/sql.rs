@@ -1,10 +1,11 @@
 //! SQL commons.
 // #![cold]
 
-pub mod mysql;
-pub mod pgsql;
+use crate::{
+    enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier},
+    mysql
+};
 
-use crate::enums::{YotsubaBoard, YotsubaEndpoint, YotsubaHash, YotsubaIdentifier};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use enum_iterator::IntoEnumIterator;
@@ -220,13 +221,14 @@ impl Add for YotsubaStatement {
 /// Executors for all SQL queries
 #[async_trait]
 pub trait QueriesExecutor<S, R> {
-    async fn init_schema(&self, schema: &str, engine: Database) -> Result<u64>;
-
     async fn init_type(&self) -> Result<u64>;
 
-    async fn init_metadata(&self, engine: Database) -> Result<u64>;
+    async fn init_schema(&self, schema: &str, engine: Database, charset: &str) -> Result<u64>;
 
-    async fn init_board(&self, board: YotsubaBoard, engine: Database) -> Result<u64>;
+    async fn init_metadata(&self, engine: Database, charset: &str) -> Result<u64>;
+
+    async fn init_board(&self, board: YotsubaBoard, engine: Database, charset: &str)
+    -> Result<u64>;
 
     async fn init_views(&self, board: YotsubaBoard) -> Result<u64>;
 
@@ -283,13 +285,13 @@ pub trait QueriesExecutor<S, R> {
 /// List of all SQL queries to use
 pub trait Queries {
     /// Create the schema if nonexistent and uses it as the search_path
-    fn query_init_schema(&self, schema: &str, engine: Database) -> String;
+    fn query_init_schema(&self, schema: &str, engine: Database, charset: &str) -> String;
 
     /// Create the metadata if nonexistent to store the api endpoints' data
-    fn query_init_metadata(&self, engine: Database) -> String;
+    fn query_init_metadata(&self, engine: Database, charset: &str) -> String;
 
     /// Create a table for the specified board
-    fn query_init_board(&self, board: YotsubaBoard, engine: Database) -> String;
+    fn query_init_board(&self, board: YotsubaBoard, engine: Database, charset: &str) -> String;
 
     /// Create the 4chan schema as a type to be easily referenced
     fn query_init_type(&self) -> String;
@@ -349,3 +351,119 @@ pub trait DatabaseTrait<T, R>:
 
 impl DatabaseTrait<tokio_postgres::Statement, tokio_postgres::Row> for tokio_postgres::Client {}
 impl DatabaseTrait<mysql::Statement, mysql_async::Row> for Pool {}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn is_thumbs_invalid() {
+        let mut mode = YotsubaStatement::Medias;
+        assert!(!mode.is_thumbs());
+        mode = YotsubaStatement::Threads;
+        assert!(!mode.is_thumbs());
+        mode = YotsubaStatement::UpdateHashMedia;
+        assert!(!mode.is_thumbs());
+    }
+
+    #[test]
+    fn is_thumbs_valid() {
+        let mode = YotsubaStatement::UpdateHashThumbs;
+        assert!(mode.is_thumbs());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_panic() {
+        panic!("aHHH");
+    }
+    #[test]
+    #[should_panic(expected = "Divide result is zero")]
+    fn test_panic2() {
+        panic!("Divide result is zero");
+    }
+
+    #[test]
+    fn update_metadata_unknown_json() {}
+
+    #[test]
+    fn update_metadata_deprecated_fields_json() {}
+
+    #[test]
+    fn update_metadata_added_fields_json() {}
+
+    #[test]
+    fn update_metadata_valid_json() {}
+
+    #[test]
+    fn update_thread_unknown_json() {}
+
+    #[test]
+    fn update_thread_deprecated_fields_json() {}
+
+    #[test]
+    fn update_thread_added_fields_json() {}
+
+    #[test]
+    fn update_thread_valid_json() {}
+
+    #[test]
+    fn delete_nonexistant_no() {}
+
+    #[test]
+    fn update_hash_unknown_hash() {}
+
+    #[test]
+    fn update_hash_improper_hash() {}
+
+    #[test]
+    fn update_hash_valid_json() {}
+
+    #[test]
+    fn get_metadata_missing() {}
+
+    #[test]
+    fn get_metadata_existing() {}
+
+    #[test]
+    fn get_medias_send_invalid_no() {}
+
+    #[test]
+    fn get_medias_send_valid_no() {}
+
+    #[test]
+    fn get_threads_send_unknown_json() {}
+
+    #[test]
+    fn get_threads_send_deprecated_fields_json() {}
+
+    #[test]
+    fn get_threads_send_added_fields_json() {}
+
+    #[test]
+    fn get_threads_send_valid_json() {}
+
+    #[test]
+    fn get_threads_modified_unknown_json() {}
+
+    #[test]
+    fn get_threads_modified_deprecated_fields_json() {}
+
+    #[test]
+    fn get_threads_modified_added_fields_json() {}
+
+    #[test]
+    fn get_threads_modified_valid_json() {}
+
+    #[test]
+    fn get_threads_combined_unknown_json() {}
+
+    #[test]
+    fn get_threads_combined_deprecated_fields_json() {}
+
+    #[test]
+    fn get_threads_combined_added_fields_json() {}
+
+    #[test]
+    fn get_threads_combined_valid_json() {}
+}
