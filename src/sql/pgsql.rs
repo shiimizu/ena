@@ -769,8 +769,8 @@ impl Queries for tokio_postgres::Client {
           , regexp_replace(r28, E'<wbr>', '', 'g') r29
           ) AS comment,
         NULL AS delpass, -- Unused in Asagi. Used in FF.
-        (CASE WHEN sticky IS NULL THEN false ELSE sticky END) AS sticky,
-        (CASE WHEN closed IS NULL THEN false ELSE closed END) AS locked,
+        (CASE WHEN sticky IS NULL or sticky=false THEN false ELSE sticky END) AS sticky,
+        (CASE WHEN (closed IS NOT NULL or closed=true) AND (archived_on is null) THEN closed ELSE FALSE END) AS locked,
         (CASE WHEN id='Developer' THEN 'Dev' ELSE id END) AS poster_hash, --not the same AS media_hash
         country AS poster_country,
         country_name AS poster_country_name,
@@ -809,8 +809,8 @@ impl Queries for tokio_postgres::Client {
       last_modified as time_last_modified,
       (SELECT COUNT(no) FROM "{board}" re WHERE t.no = resto or t.no = no) as nreplies,
       (SELECT COUNT(md5) FROM "{board}" re WHERE t.no = resto or t.no = no) as nimages,
-      (CASE WHEN sticky IS NULL THEN false ELSE sticky END) AS sticky,
-      (CASE WHEN closed IS NULL THEN false ELSE closed END) AS locked
+      (CASE WHEN sticky IS NULL or sticky=false THEN false ELSE sticky END) AS sticky,
+      (CASE WHEN (closed IS NOT NULL or closed=true) AND (archived_on is null) THEN closed ELSE FALSE END) AS locked
       from "{board}" t where resto=0;
     "#,
                 board = board

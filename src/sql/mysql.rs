@@ -751,14 +751,14 @@ impl Queries for Pool {
                 doCleanFull(sub)												'title',
                 doCleanFull(com)												'comment',
                 NULL															'delpass',		-- Unused in Asagi. Used in FF.
-                IF(sticky IS NULL, FALSE, sticky)								'sticky',
-                IF(closed IS NULL, FALSE, closed)								'locked',
+                IFNULL(sticky, FALSE)								            'sticky',
+                IF((closed IS not NULL or closed=1) and (archived is null or archived = 0), closed, false)     'locked',
                 IF(id='Developer', 'Dev', id)									'poster_hash',	-- Not the same as media_hash
                 IF(country is not null and (country='XX' or country='A1'), null, country)   'poster_country',
                 -- country_name													'poster_country_name',
                 NULLIF(cast(JSON_REMOVE(
                     JSON_OBJECT(
-                    IF(unique_ips is null, 'null__', 'unique_ips'), cast(unique_ips as char),
+                    IF(unique_ips is null, 'null__', 'uniqueIps'), cast(unique_ips as char),
                     IF(since4pass is null, 'null__', 'since4pass'), cast(since4pass as char),
                     IF(country in('AC','AN','BL','CF','CM','CT','DM','EU','FC','GN','GY','JH','KN','MF','NB','NZ','PC','PR','RE','TM','TR','UN','WP'), 'trollCountry', 'null__' ), country), '$.null__') as char), '{{}}')    'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
         FROM (
