@@ -754,10 +754,13 @@ impl Queries for Pool {
                 IF(sticky IS NULL, FALSE, sticky)								'sticky',
                 IF(closed IS NULL, FALSE, closed)								'locked',
                 IF(id='Developer', 'Dev', id)									'poster_hash',	-- Not the same as media_hash
-                country															'poster_country',
+                IF(country is not null and (country='XX' or country='A1'), null, country)   'poster_country',
                 -- country_name													'poster_country_name',
-                -- CAST(JSON_OBJECT('uniqueIps', unique_ips, 'since4pass', since4pass, 'trollCountry', 'NULL') AS CHAR) 'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
-                NULL 'exif'
+                NULLIF(cast(JSON_REMOVE(
+                    JSON_OBJECT(
+                    IF(unique_ips is null, 'null__', 'unique_ips'), cast(unique_ips as char),
+                    IF(since4pass is null, 'null__', 'since4pass'), cast(since4pass as char),
+                    IF(country in('AC','AN','BL','CF','CM','CT','DM','EU','FC','GN','GY','JH','KN','MF','NB','NZ','PC','PR','RE','TM','TR','UN','WP'), 'trollCountry', 'null__' ), country), '$.null__') as char), '{{}}')    'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
         FROM (
         SELECT * FROM JSON_TABLE(:jj, "$.posts[*]" COLUMNS (
                 -- `_id`						FOR ORDINALITY,
@@ -1121,9 +1124,7 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
             .map(|j: Option<serde_json::Value>| j)
             .flatten()
             .map(|j| serde_json::from_value(j))
-            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??
-            )
-            ;
+            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??);
         // pool.disconnect().await?;
         r
     }

@@ -162,7 +162,7 @@ pub mod core {
         /// <font style="color:#789922;">> Total number of replies to a thread</font>
         pub replies: Option<i32>,
     
-        /// Appears: `TODO`  
+        /// Appears: `OP only`  
         /// Possible values: `0` or `any positive integer`  
         /// <font style="color:#789922;">> Total number of image replies to a thread</font>
         pub images: Option<i32>,
@@ -280,7 +280,7 @@ pub mod core {
         /// Appears: `always if post has attachment`  
         /// Possible values:   
         /// <font style="color:#789922;">> 24 character (base64), decoded binary MD5 hash of file</font>
-        pub md5: Option<String>,
+        pub md5: Option<Vec<u8>>,
     
         /// Appears: `always if post has attachment`  
         /// Possible values:   
@@ -292,54 +292,55 @@ pub mod core {
         /// <font style="color:#789922;">> 65 character (hex), binary SHA256 hash of thumbnail</font>
         pub sha256t: Option<Vec<u8>>
     }
-    
+
     impl Default for Post {
         fn default() -> Self {
-        let t= std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
+            let t = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap();
             Self {
-                no: t.as_secs() as i64,
-                subnum: None,
-                tim: None,
-                resto: t.as_secs() as i64,
-                time: t.as_secs() as i64,
-                last_modified: t.as_secs() as i64,
-                archived_on: None,
-                deleted_on: None,
-                fsize: None,
-                w: None,
-                h: None,
-                tn_w: None,
-                tn_h: None,
-                replies: None,
-                images: None,
-                unique_ips: None,
+                no:             t.as_secs() as i64,
+                subnum:         None,
+                tim:            None,
+                resto:          t.as_secs() as i64,
+                time:           t.as_secs() as i64,
+                last_modified:  t.as_secs() as i64,
+                archived_on:    None,
+                deleted_on:     None,
+                fsize:          None,
+                w:              None,
+                h:              None,
+                tn_w:           None,
+                tn_h:           None,
+                replies:        None,
+                images:         None,
+                unique_ips:     None,
                 custom_spoiler: None,
-                since4pass: None,
-                sticky: None,
-                closed: None,
-                filedeleted: None,
-                spoiler: None,
-                m_img: None,
-                bumplimit: None,
-                imagelimit: None,
-                name: None,
-                sub: None,
-                com: None,
-                filename: None,
-                ext: None,
-                trip: None,
-                id: None,
-                capcode: None,
-                country: None,
-                country_name: None,
-                semantic_url: None,
-                tag: None,
-                md5: None,
-                sha256: None,
-                sha256t: None
+                since4pass:     None,
+                sticky:         None,
+                closed:         None,
+                filedeleted:    None,
+                spoiler:        None,
+                m_img:          None,
+                bumplimit:      None,
+                imagelimit:     None,
+                name:           None,
+                sub:            None,
+                com:            None,
+                filename:       None,
+                ext:            None,
+                trip:           None,
+                id:             None,
+                capcode:        None,
+                country:        None,
+                country_name:   None,
+                semantic_url:   None,
+                tag:            None,
+                md5:            None,
+                sha256:         None,
+                sha256t:        None
             }
         }
-        
     }
 }
 
@@ -773,26 +774,16 @@ impl Queries for tokio_postgres::Client {
         (CASE WHEN id='Developer' THEN 'Dev' ELSE id END) AS poster_hash, --not the same AS media_hash
         country AS poster_country,
         country_name AS poster_country_name,
-        (case when
-          jsonb_strip_nulls(jsonb_build_object('uniqueIps', unique_ips, 'since4pass', since4pass, 'trollCountry', (
-          case when 
-          country = ANY ('{{AC,AN,BL,CF,CM,CT,DM,EU,FC,GN,GY,JH,KN,MF,NB,NZ,PC,PR,RE,TM,TR,UN,WP}}'::text[])
-          then
-          country
-          else
-          null
-          end
-          ))) != '{{}}'::jsonb then 
-        jsonb_strip_nulls(jsonb_build_object('uniqueIps', unique_ips, 'since4pass', since4pass, 'trollCountry', (
-          case when 
-          country = ANY ('{{AC,AN,BL,CF,CM,CT,DM,EU,FC,GN,GY,JH,KN,MF,NB,NZ,PC,PR,RE,TM,TR,UN,WP}}'::text[])
-          then
-          country
-          else
-          null
-          end
-          ))) 
-           end )::text as exif, -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
+        NULLIF(
+            jsonb_strip_nulls(jsonb_build_object('uniqueIps', unique_ips::text, 'since4pass', since4pass::text, 'trollCountry', 
+                case when 
+                country = ANY ('{{AC,AN,BL,CF,CM,CT,DM,EU,FC,GN,GY,JH,KN,MF,NB,NZ,PC,PR,RE,TM,TR,UN,WP}}'::text[])
+                then
+                country
+                else
+                null
+                end
+            ))::text, '{{}}') as exif, -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
         (CASE WHEN archived_on IS NULL THEN false ELSE true END) AS archived,
         archived_on
         FROM "{board}"

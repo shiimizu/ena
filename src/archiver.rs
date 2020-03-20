@@ -112,7 +112,7 @@ where
         Ok(())
     }
 
-    fn listen_to_exit(&self) -> Result<()>{
+    fn listen_to_exit(&self) -> Result<()> {
         let finished_clone = Arc::clone(&self.finished);
         Ok(ctrlc::set_handler(move || {
             finished_clone.compare_and_swap(false, true, Ordering::Relaxed);
@@ -361,7 +361,11 @@ where
                                 *fetched_threads = Some(body.to_owned());
 
                                 // Check if there's an entry in the metadata
-                                if self.query.metadata(&statements, endpoint, current_board).await.unwrap_or(false)
+                                if self
+                                    .query
+                                    .metadata(&statements, endpoint, current_board)
+                                    .await
+                                    .unwrap_or(false)
                                 {
                                     let ena_resume = config::ena_resume();
 
