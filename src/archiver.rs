@@ -307,7 +307,7 @@ where
         }
 
         let current_board = bs.board;
-        let mut tries:i16 = -1;
+        let mut tries: i16 = -1;
         let max_tries = bs.retry_attempts as i16;
         while tries <= max_tries {
             tries += 1;
@@ -348,11 +348,7 @@ where
                                 current_board,
                                 status,
                                 endpoint,
-                                if tries == 0 {
-                                    "".into()
-                                } else {
-                                    format!("Attempt: #{}", tries)
-                                }
+                                if tries == 0 { "".into() } else { format!("Attempt: #{}", tries) }
                             );
                             sleep(Duration::from_secs(1)).await;
                             if endpoint == YotsubaEndpoint::Archive {
@@ -459,7 +455,8 @@ where
                                         )
                                         .await
                                     {
-                                        // Loop until it's done right since the whole program relies on the metadata/cache.
+                                        // Loop until it's done right since the whole program relies
+                                        // on the metadata/cache.
                                         error!("Error updating metadata! {}", e);
                                         tries = 0;
                                         sleep(Duration::from_millis(1500)).await;
@@ -468,20 +465,11 @@ where
                                     *update_metadata = false;
                                     *init = false;
 
-                                    match if endpoint == YotsubaEndpoint::Threads {
-                                        self.query
-                                            .threads(&statements, endpoint, current_board, &body)
-                                            .await
-                                    } else {
-                                        // Converting to anyhow
-                                        match serde_json::from_slice::<VecDeque<u32>>(&body) {
-                                            Ok(t) => Ok(t),
-                                            Err(e) => Err(anyhow!(
-                                                "|threads::{}| Error deserializing body {}", endpoint,
-                                                e
-                                            ))
-                                        }
-                                    } {
+                                    match self
+                                        .query
+                                        .threads(&statements, endpoint, current_board, &body)
+                                        .await
+                                    {
                                         Ok(mut list) => local_threads_list.append(&mut list),
                                         Err(e) => warn!(
                                             "({})\t/{}/\t\tSeems like there was no modified threads in the beginning?.. {}",

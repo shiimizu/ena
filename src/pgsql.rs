@@ -529,13 +529,23 @@ impl Queries for tokio_postgres::Client {
     fn query_threads(&self) -> String {
         "SELECT jsonb_agg(newv->'no')
       FROM
-      (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z"
+      (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z
+      WHERE newv->'no' is not null;"
             .to_string()
     }
 
     fn query_metadata(&self, endpoint: YotsubaEndpoint) -> String {
+        // This endpoint will always be threads
         format!(
-            r#"select CASE WHEN {endpoint} is not null THEN true ELSE false END from metadata where board = $1"#,
+            r#"
+            SELECT (CASE WHEN (
+                SELECT jsonb_agg(newv->'no') FROM
+                    (SELECT jsonb_array_elements(jsonb_array_elements("{endpoint}")->'threads') as newv FROM "metadata" WHERE board = $1) z
+                WHERE newv->'no' IS NOT NULL
+                ) IS NOT NULL AND "{endpoint}" IS NOT NULL
+                THEN TRUE ELSE FALSE END) as "check"
+            FROM "metadata" WHERE board = $1;
+            "#,
             endpoint = endpoint
         )
     }
@@ -1182,18 +1192,24 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
     ) -> Result<VecDeque<u32>>
     {
         log::debug!("threads");
+
+        if matches!(endpoint, YotsubaEndpoint::Archive) {
+            return Ok(serde_json::from_slice::<VecDeque<u32>>(item)?);
+        }
+
         let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
         let statement = statements
             .get(&id)
             .ok_or_else(|| anyhow!("|threads| Empty statement from id: {:?}", id))?;
         let json = serde_json::from_slice::<serde_json::Value>(item)?;
-        let res :VecDeque<u32> = self.query_one(statement, &[&json])
-        .await
-        .map(|row| row.try_get(0))?
-        .map(|r: Option<serde_json::Value>| r)?
-        .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
-        .ok_or_else(|| anyhow!("|threads| Empty or null in getting {}", endpoint))?
-        .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
+        let res: VecDeque<u32> = self
+            .query_one(statement, &[&json])
+            .await
+            .map(|row| row.try_get(0))?
+            .map(|r: Option<serde_json::Value>| r)?
+            .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
+            .ok_or_else(|| anyhow!("|threads| Empty or null in getting {}", endpoint))?
+            .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
         Ok(res)
 
         // Ok(self
@@ -1227,13 +1243,14 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
             .get(&id)
             .ok_or_else(|| anyhow!("|threads_combined| Empty statement from id: {:?}", id))?;
         let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
-        let res :VecDeque<u32> = self.query_one(statement, &[&board.to_string(), &json])
-        .await
-        .map(|row| row.try_get(0))?
-        .map(|r: Option<serde_json::Value>| r)?
-        .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
-        .ok_or_else(|| anyhow!("|threads_combined| Empty or null in getting {}", endpoint))?
-        .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
+        let res: VecDeque<u32> = self
+            .query_one(statement, &[&board.to_string(), &json])
+            .await
+            .map(|row| row.try_get(0))?
+            .map(|r: Option<serde_json::Value>| r)?
+            .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
+            .ok_or_else(|| anyhow!("|threads_combined| Empty or null in getting {}", endpoint))?
+            .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
         Ok(res)
         // Ok(self
         //     .query(statement, &[&board.to_string(), &i])
@@ -1265,14 +1282,15 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
         let statement = statements
             .get(&id)
             .ok_or_else(|| anyhow!("|threads_modified| Empty statement from id: {:?}", id))?;
-        let json= serde_json::from_slice::<serde_json::Value>(new_threads)?;
-        let res :VecDeque<u32> = self.query_one(statement, &[&board.to_string(), &json])
-        .await
-        .map(|row| row.try_get(0))?
-        .map(|r: Option<serde_json::Value>| r)?
-        .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
-        .ok_or_else(|| anyhow!("|threads_modified| Empty or null in getting {}", endpoint))?
-        .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
+        let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        let res: VecDeque<u32> = self
+            .query_one(statement, &[&board.to_string(), &json])
+            .await
+            .map(|row| row.try_get(0))?
+            .map(|r: Option<serde_json::Value>| r)?
+            .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
+            .ok_or_else(|| anyhow!("|threads_modified| Empty or null in getting {}", endpoint))?
+            .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
         Ok(res)
         // Ok(self
         //     .query(statement, &[&board.to_string(), &i])

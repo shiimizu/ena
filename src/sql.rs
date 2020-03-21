@@ -313,6 +313,7 @@ pub trait Queries {
 
     /// Upsert an endpoint to the metadata  
     ///
+    /// JSON validity checks before upserting to metadata  
     /// Converts bytes to json object and feeds that into the query
     fn query_update_metadata(&self, column: YotsubaEndpoint) -> String;
 
@@ -469,15 +470,32 @@ mod test {
     use once_cell::sync::Lazy;
 
     use super::*;
-    use mysql_async::{ Conn, Pool, Row};
+    use mysql_async::{Conn, Pool, Row};
     use serde_json::json;
 
     static BOARD: Lazy<YotsubaBoard> = Lazy::new(|| YotsubaBoard::a);
+    // static POOL: Lazy<MyBox<Pool>> = Lazy::new(|| MyBox::new(Pool::new(DB_MYSQL)));
 
     const DB_MYSQL: &str = "mysql://root:@localhost:3306/asagi";
     const DB_POSTGRES: &str = "postgresql://postgres:zxc@localhost:5432/fdb2";
     const SCHEMA_NAME_POSTGRES: &str = "asagi";
+    struct MyBox<T>(T);
 
+    impl<T> MyBox<T> {
+        fn new(x: T) -> MyBox<T> {
+            MyBox(x)
+        }
+    }
+
+    use std::ops::Deref;
+
+    impl<T> Deref for MyBox<T> {
+        type Target = T;
+
+        fn deref(&self) -> &T {
+            &self.0
+        }
+    }
     // fn get_config() -> config::Config {
     //     config::read_config("ena_config.json")
     // }
@@ -543,48 +561,95 @@ mod test {
     //     panic!("Divide result is ");
     // }
 
-    #[ignore]
-    /// mysql silently upserts json
-    /// Any invalid jsons are ignored and 0 rows are touched
     #[tokio::test]
-    async fn update_metadata_unknown_json() -> Result<()> {
+    #[should_panic]
+    async fn update_metadata_unknown_json() {
         let pool = Pool::new(DB_MYSQL);
         let store = HashMap::new();
-        let json = serde_json::to_vec(&json!({"test":1}))?;
-        let _res = pool.update_metadata(&store, YotsubaEndpoint::Threads, *BOARD, &json).await?;
+        let json = serde_json::to_vec(&json!({"test":1})).unwrap();
+        let _res =
+            pool.update_metadata(&store, YotsubaEndpoint::Threads, *BOARD, &json).await.unwrap();
         assert_eq!(_res, 1);
-        Ok(())
     }
 
-    #[ignore]
     #[tokio::test]
-    async fn update_metadata_deprecated_fields_json() -> Result<()> {
+    #[should_panic]
+    async fn update_metadata_deprecated_fields_json() {
         let pool = Pool::new(DB_MYSQL);
         let store = HashMap::new();
-        let json = serde_json::to_vec(&json!({"test":1}))?;
-        let _res = pool.update_metadata(&store, YotsubaEndpoint::Threads, *BOARD, &json).await?;
+        let json = serde_json::to_vec(&json!(
+            [
+                {
+                  "page": 1,
+                  "threads": [
+                    { "no_more": 196649146, "last_modified": 1576266882, "replies": 349 },
+                    { "no_more": 196656555, "last_modified": 1576266881, "replies": 7 }
+                  ]
+                },
+                {
+                  "page": 2,
+                  "threads": [
+                    { "no_more": 196650664, "last_modified": 1576266846, "replies": 387},
+                    { "no_more": 196646963, "last_modified": 1576266845, "replies": 487 }
+                  ]
+                }
+            ]
+
+        ))
+        .unwrap();
+        let _res =
+            pool.update_metadata(&store, YotsubaEndpoint::Threads, *BOARD, &json).await.unwrap();
         assert_eq!(_res, 1);
-        Ok(())
     }
 
-    #[ignore]
-    /// There should be no MySQL errors  
-    /// The json should go through and get parsed silently
     #[tokio::test]
     async fn update_metadata_added_fields_json() -> Result<()> {
         let pool = Pool::new(DB_MYSQL);
         let store = HashMap::new();
-        let json = serde_json::to_vec(&json!({"test":1}))?;
+        let json = serde_json::to_vec(&json!(
+            [
+                {
+                  "page": 1,
+                  "threads": [
+                    { "no": 196649146, "last_modified": 1576266882, "replies": 349 },
+                    { "no_more": 196656555, "last_modified": 1576266881, "replies": 7 }
+                  ]
+                },
+                {
+                  "page": 2,
+                  "threads": [
+                    { "no": 196650664, "last_modified": 1576266846, "replies": 387},
+                    { "no_more": 196646963, "last_modified": 1576266845, "replies": 487 }
+                  ]
+                }
+            ]
+        ))?;
         let _res = pool.update_metadata(&store, YotsubaEndpoint::Threads, *BOARD, &json).await?;
         Ok(())
     }
 
-    #[ignore]
     #[tokio::test]
     async fn update_metadata_valid_json() -> Result<()> {
         let pool = Pool::new(DB_MYSQL);
         let store = HashMap::new();
-        let json = serde_json::to_vec(&json!({"valid":1, "some":"thing"}))?;
+        let json = serde_json::to_vec(&json!(
+            [
+                {
+                  "page": 1,
+                  "threads": [
+                    { "no": 196649146, "last_modified": 1576266882, "replies": 349 },
+                    { "no": 196656555, "last_modified": 1576266881, "replies": 7 }
+                  ]
+                },
+                {
+                  "page": 2,
+                  "threads": [
+                    { "no": 196650664, "last_modified": 1576266846, "replies": 387},
+                    { "no": 196646963, "last_modified": 1576266845, "replies": 487 }
+                  ]
+                }
+            ]
+        ))?;
         let _res = pool.update_metadata(&store, YotsubaEndpoint::Threads, *BOARD, &json).await?;
         assert_eq!(_res, 1);
         Ok(())
@@ -840,35 +905,45 @@ mod test {
             )*
         }
     }
-    
+
     #[cfg(test)]
     get_threads_tests! {
 
-        // MySQL
-        // threads.json / archive.json -> VecDeque<u32>
+        // MySQL threads.json
         mysql_get_threads_send_valid_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::Valid),
-        mysql_get_threads_send_deprecated_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::DeprecatedFields),
         mysql_get_threads_send_added_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::AddedFields),
         mysql_get_threads_send_mixed_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::MixedFields),
 
-        // threads.json / archive.json (Only modified values) -> VecDeque<u32>
         mysql_get_threads_modified_send_unknown_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::Unknown),
         mysql_get_threads_modified_send_valid_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::Valid),
         mysql_get_threads_modified_send_deprecated_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::DeprecatedFields),
         mysql_get_threads_modified_send_added_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::AddedFields),
         mysql_get_threads_modified_send_mixed_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::MixedFields),
 
-        // threads.json / archive.json (Both in-db and new threads) -> VecDeque<u32>
         mysql_get_threads_combined_send_unknown_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::Unknown),
         mysql_get_threads_combined_send_valid_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::Valid),
         mysql_get_threads_combined_send_deprecated_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::DeprecatedFields),
         mysql_get_threads_combined_send_added_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::AddedFields),
         mysql_get_threads_combined_send_mixed_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::MixedFields),
 
+        // MySQL archive.json
+        // mysql_get_archive_send_valid_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::Valid),
+        // mysql_get_archive_send_added_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::AddedFields),
+        // mysql_get_archive_send_mixed_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::MixedFields),
 
-        // PostgreSQL
+        // mysql_get_archive_modified_send_valid_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::Valid),
+        // mysql_get_archive_modified_send_deprecated_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::DeprecatedFields),
+        // mysql_get_archive_modified_send_added_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::AddedFields),
+        // mysql_get_archive_modified_send_mixed_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::MixedFields),
+
+        // mysql_get_archive_combined_send_valid_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::Valid),
+        // mysql_get_archive_combined_send_deprecated_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::DeprecatedFields),
+        // mysql_get_archive_combined_send_added_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::AddedFields),
+        // mysql_get_archive_combined_send_mixed_json: (Database::MySQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::MixedFields),
+
+
+        // PostgreSQL threads.json
         pgsql_get_threads_send_valid_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::Valid),
-        pgsql_get_threads_send_deprecated_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::DeprecatedFields),
         pgsql_get_threads_send_added_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::AddedFields),
         pgsql_get_threads_send_mixed_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::MixedFields),
 
@@ -881,20 +956,46 @@ mod test {
         pgsql_get_threads_combined_send_deprecated_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::DeprecatedFields),
         pgsql_get_threads_combined_send_added_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::AddedFields),
         pgsql_get_threads_combined_send_mixed_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::MixedFields),
+
+        // PostgreSQL archive.json
+        pgsql_get_archive_send_valid_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::Valid),
+        pgsql_get_archive_modified_send_valid_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::Valid),
+        pgsql_get_archive_combined_send_valid_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::Valid),
+
+        pgsql_get_archive_send_deprecated_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::DeprecatedFields),
+        pgsql_get_archive_modified_send_deprecated_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::DeprecatedFields),
+        pgsql_get_archive_combined_send_deprecated_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::DeprecatedFields),
+
     }
-    
-    // Send JSONs that are JsonType::Unknown
+
+    // Send JSONs that are JsonType::Unknown or JsonType::DeprecatedFields
     #[cfg(test)]
-    get_threads_tests_panic!{
+    get_threads_tests_panic! {
         // MySQL
         mysql_get_threads_send_unknown_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::Unknown),
-    
-        // PostgreSQL
+        mysql_get_threads_send_deprecated_json: (Database::MySQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::DeprecatedFields),
+
+        // PostgreSQL threads.json
         pgsql_get_threads_send_unknown_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::Unknown),
+        pgsql_get_threads_send_deprecated_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::DeprecatedFields),
         pgsql_get_threads_modified_send_unknown_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::Unknown),
         pgsql_get_threads_combined_send_unknown_json: (Database::PostgreSQL, YotsubaEndpoint::Threads, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::Unknown),
+
+        // PostgreSQL threads.json
+        pgsql_get_archive_send_added_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::AddedFields),
+        pgsql_get_archive_modified_send_added_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::AddedFields),
+        pgsql_get_archive_combined_send_added_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::AddedFields),
+
+        pgsql_get_archive_send_mixed_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::MixedFields),
+        pgsql_get_archive_modified_send_mixed_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::MixedFields),
+        pgsql_get_archive_combined_send_mixed_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::MixedFields),
+
+        pgsql_get_archive_send_unknown_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::Threads, JsonType::Unknown),
+        pgsql_get_archive_modified_send_unknown_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsModified, JsonType::Unknown),
+        pgsql_get_archive_combined_send_unknown_json: (Database::PostgreSQL, YotsubaEndpoint::Archive, YotsubaBoard::pol, YotsubaStatement::ThreadsCombined, JsonType::Unknown),
+
+
     }
-    
 
     async fn test_get_threads(
         engine: Database, endpoint: YotsubaEndpoint, board: YotsubaBoard, mode: YotsubaStatement,
@@ -902,103 +1003,128 @@ mod test {
     ) -> Result<VecDeque<u32>>
     {
         let _json = match json_type {
-            JsonType::Unknown => json!({"test":1, "test2":2, "test3":3}),
-            JsonType::Valid => json!(
-            [
-                {
-                  "page": 1,
-                  "threads": [
-                    { "no": 196649146, "last_modified": 1576266882, "replies": 349 },
-                    { "no": 196656555, "last_modified": 1576266881, "replies": 6 },
-                    { "no": 196654076, "last_modified": 1576266880, "replies": 191 },
-                    { "no": 196637792, "last_modified": 1576266880, "replies": 233 },
-                    { "no": 196647457, "last_modified": 1576266880, "replies": 110 },
-                    { "no": 196624742, "last_modified": 1576266873, "replies": 103 },
-                    { "no": 196656097, "last_modified": 1576266868, "replies": 7 },
-                    { "no": 196645355, "last_modified": 1576266866, "replies": 361 },
-                    { "no": 196655995, "last_modified": 1576266867, "replies": 3 },
-                    { "no": 196655998, "last_modified": 1576266860, "replies": 5 },
-                    { "no": 196652782, "last_modified": 1576266858, "replies": 42 },
-                    { "no": 196656536, "last_modified": 1576266853, "replies": 5 },
-                    { "no": 196621039, "last_modified": 1576266853, "replies": 189 },
-                    { "no": 196640441, "last_modified": 1576266851, "replies": 495 },
-                    { "no": 196637247, "last_modified": 1576266850, "replies": 101 }
-                  ]
+            JsonType::Unknown =>
+                if endpoint == YotsubaEndpoint::Threads {
+                    json!({"test":1, "test2":2, "test3":3})
+                } else {
+                    json!(["1243234", "5645756", "75686786", "456454325", "test", "test1"])
                 },
-                {
-                  "page": 2,
-                  "threads": [
-                    { "no": 196650664, "last_modified": 1576266846, "replies": 29 },
-                    { "no": 196646963, "last_modified": 1576266845, "replies": 387 },
-                    { "no": 196648390, "last_modified": 1576266844, "replies": 36 },
-                    { "no": 196651494, "last_modified": 1576266832, "replies": 10 },
-                    { "no": 196656773, "last_modified": 1576266827, "replies": 0 },
-                    { "no": 196653207, "last_modified": 1576266827, "replies": 20 },
-                    { "no": 196643737, "last_modified": 1576266825, "replies": 82 },
-                    { "no": 196626714, "last_modified": 1576266824, "replies": 467 },
-                    { "no": 196654299, "last_modified": 1576266821, "replies": 9 },
-                    { "no": 196636729, "last_modified": 1576266819, "replies": 216 },
-                    { "no": 196655015, "last_modified": 1576266819, "replies": 3 },
-                    { "no": 196642084, "last_modified": 1576266818, "replies": 233 },
-                    { "no": 196649533, "last_modified": 1576266816, "replies": 122 },
-                    { "no": 196640416, "last_modified": 1576266806, "replies": 381 },
-                    { "no": 196656724, "last_modified": 1576266794, "replies": 1 }
-                  ]
-                }
-            ]),
-            JsonType::DeprecatedFields => json!(
-            [
-                {
-                  "page": 1,
-                  "threads": [
-                    { "no_more": 196649146, "last_modified": 1576266882, "replies": 349 },
-                    { "no_more": 196656555, "last_modified": 1576266881, "replies": 7 }
-                  ]
+            JsonType::Valid =>
+                if endpoint == YotsubaEndpoint::Threads {
+                    json!(
+                    [
+                        {
+                          "page": 1,
+                          "threads": [
+                            { "no": 196649146, "last_modified": 1576266882, "replies": 349 },
+                            { "no": 196656555, "last_modified": 1576266881, "replies": 6 },
+                            { "no": 196654076, "last_modified": 1576266880, "replies": 191 },
+                            { "no": 196637792, "last_modified": 1576266880, "replies": 233 },
+                            { "no": 196647457, "last_modified": 1576266880, "replies": 110 },
+                            { "no": 196624742, "last_modified": 1576266873, "replies": 103 },
+                            { "no": 196656097, "last_modified": 1576266868, "replies": 7 },
+                            { "no": 196645355, "last_modified": 1576266866, "replies": 361 },
+                            { "no": 196655995, "last_modified": 1576266867, "replies": 3 },
+                            { "no": 196655998, "last_modified": 1576266860, "replies": 5 },
+                            { "no": 196652782, "last_modified": 1576266858, "replies": 42 },
+                            { "no": 196656536, "last_modified": 1576266853, "replies": 5 },
+                            { "no": 196621039, "last_modified": 1576266853, "replies": 189 },
+                            { "no": 196640441, "last_modified": 1576266851, "replies": 495 },
+                            { "no": 196637247, "last_modified": 1576266850, "replies": 101 }
+                          ]
+                        },
+                        {
+                          "page": 2,
+                          "threads": [
+                            { "no": 196650664, "last_modified": 1576266846, "replies": 29 },
+                            { "no": 196646963, "last_modified": 1576266845, "replies": 387 },
+                            { "no": 196648390, "last_modified": 1576266844, "replies": 36 },
+                            { "no": 196651494, "last_modified": 1576266832, "replies": 10 },
+                            { "no": 196656773, "last_modified": 1576266827, "replies": 0 },
+                            { "no": 196653207, "last_modified": 1576266827, "replies": 20 },
+                            { "no": 196643737, "last_modified": 1576266825, "replies": 82 },
+                            { "no": 196626714, "last_modified": 1576266824, "replies": 467 },
+                            { "no": 196654299, "last_modified": 1576266821, "replies": 9 },
+                            { "no": 196636729, "last_modified": 1576266819, "replies": 216 },
+                            { "no": 196655015, "last_modified": 1576266819, "replies": 3 },
+                            { "no": 196642084, "last_modified": 1576266818, "replies": 233 },
+                            { "no": 196649533, "last_modified": 1576266816, "replies": 122 },
+                            { "no": 196640416, "last_modified": 1576266806, "replies": 381 },
+                            { "no": 196656724, "last_modified": 1576266794, "replies": 1 }
+                          ]
+                        }
+                    ])
+                } else {
+                    json!([1243234, 5645756, 75686786, 456454325, 231412, 564576567, 34523234])
                 },
-                {
-                  "page": 2,
-                  "threads": [
-                    { "no_more": 196650664, "last_modified": 1576266846, "replies": 387},
-                    { "no_more": 196646963, "last_modified": 1576266845, "replies": 487 }
-                  ]
-                }
-            ]),
-            JsonType::AddedFields => json!(
-            [
-                {
-                  "page": 1,
-                  "threads": [
-                    { "no": 196649146, "last_modified": 1576266882, "replies": 349, "new_field": 349 },
-                    { "no": 196656555, "last_modified": 1576266881, "replies": 6,  "new_field": 7 }
-                  ]
+            JsonType::DeprecatedFields =>
+                if endpoint == YotsubaEndpoint::Threads {
+                    json!(
+                    [
+                        {
+                          "page": 1,
+                          "threads": [
+                            { "no_more": 196649146, "last_modified": 1576266882, "replies": 349 },
+                            { "no_more": 196656555, "last_modified": 1576266881, "replies": 7 }
+                          ]
+                        },
+                        {
+                          "page": 2,
+                          "threads": [
+                            { "no_more": 196650664, "last_modified": 1576266846, "replies": 387},
+                            { "no_more": 196646963, "last_modified": 1576266845, "replies": 487 }
+                          ]
+                        }
+                    ])
+                } else {
+                    json!([])
                 },
-                {
-                  "page": 2,
-                  "threads": [
-                    { "no": 196650664, "last_modified": 1576266846, "replies": 387, "new_field": 387 },
-                    { "no": 196646963, "last_modified": 1576266845, "replies": 487, "new_field": 487 },
-                    { "no": 196648390, "last_modified": 1576266844, "replies": 36 , "new_field": 36 }
-                  ]
-                }
-            ]),
-            JsonType::MixedFields => json!(
-            [
-                {
-                  "page": 1,
-                  "threads": [
-                    { "no": 196649146, "last_modified": 1576266882, "replies": 349, "new_field": 349 },
-                    { "no_more": 196656555, "last_modified": 1576266881, "replies": 6,  "new_field": 7 }
-                  ]
+            JsonType::AddedFields =>
+                if endpoint == YotsubaEndpoint::Threads {
+                    json!(
+                    [
+                        {
+                          "page": 1,
+                          "threads": [
+                            { "no": 196649146, "last_modified": 1576266882, "replies": 349, "new_field": 349 },
+                            { "no": 196656555, "last_modified": 1576266881, "replies": 6,  "new_field": 7 }
+                          ]
+                        },
+                        {
+                          "page": 2,
+                          "threads": [
+                            { "no": 196650664, "last_modified": 1576266846, "replies": 387, "new_field": 387 },
+                            { "no": 196646963, "last_modified": 1576266845, "replies": 487, "new_field": 487 },
+                            { "no": 196648390, "last_modified": 1576266844, "replies": 36 , "new_field": 36 }
+                          ]
+                        }
+                    ])
+                } else {
+                    json!([{}, "1243234", "5645756", "75686786", "456454325", "test", "test1"])
                 },
-                {
-                  "page": 2,
-                  "threads": [
-                    { "no": 196650664, "last_modified": 1576266846, "replies": 387, "new_field": 387 },
-                    { "no": 196646963, "last_modified": 1576266845, "replies": 487, "new_field": 487 },
-                    { "no_more": 196648390, "last_modified": 1576266844, "replies": 36 , "new_field": 36 }
-                  ]
-                }
-            ])
+            JsonType::MixedFields =>
+                if endpoint == YotsubaEndpoint::Threads {
+                    json!(
+                    [
+                        {
+                          "page": 1,
+                          "threads": [
+                            { "no": 196649146, "last_modified": 1576266882, "replies": 349, "new_field": 349 },
+                            { "no_more": 196656555, "last_modified": 1576266881, "replies": 6,  "new_field": 7 }
+                          ]
+                        },
+                        {
+                          "page": 2,
+                          "threads": [
+                            { "no": 196650664, "last_modified": 1576266846, "replies": 387, "new_field": 387 },
+                            { "no": 196646963, "last_modified": 1576266845, "replies": 487, "new_field": 487 },
+                            { "no_more": 196648390, "last_modified": 1576266844, "replies": 36 , "new_field": 36 }
+                          ]
+                        }
+                    ])
+                } else {
+                    json!(["1243234", 5645756, "75686786", 456454325, "test", "test1"])
+                },
         };
 
         let json = serde_json::to_vec(&_json).unwrap();
@@ -1014,9 +1140,9 @@ mod test {
             });
             // Set search path
             db_client.init_schema(SCHEMA_NAME_POSTGRES, Database::PostgreSQL, "utf8").await?;
-            
+
             let store = create_statements(&db_client, endpoint, board).await?;
-            
+
             match mode {
                 YotsubaStatement::Threads =>
                     db_client.threads(&store, endpoint, board, &json).await,
@@ -1028,23 +1154,28 @@ mod test {
             let pool = Pool::new(DB_MYSQL);
             let store = HashMap::new();
             match mode {
-                YotsubaStatement::Threads => pool.threads(&store, endpoint, board, &json).await,
+                YotsubaStatement::Threads =>
+                    if endpoint == YotsubaEndpoint::Threads {
+                        pool.threads(&store, endpoint, board, &json).await
+                    } else {
+                        Ok(serde_json::from_slice::<VecDeque<u32>>(&json)?)
+                    },
                 YotsubaStatement::ThreadsModified =>
                     pool.threads_modified(&store, endpoint, board, &json).await,
                 _ => pool.threads_combined(&store, endpoint, board, &json).await
             }
         }
     }
-    
-    
-    async fn create_statements(query: &tokio_postgres::Client,endpoint: YotsubaEndpoint, board: YotsubaBoard
+
+    async fn create_statements(
+        query: &tokio_postgres::Client, endpoint: YotsubaEndpoint, board: YotsubaBoard
     ) -> Result<StatementStore<tokio_postgres::Statement>> {
         let mut statement_store = HashMap::new();
         let statements: Vec<_> = YotsubaStatement::into_enum_iter().collect();
         let gen_id = |stmt: YotsubaStatement| -> YotsubaIdentifier {
             YotsubaIdentifier::new(endpoint, board, stmt)
         };
-        
+
         for &statement in statements.iter().filter(|&&x| {
             x != YotsubaStatement::Medias
                 || x != YotsubaStatement::UpdateHashMedia
@@ -1052,11 +1183,10 @@ mod test {
         }) {
             statement_store.insert(gen_id(statement), match statement {
                 YotsubaStatement::UpdateMetadata =>
-                query.prepare(&query.query_update_metadata(endpoint)).await?,
+                    query.prepare(&query.query_update_metadata(endpoint)).await?,
                 YotsubaStatement::UpdateThread =>
                     query.prepare(&query.query_update_thread(board)).await?,
-                YotsubaStatement::Delete =>
-                    query.prepare(&query.query_delete(board)).await?,
+                YotsubaStatement::Delete => query.prepare(&query.query_delete(board)).await?,
                 YotsubaStatement::UpdateDeleteds =>
                     query.prepare(&query.query_update_deleteds(board)).await?,
                 YotsubaStatement::UpdateHashMedia | YotsubaStatement::UpdateHashThumbs =>
@@ -1074,13 +1204,10 @@ mod test {
                     query.prepare(&query.query_threads_modified(endpoint)).await?,
                 YotsubaStatement::ThreadsCombined =>
                     query.prepare(&query.query_threads_combined(board, endpoint)).await?,
-                YotsubaStatement::Metadata =>
-                    query.prepare(&query.query_metadata(endpoint)).await?,
+                YotsubaStatement::Metadata => query.prepare(&query.query_metadata(endpoint)).await?
             });
         }
 
         Ok(statement_store)
     }
-    
-    
 }

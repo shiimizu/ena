@@ -215,15 +215,31 @@ impl Queries for Pool {
         "select 1".into()
     }
 
-    fn query_update_metadata(&self, column: YotsubaEndpoint) -> String {
+    fn query_update_metadata(&self, endpoint: YotsubaEndpoint) -> String {
         format!(
-            r#"INSERT INTO `metadata`(`board`, `{endpoint}`)
-            VALUES (:bb, :jj)
+            r#"
+            INSERT INTO `metadata`(`board`, `{endpoint}`)       
+			SELECT :bb, (CASE WHEN (
+            SELECT JSON_ARRAYAGG(`no`) from
+                (SELECT * FROM metadata,JSON_TABLE(:jj, "{path1}" COLUMNS(
+	            `no`				bigint		PATH "{path2}")
+	            ) w )z 
+            WHERE `no` IS NOT NULL
+            ) IS NOT NULL
+            THEN :jj ELSE 'panic!' END) as `check`
+            
             ON DUPLICATE KEY update
-               `{endpoint}` = :jj
-             ;
-              "#,
-            endpoint = column
+               `{endpoint}` = ( select (CASE WHEN (
+				            SELECT JSON_ARRAYAGG(`no`) from
+				                (SELECT * FROM metadata,JSON_TABLE(:jj, "{path1}" COLUMNS(
+					            `no`				bigint		PATH "{path2}")
+					            ) w )z 
+				            WHERE `no` IS NOT NULL
+				            ) IS NOT NULL
+				            THEN :jj ELSE 'panic!' END));"#,
+            endpoint = endpoint,
+            path1 = if endpoint == YotsubaEndpoint::Threads { "$[*].threads[*]" } else { "$[*]" },
+            path2 = if endpoint == YotsubaEndpoint::Threads { "$.no" } else { "$" }
         )
     }
 
@@ -303,15 +319,29 @@ impl Queries for Pool {
             FROM
             ( SELECT * FROM JSON_TABLE(:jj, "$[*].threads[*]" COLUMNS(
             `no`				bigint		PATH "$.no")
-            ) w )z LOCK IN SHARE MODE;
+            ) w )z
+            WHERE no is not null LOCK IN SHARE MODE;
         "#
         .to_string()
     }
 
-    fn query_metadata(&self, column: YotsubaEndpoint) -> String {
+    fn query_metadata(&self, endpoint: YotsubaEndpoint) -> String {
+        // Endpoint will always be threads
         format!(
-            r#"SELECT CASE WHEN {} IS NOT null THEN true ELSE false END FROM metadata WHERE board = :bb LOCK IN SHARE MODE;"#,
-            column
+            r#"
+            SELECT (CASE WHEN (
+                SELECT JSON_ARRAYAGG(`no`) from
+	                (SELECT * FROM metadata,JSON_TABLE(`{endpoint}`, "{path1}" COLUMNS(
+		            `no`				bigint		PATH "{path2}")
+		            ) w where board = :bb)z 
+                WHERE `no` IS NOT NULL
+                ) IS NOT NULL AND `{endpoint}` IS NOT NULL
+                THEN true ELSE false END) as `check`
+            FROM `metadata` WHERE board = :bb LOCK IN SHARE MODE;
+            "#,
+            endpoint = endpoint,
+            path1 = if endpoint == YotsubaEndpoint::Threads { "$[*].threads[*]" } else { "$[*]" },
+            path2 = if endpoint == YotsubaEndpoint::Threads { "$.no" } else { "$" }
         )
     }
 
@@ -1056,6 +1086,11 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
     ) -> Result<VecDeque<u32>>
     {
         log::debug!("threads");
+
+        if matches!(endpoint, YotsubaEndpoint::Archive) {
+            return Ok(serde_json::from_slice::<VecDeque<u32>>(item)?);
+        }
+
         let conn = self.get_conn().await?;
         let json = serde_json::from_slice::<serde_json::Value>(item)?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
