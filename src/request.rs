@@ -1,4 +1,4 @@
-//! HTTP clients and networking.
+//! HTTP client and networking.
 use async_trait::async_trait;
 use reqwest::{
     self,

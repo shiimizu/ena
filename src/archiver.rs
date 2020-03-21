@@ -81,8 +81,8 @@ where
         let semaphore = Arc::new(Semaphore::new(1));
         let (tx, rx) = unbounded_channel();
 
-        // Media background thread. On its own single thread.
-        // Has to know which board to run on, that's where channels come in.
+        // Media background thread. On its own, detached from the rest of the individual board
+        // thread. Has to know which board to run on, that's where channels come in.
         fut.push(self.compute(
             YotsubaEndpoint::Media,
             &self.config.board_settings,
@@ -307,7 +307,10 @@ where
         }
 
         let current_board = bs.board;
-        for retry_attempt in 0..(bs.retry_attempts + 1) {
+        let mut tries:i16 = -1;
+        let max_tries = bs.retry_attempts as i16;
+        while tries <= max_tries {
+            tries += 1;
             match self
                 .client
                 .get(
@@ -345,10 +348,10 @@ where
                                 current_board,
                                 status,
                                 endpoint,
-                                if retry_attempt == 0 {
+                                if tries == 0 {
                                     "".into()
                                 } else {
-                                    format!("Attempt: #{}", retry_attempt)
+                                    format!("Attempt: #{}", tries)
                                 }
                             );
                             sleep(Duration::from_secs(1)).await;
@@ -425,10 +428,10 @@ where
                                         if let Ok(mut list) = self
                                             .query
                                             .threads_modified(
+                                                statements,
                                                 endpoint,
                                                 current_board,
-                                                &body,
-                                                statements
+                                                &body
                                             )
                                             .await
                                         {
@@ -456,7 +459,11 @@ where
                                         )
                                         .await
                                     {
-                                        error!("Error running update_metadata function! {}", e)
+                                        // Loop until it's done right since the whole program relies on the metadata/cache.
+                                        error!("Error updating metadata! {}", e);
+                                        tries = 0;
+                                        sleep(Duration::from_millis(1500)).await;
+                                        continue;
                                     }
                                     *update_metadata = false;
                                     *init = false;
@@ -470,7 +477,7 @@ where
                                         match serde_json::from_slice::<VecDeque<u32>>(&body) {
                                             Ok(t) => Ok(t),
                                             Err(e) => Err(anyhow!(
-                                                "Error converting body to VecDeque for query.threads() {}",
+                                                "|threads::{}| Error deserializing body {}", endpoint,
                                                 e
                                             ))
                                         }
@@ -625,8 +632,10 @@ where
                     if let Err(e) =
                         self.query.update_metadata(&statements, endpoint, current_board, &ft).await
                     {
-                        error!("Error executing update_metadata function! {}", e);
+                        error!("Error updating metadata at the end! {}", e);
                     }
+
+                    // Reset
                     update_metadata = false;
                 }
             }
@@ -685,6 +694,8 @@ where
                                     "({})\t/{}/{}\t[{}/{}] |update_thread| {}",
                                     endpoint, board, thread, position, length, e
                                 );
+                                sleep(Duration::from_millis(1500)).await;
+                                continue;
                             }
                             match self
                                 .query
@@ -695,10 +706,14 @@ where
                                     "({})\t/{}/{}\t[{}/{}]",
                                     endpoint, board, thread, position, length
                                 ),
-                                Err(e) => error!(
-                                    "({})\t/{}/{}\t[{}/{}] |update_deleteds| {}",
-                                    endpoint, board, thread, position, length, e
-                                )
+                                Err(e) => {
+                                    error!(
+                                        "({})\t/{}/{}\t[{}/{}] |update_deleteds| {}",
+                                        endpoint, board, thread, position, length, e
+                                    );
+                                    sleep(Duration::from_millis(1500)).await;
+                                    continue;
+                                }
                             }
                             break;
                         },
@@ -735,98 +750,90 @@ where
     {
         // All media for a particular thread should finish downloading to prevent missing media in
         // the database CTRL-C does not apply here
-        match self.query.medias(statements, endpoint, info.board, no).await {
-            Err(e) =>
-                error!("\t\t/{}/An error occurred getting missing media -> {}", info.board, e),
-            Ok(media_list) => {
-                let mut fut = FuturesUnordered::new();
-                let mut has_media = false;
-                let dur = Duration::from_millis(200);
-                let len = media_list.len();
+        let media_list = self.query.medias(statements, endpoint, info.board, no).await?;
 
-                // If somehow we passed the exit code and continued to fetch medias,
-                // display info on whatever threads have media to download before exiting the
-                // program
-                if len > 0
-                    && downloading == YotsubaEndpoint::Threads
-                    && !(info.board == YotsubaBoard::f && info.download_thumbnails)
-                {
-                    info!(
-                        "({})\t\t/{}/{}\tNew {} :: {}",
-                        endpoint,
-                        info.board,
-                        no,
-                        if info.download_media && info.download_thumbnails {
-                            "media & thumbs"
-                        } else if info.download_media {
-                            "media"
-                        } else if info.download_thumbnails {
-                            "thumbs"
-                        } else {
-                            "media"
-                        },
-                        len
-                    );
-                }
+        let mut fut = FuturesUnordered::new();
+        let mut has_media = false;
+        let dur = Duration::from_millis(200);
+        let len = media_list.len();
 
-                // Chunk to prevent client congestion and errors
-                // Also have the media downloading on a single thread and run things sequentially
-                // there That way the client doesn't have to run 1000+ requests all
-                // at the same time
-                for chunks in media_list.as_slice().chunks(20) {
-                    for row in chunks {
-                        let sha256 = row.get::<&str, Option<Vec<u8>>>("sha256")?;
-                        let sha256t = row.get::<&str, Option<Vec<u8>>>("sha256t")?;
-                        [
-                            (sha256, YotsubaStatement::UpdateHashMedia),
-                            (sha256t, YotsubaStatement::UpdateHashThumbs)
-                        ]
-                        .iter()
-                        .for_each(|(current_hash, mode)| {
-                            let hash_exists =
-                                matches!(current_hash, Some(hash) if hash.len() >= (65 / 2));
-                            if !hash_exists
-                                && ((info.download_media
-                                    && matches!(mode, YotsubaStatement::UpdateHashMedia))
-                                    || (info.download_thumbnails
-                                        && matches!(mode, YotsubaStatement::UpdateHashThumbs)))
-                            {
-                                has_media = true;
-                                fut.push(self.dl_media_post2(row, info, *mode));
-                            }
-                        });
+        // If somehow we passed the exit code and continued to fetch medias,
+        // display info on whatever threads have media to download before exiting the
+        // program
+        if len > 0
+            && downloading == YotsubaEndpoint::Threads
+            && !(info.board == YotsubaBoard::f && info.download_thumbnails)
+        {
+            info!(
+                "({})\t\t/{}/{}\tNew {} :: {}",
+                endpoint,
+                info.board,
+                no,
+                if info.download_media && info.download_thumbnails {
+                    "media & thumbs"
+                } else if info.download_media {
+                    "media"
+                } else if info.download_thumbnails {
+                    "thumbs"
+                } else {
+                    "media"
+                },
+                len
+            );
+        }
+
+        // Chunk to prevent client congestion and errors
+        // Also have the media downloading on a single thread and run things sequentially
+        // there That way the client doesn't have to run 1000+ requests all
+        // at the same time
+        for chunks in media_list.as_slice().chunks(20) {
+            for row in chunks {
+                let sha256 = row.get::<&str, Option<Vec<u8>>>("sha256")?;
+                let sha256t = row.get::<&str, Option<Vec<u8>>>("sha256t")?;
+                [
+                    (sha256, YotsubaStatement::UpdateHashMedia),
+                    (sha256t, YotsubaStatement::UpdateHashThumbs)
+                ]
+                .iter()
+                .for_each(|(current_hash, mode)| {
+                    let hash_exists = matches!(current_hash, Some(hash) if hash.len() >= (65 / 2));
+                    if !hash_exists
+                        && ((info.download_media
+                            && matches!(mode, YotsubaStatement::UpdateHashMedia))
+                            || (info.download_thumbnails
+                                && matches!(mode, YotsubaStatement::UpdateHashThumbs)))
+                    {
+                        has_media = true;
+                        fut.push(self.dl_media_post2(row, info, *mode));
                     }
+                });
+            }
 
-                    if !has_media {
-                        continue;
-                    }
+            if !has_media {
+                continue;
+            }
 
-                    while let Some(Ok((no, hashsum, mode))) = fut.next().await {
-                        if let Some(hsum) = hashsum {
-                            if !self.config.settings.asagi_mode {
-                                if let Err(e) = self
-                                    .query
-                                    .update_hash(
-                                        statements,
-                                        endpoint,
-                                        info.board,
-                                        no,
-                                        mode.is_thumbs_val(),
-                                        hsum
-                                    )
-                                    .await
-                                {
-                                    error!(
-                                        "({})\t\t/{}/{}\t|update_hash| {}",
-                                        endpoint, info.board, no, e
-                                    )
-                                }
-                            }
+            while let Some(Ok((no, hashsum, mode))) = fut.next().await {
+                if let Some(hsum) = hashsum {
+                    if !self.config.settings.asagi_mode {
+                        if let Err(e) = self
+                            .query
+                            .update_hash(
+                                statements,
+                                endpoint,
+                                info.board,
+                                no,
+                                mode.is_thumbs_val(),
+                                hsum
+                            )
+                            .await
+                        {
+                            error!("({})\t\t/{}/{}\t|update_hash| {}", endpoint, info.board, no, e)
                         }
                     }
-                    sleep(dur).await;
                 }
             }
+            sleep(dur).await;
         }
         Ok(true)
     }

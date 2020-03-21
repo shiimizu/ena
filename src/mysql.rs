@@ -933,15 +933,12 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         //     .flatten()
         //     .unwrap_or(1))
 
+        // The result of this query will be empty since it's not SELECTing anything
         conn = conn.drop_query(format!("SELECT *,1 from `{}` limit 1 for update;", board)).await?;
-
         Ok(conn
-            .prep_exec(self.query_update_thread(board), params! {"jj" => json })
-            .await?
-            .collect_and_drop()
-            .await?
-            .1
-            .pop()
+            .first_exec(self.query_update_thread(board), params! {"jj" => json })
+            .await
+            .map(|(c, val)| val)?
             .unwrap_or(1))
     }
 
@@ -1058,83 +1055,47 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         board: YotsubaBoard, item: &[u8]
     ) -> Result<VecDeque<u32>>
     {
-        log::debug!("inside threads");
+        log::debug!("threads");
         let conn = self.get_conn().await?;
         let json = serde_json::from_slice::<serde_json::Value>(item)?;
         // let id = YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::Threads };
-
-        // Ok(statement
-        //     .first(params! { "jj" => json })
-        //     .await
-        //     .map(|(c, r)| r.ok_or_else(|| anyhow!("Error in executing getting list of
-        // threads")))?     .map(|re| serde_json::from_value(re))??)
-
-        let r = Ok(conn
-            .prep_exec(self.query_threads(), params! { "jj"=>json})
-            .await?
-            .collect_and_drop()
-            .await?
-            .1
-            .pop()
+        Ok(conn
+            .first_exec(self.query_threads(), params! { "jj"=>json})
+            .await
+            .map(|(c, val): (mysql_async::Conn, Option<Row>)| val)?
+            .map(|r| r.get(0))
+            .flatten()
             .map(|j: Option<serde_json::Value>| j)
             .flatten()
-            .map(|j| serde_json::from_value(j))
-            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??);
-        // pool.disconnect().await?;
-        r
-        // Ok(conn
-        //     .first_exec(self.query_threads(), params! { "jj"=>json})
-        //     .await
-        //     .map(|(c, r)| r)
-        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
-        //     .ok()
-        //     .flatten()
-        //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
+            .map(|j| serde_json::from_value::<VecDeque<Option<u32>>>(j))
+            .ok_or_else(|| anyhow!("|threads| Empty or null in getting {}", endpoint))?
+            .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?)
     }
 
     async fn threads_modified(
-        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, new_threads: &[u8],
-        statements: &StatementStore<Statement>
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, new_threads: &[u8]
     ) -> Result<VecDeque<u32>>
     {
         log::debug!("threads_modified");
         let conn = self.get_conn().await?;
         let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
         // let id = YotsubaIdentifier::new(YotsubaEndpoint::Threads, board,
-        // Ok(statement
-        //     .first(params! {"bb" => board.to_string(), "jj" => json})
-        //     .await
-        //     .map(|(c, r)| r.ok_or_else(|| anyhow!("Error in executing threads_modified")))?
-        //     .map(|re| serde_json::from_value(re))??)
-
-        // Ok(conn
-        //     .first_exec(
-        //         self.query_threads_modified(YotsubaEndpoint::Threads),
-        //         params! {"bb" => &board.to_string(), "jj" => json}
-        //     )
-        //     .await
-        //     .map(|(c, r)| r)
-        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
-        //     .ok()
-        //     .flatten()
-        //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
-
-        let r = Ok(conn
-            .prep_exec(
+        // YotsubaStatement::ThreadsModified);
+        Ok(conn
+            .first_exec(
                 self.query_threads_modified(endpoint),
                 params! {"bb" => &board.to_string(), "jj" => json}
             )
-            .await?
-            .collect_and_drop()
-            .await?
-            .1
-            .pop()
+            .await
+            .map(|(c, val): (mysql_async::Conn, Option<Row>)| val)?
+            .map(|r| r.get(0))
+            .flatten()
             .map(|j: Option<serde_json::Value>| j)
             .flatten()
-            .map(|j| serde_json::from_value(j))
-            .ok_or_else(|| anyhow!("Error in executing threads_modified"))??);
-        // pool.disconnect().await?;
-        r
+            .map(|j| serde_json::from_value::<VecDeque<Option<u32>>>(j))
+            .ok_or_else(|| anyhow!("|threads_modified| Empty or null in getting {}", endpoint))?
+            .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?)
     }
 
     async fn threads_combined(
@@ -1145,42 +1106,23 @@ impl QueriesExecutor<Statement, mysql_async::Row> for Pool {
         log::debug!("threads_combined");
         // let pool = mysql_async::Pool::from_url("mysql://root:zxc@localhost:3306/asagi")?;
         let conn = self.get_conn().await?;
-        let id =
-            YotsubaIdentifier { endpoint, board, statement: YotsubaStatement::ThreadsCombined };
         let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
-
-        // Ok(statement
-        //     .first(params! {"bb" => board.to_string(), "jj" => json})
-        //     .await
-        //     .map(|(c, r)| r.ok_or_else(|| anyhow!("Error in executing threads_combined")))?
-        //     .map(|re| serde_json::from_value(re))??)
-
-        // Ok(conn
-        //     .first_exec(
-        //         self.query_threads_combined(board, endpoint),
-        //         params! {"bb" => &board.to_string(), "jj" => json}
-        //     )
-        //     .await
-        //     .map(|(c, r)| r)
-        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re?).ok())
-        //     .ok()
-        //     .flatten()
-        //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
-
+        // let id = YotsubaIdentifier::new(YotsubaEndpoint::Threads, board,
+        // YotsubaStatement::ThreadsCombined);
         Ok(conn
-            .prep_exec(
+            .first_exec(
                 self.query_threads_combined(board, endpoint),
                 params! {"bb" => &board.to_string(), "jj" => json}
             )
-            .await?
-            .collect_and_drop()
-            .await?
-            .1
-            .pop()
+            .await
+            .map(|(c, val): (mysql_async::Conn, Option<Row>)| val)?
+            .map(|r| r.get(0))
+            .flatten()
             .map(|j: Option<serde_json::Value>| j)
             .flatten()
-            .map(|x| serde_json::from_value(x))
-            .ok_or_else(|| anyhow!("Error in executing query_threads_combined"))??)
+            .map(|j| serde_json::from_value::<VecDeque<Option<u32>>>(j))
+            .ok_or_else(|| anyhow!("|threads_combined| Empty or null in getting {}", endpoint))?
+            .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?)
     }
 
     async fn metadata(
@@ -1214,14 +1156,14 @@ fn query_4chan_schema() -> String {
     format!(
         r#"SELECT * FROM JSON_TABLE(:jj, "$.posts[*]" COLUMNS(
         `no`				BIGINT		PATH "$.no",
-        `sticky`			SMALLINT	PATH "$.sticky",
-        `closed`			SMALLINT	PATH "$.closed",
+        `sticky`			TINYINT  	PATH "$.sticky",
+        `closed`			TINYINT  	PATH "$.closed",
         `now`				TEXT		PATH "$.now",
         `name`				TEXT		PATH "$.name",
         `sub`				TEXT		PATH "$.sub",
         `com`				TEXT		PATH "$.com",
-        `filedeleted`		SMALLINT	PATH "$.filedeleted",
-        `spoiler`			SMALLINT	PATH "$.spoiler",
+        `filedeleted`		TINYINT  	PATH "$.filedeleted",
+        `spoiler`			TINYINT 	PATH "$.spoiler",
         `custom_spoiler`	SMALLINT	PATH "$.custom_spoiler",
         `filename`			TEXT		PATH "$.filename",
         `ext`				TEXT		PATH "$.ext",
@@ -1233,15 +1175,15 @@ fn query_4chan_schema() -> String {
         `time`				BIGINT		PATH "$.time",
         `md5`				TEXT		PATH "$.md5",
         `fsize`				BIGINT		PATH "$.fsize",
-        `m_img`				SMALLINT	PATH "$.m_img",
-        `resto`				INT			PATH "$.resto",
+        `m_img`				TINYINT	PATH "$.m_img",
+        `resto`				BIGINT			PATH "$.resto",
         `trip`				TEXT		PATH "$.trip",
         `id`				TEXT		PATH "$.id",
         `capcode`			TEXT		PATH "$.capcode",
         `country`			TEXT		PATH "$.country",
         `country_name`		TEXT		PATH "$.country_name",
-        `archived`			SMALLINT	PATH "$.archived",
-        `bumplimit`			SMALLINT	PATH "$.bumplimit",
+        `archived`			TINYINT    	PATH "$.archived",
+        `bumplimit`			TINYINT   	PATH "$.bumplimit",
         `archived_on`		BIGINT		PATH "$.archived_on",
         `imagelimit`		SMALLINT	PATH "$.imagelimit",
         `semantic_url`		TEXT		PATH "$.semantic_url",

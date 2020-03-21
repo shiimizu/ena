@@ -533,10 +533,10 @@ impl Queries for tokio_postgres::Client {
             .to_string()
     }
 
-    fn query_metadata(&self, column: YotsubaEndpoint) -> String {
+    fn query_metadata(&self, endpoint: YotsubaEndpoint) -> String {
         format!(
             r#"select CASE WHEN {endpoint} is not null THEN true ELSE false END from metadata where board = $1"#,
-            endpoint = column
+            endpoint = endpoint
         )
     }
 
@@ -1186,17 +1186,26 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
         let statement = statements
             .get(&id)
             .ok_or_else(|| anyhow!("|threads| Empty statement from id: {:?}", id))?;
-        let i = serde_json::from_slice::<serde_json::Value>(item)?;
-        Ok(self
-            .query(statement, &[&i])
-            .await
-            .ok()
-            .filter(|re| !re.is_empty())
-            .map(|re| re[0].try_get(0).ok())
-            .flatten()
-            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
-            .flatten()
-            .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
+        let json = serde_json::from_slice::<serde_json::Value>(item)?;
+        let res :VecDeque<u32> = self.query_one(statement, &[&json])
+        .await
+        .map(|row| row.try_get(0))?
+        .map(|r: Option<serde_json::Value>| r)?
+        .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
+        .ok_or_else(|| anyhow!("|threads| Empty or null in getting {}", endpoint))?
+        .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
+        Ok(res)
+
+        // Ok(self
+        //     .query(statement, &[&json])
+        //     .await
+        //     .ok()
+        //     .filter(|re| !re.is_empty())
+        //     .map(|re| re[0].try_get(0).ok())
+        //     .flatten()
+        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+        //     .flatten()
+        //     .ok_or_else(|| anyhow!("Error in executing getting threads"))?)
     }
 
     /// This query is only run ONCE at every startup
@@ -1217,17 +1226,25 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
         let statement = statements
             .get(&id)
             .ok_or_else(|| anyhow!("|threads_combined| Empty statement from id: {:?}", id))?;
-        let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
-        Ok(self
-            .query(statement, &[&board.to_string(), &i])
-            .await
-            .ok()
-            .filter(|re| !re.is_empty())
-            .map(|re| re[0].try_get(0).ok())
-            .flatten()
-            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
-            .flatten()
-            .ok_or_else(|| anyhow!("|threads_combined| An error occurred"))?)
+        let json = serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        let res :VecDeque<u32> = self.query_one(statement, &[&board.to_string(), &json])
+        .await
+        .map(|row| row.try_get(0))?
+        .map(|r: Option<serde_json::Value>| r)?
+        .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
+        .ok_or_else(|| anyhow!("|threads_combined| Empty or null in getting {}", endpoint))?
+        .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
+        Ok(res)
+        // Ok(self
+        //     .query(statement, &[&board.to_string(), &i])
+        //     .await
+        //     .ok()
+        //     .filter(|re| !re.is_empty())
+        //     .map(|re| re[0].try_get(0).ok())
+        //     .flatten()
+        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+        //     .flatten()
+        //     .ok_or_else(|| anyhow!("|threads_combined| An error occurred"))?)
     }
 
     /// Combine new and prev threads.json into one. This retains the prev
@@ -1238,8 +1255,8 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
     /// Return back this list to be processed.
     /// Use the new threads.json as the base now.
     async fn threads_modified(
-        &self, endpoint: YotsubaEndpoint, board: YotsubaBoard, new_threads: &[u8],
-        statements: &StatementStore<Statement>
+        &self, statements: &StatementStore<Statement>, endpoint: YotsubaEndpoint,
+        board: YotsubaBoard, new_threads: &[u8]
     ) -> Result<VecDeque<u32>>
     {
         log::debug!("threads_modified");
@@ -1248,16 +1265,24 @@ impl QueriesExecutor<Statement, Row> for tokio_postgres::Client {
         let statement = statements
             .get(&id)
             .ok_or_else(|| anyhow!("|threads_modified| Empty statement from id: {:?}", id))?;
-        let i = serde_json::from_slice::<serde_json::Value>(new_threads)?;
-        Ok(self
-            .query(statement, &[&board.to_string(), &i])
-            .await
-            .ok()
-            .filter(|re| !re.is_empty())
-            .map(|re| re[0].try_get(0).ok())
-            .flatten()
-            .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
-            .flatten()
-            .ok_or_else(|| anyhow!("|threads_modified| An error occurred"))?)
+        let json= serde_json::from_slice::<serde_json::Value>(new_threads)?;
+        let res :VecDeque<u32> = self.query_one(statement, &[&board.to_string(), &json])
+        .await
+        .map(|row| row.try_get(0))?
+        .map(|r: Option<serde_json::Value>| r)?
+        .map(|res| serde_json::from_value::<VecDeque<Option<u32>>>(res))
+        .ok_or_else(|| anyhow!("|threads_modified| Empty or null in getting {}", endpoint))?
+        .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
+        Ok(res)
+        // Ok(self
+        //     .query(statement, &[&board.to_string(), &i])
+        //     .await
+        //     .ok()
+        //     .filter(|re| !re.is_empty())
+        //     .map(|re| re[0].try_get(0).ok())
+        //     .flatten()
+        //     .map(|re| serde_json::from_value::<VecDeque<u32>>(re).ok())
+        //     .flatten()
+        //     .ok_or_else(|| anyhow!("|threads_modified| An error occurred"))?)
     }
 }
