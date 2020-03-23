@@ -12,7 +12,7 @@ pub enum YotsubaEndpoint {
     Threads,
     Media
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum YotsubaHash {
     Sha256,
     Blake3

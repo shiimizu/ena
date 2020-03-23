@@ -8,6 +8,9 @@ use ena::*;
 
 use crate::sql::*;
 // use serde::{self, Deserialize, Deserializer, Serialize};
+// use serde_json::json;
+// use std::collections::HashSet;
+
 use tokio::{
     runtime::Builder,
     time::{delay_for as sleep, Duration}
@@ -19,7 +22,7 @@ use chrono::Local;
 use log::*;
 fn main() {
     config::check_version();
-    config::display();
+    // config::display();
 
     let start_time = Local::now();
     pretty_env_logger::try_init_timed_custom_env("ENA_LOG").unwrap();
@@ -107,7 +110,6 @@ async fn async_main() -> Result<u64> {
         ));
     }
 
-    // Enjoy muh ASCII art!
     if boards_len < 10 && !asagi_mode {
         sleep(Duration::from_millis(1100)).await;
     }

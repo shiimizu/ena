@@ -235,7 +235,7 @@ impl Default for BoardSettingsInner {
     }
 }
 
-/// Reads a config file
+/// Read a [`Config`] file
 #[allow(unused_assignments)]
 pub fn read_config(config_path: &str) -> Config {
     // Normally we'd be done here
