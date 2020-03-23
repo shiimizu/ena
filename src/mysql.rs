@@ -529,7 +529,7 @@ impl QueriesNew for Pool {
                     IFNULL(sticky, FALSE)								            'sticky',
                     IF((closed IS not NULL or closed=1) and (archived is null or archived = 0), closed, false)     'locked',
                     IF(id='Developer', 'Dev', id)									'poster_hash',	-- Not the same as media_hash
-                    IFNULL(IF(country is not null and (country='XX' or country='A1'), null, country), troll_country)   'poster_country',
+                    IF(country is not null and (country='XX' or country='A1'), null, country)   'poster_country',
                     -- country_name													'poster_country_name',
                     NULLIF(cast(JSON_REMOVE(
                         JSON_OBJECT(
