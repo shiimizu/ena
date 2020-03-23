@@ -240,7 +240,7 @@ where
         let current_board = bs.board;
         let mut tries: i16 = -1;
         let max_tries = bs.retry_attempts as i16;
-        while tries <= max_tries {
+        while tries < max_tries {
             tries += 1;
             if self.is_finished() {
                 return;
@@ -638,7 +638,7 @@ where
         let endpoint = id.endpoint;
         let mut tries: i16 = -1;
         let max_tries = info.retry_attempts as i16;
-        while tries <= max_tries {
+        while tries < max_tries {
             tries += 1;
             if self.is_finished() {
                 return;
