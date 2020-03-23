@@ -497,7 +497,7 @@ impl QueriesNew for Pool {
             ),
             YotsubaStatement::UpdateThread => format!(
                 r#"
-            INSERT INTO `{}`(`poster_ip`,`num`,`subnum`,`thread_num`,`op`,`timestamp`,`timestamp_expired`,`preview_orig`,`preview_w`,`preview_h`,`media_filename`,`media_w`,`media_h`,`media_size`,`media_hash`,`media_orig`,`spoiler`,`deleted`,`capcode`,`email`,`name`,`trip`,`title`,`comment`,`delpass`,`sticky`,`locked`,`poster_hash`,`poster_country`,`exif`)
+            INSERT INTO `{board}`(`poster_ip`,`num`,`subnum`,`thread_num`,`op`,`timestamp`,`timestamp_expired`,`preview_orig`,`preview_w`,`preview_h`,`media_filename`,`media_w`,`media_h`,`media_size`,`media_hash`,`media_orig`,`spoiler`,`deleted`,`capcode`,`email`,`name`,`trip`,`title`,`comment`,`delpass`,`sticky`,`locked`,`poster_hash`,`poster_country`,`exif`)
             SELECT *
             FROM (SELECT
                     -- _id																'media_id',
@@ -529,54 +529,14 @@ impl QueriesNew for Pool {
                     IFNULL(sticky, FALSE)								            'sticky',
                     IF((closed IS not NULL or closed=1) and (archived is null or archived = 0), closed, false)     'locked',
                     IF(id='Developer', 'Dev', id)									'poster_hash',	-- Not the same as media_hash
-                    IF(country is not null and (country='XX' or country='A1'), null, country)   'poster_country',
+                    IFNULL(IF(country is not null and (country='XX' or country='A1'), null, country), troll_country)   'poster_country',
                     -- country_name													'poster_country_name',
                     NULLIF(cast(JSON_REMOVE(
                         JSON_OBJECT(
                         IF(unique_ips is null, 'null__', 'uniqueIps'), cast(unique_ips as char),
                         IF(since4pass is null, 'null__', 'since4pass'), cast(since4pass as char),
-                        IF(country in('AC','AN','BL','CF','CM','CT','DM','EU','FC','GN','GY','JH','KN','MF','NB','NZ','PC','PR','RE','TM','TR','UN','WP'), 'trollCountry', 'null__' ), country), '$.null__') as char), '{{}}')    'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
-            FROM (
-            SELECT * FROM JSON_TABLE(:jj, "$.posts[*]" COLUMNS (
-                    -- `_id`						FOR ORDINALITY,
-                    `no`				BIGINT		PATH "$.no",
-                    `sticky`			SMALLINT	PATH "$.sticky",
-                    `closed`			SMALLINT	PATH "$.closed",
-                    `now`				TEXT		PATH "$.now",
-                    `name`				TEXT		PATH "$.name",
-                    `sub`				TEXT		PATH "$.sub",
-                    `com`				TEXT		PATH "$.com",
-                    `filedeleted`		SMALLINT	PATH "$.filedeleted",
-                    `spoiler`			SMALLINT	PATH "$.spoiler",
-                    `custom_spoiler`	SMALLINT	PATH "$.custom_spoiler",
-                    `filename`			TEXT		PATH "$.filename",
-                    `ext`				TEXT		PATH "$.ext",
-                    `w`					INT			PATH "$.h",
-                    `h`					INT			PATH "$.w",
-                    `tn_w`				INT			PATH "$.tn_w",
-                    `tn_h`				INT			PATH "$.tn_h",
-                    `tim`				BIGINT		PATH "$.tim",
-                    `time`				BIGINT		PATH "$.time",
-                    `md5`				TEXT		PATH "$.md5",
-                    `fsize`				BIGINT		PATH "$.fsize",
-                    `m_img`				SMALLINT	PATH "$.m_img",
-                    `resto`				INT			PATH "$.resto",
-                    `trip`				TEXT		PATH "$.trip",
-                    `id`				TEXT		PATH "$.id",
-                    `capcode`			TEXT		PATH "$.capcode",
-                    `country`			TEXT		PATH "$.country",
-                    `country_name`		TEXT		PATH "$.country_name",
-                    `archived`			SMALLINT	PATH "$.archived",
-                    `bumplimit`			SMALLINT	PATH "$.bumplimit",
-                    `archived_on`		BIGINT		PATH "$.archived_on",
-                    `imagelimit`		SMALLINT	PATH "$.imagelimit",
-                    `semantic_url`		TEXT		PATH "$.semantic_url",
-                    `replies`			INT			PATH "$.replies",
-                    `images`			INT			PATH "$.images",
-                    `unique_ips`		INT			PATH "$.unique_ips",
-                    `tag`				TEXT		PATH "$.tag",
-                    `since4pass`		SMALLINT	PATH "$.since4pass")
-                ) AS w) AS `4chan`) AS q
+                        IF(country or troll_country in('AC','AN','BL','CF','CM','CT','DM','EU','FC','GN','GY','JH','KN','MF','NB','NZ','PC','PR','RE','TM','TR','UN','WP'), 'trollCountry', 'null__' ), IFNULL(country, troll_country)), '$.null__') as char), '{{}}')    'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
+            FROM ( {schema_4chan_query} ) AS `4chan`) AS q
                 ON DUPLICATE KEY UPDATE
                     -- `poster_ip`		= values(`poster_ip`),
                     `num`				= values(`num`),
@@ -609,7 +569,8 @@ impl QueriesNew for Pool {
                     `poster_country`	= values(`poster_country`),
                     `exif`				= values(`exif`);
             "#,
-                id.board
+                board = id.board,
+                schema_4chan_query = query_4chan_schema()
             ),
             YotsubaStatement::Delete => format!(
                 "UPDATE `{}` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0",
@@ -1113,6 +1074,7 @@ fn query_4chan_schema() -> String {
         `id`				TEXT		PATH "$.id",
         `capcode`			TEXT		PATH "$.capcode",
         `country`			TEXT		PATH "$.country",
+        `troll_country`		TEXT		PATH "$.troll_country",
         `country_name`		TEXT		PATH "$.country_name",
         `archived`			TINYINT    	PATH "$.archived",
         `bumplimit`			TINYINT   	PATH "$.bumplimit",

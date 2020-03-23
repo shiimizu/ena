@@ -67,6 +67,7 @@ pub mod core {
     ///   [`archived_on`](struct.Post.html#structfield.archived_on)  
     /// ## Modified  
     /// - [`md5`](struct.Post.html#structfield.md5) From base64 to binary, to save space
+    /// - [`country`](struct.Post.html#structfield.country) Use `troll_country` if [`country`] is `NULL`
     /// - To boolean, to save space
     ///     - [`sticky`](struct.Post.html#structfield.sticky)
     ///     - [`closed`](struct.Post.html#structfield.closed)
@@ -257,7 +258,7 @@ pub mod core {
         pub capcode: Option<String>,
     
         /// Appears: `if country flags are enabled`  
-        /// Possible values: `2 character string` or `XX` if unknown  
+        /// Possible values: `2 character string` or `XX` if unknown or `troll_country` if present 
         /// <font style="color:#789922;">> Poster's [ISO 3166-1 alpha-2 country code](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2)</font>
         pub country: Option<String>,
     
@@ -615,7 +616,7 @@ impl QueriesNew for Client {
               SELECT
               no,sticky::int::bool,closed::int::bool,name,sub,com,filedeleted::int::bool,spoiler::int::bool,
               custom_spoiler,filename,ext,w,h,tn_w,tn_h,tim,time, (CASE WHEN length(q.md5)>20 and q.md5 IS NOT NULL THEN decode(REPLACE (q.md5, E'\\', '')::text, 'base64'::text) ELSE null::bytea END) AS md5,
-              fsize, m_img::int::bool, resto,trip,q.id,capcode,country,country_name,bumplimit::int::bool,
+              fsize, m_img::int::bool, resto,trip,q.id,capcode,COALESCE(country, troll_country) as country,country_name,bumplimit::int::bool,
               archived_on,imagelimit::int::bool,semantic_url,replies,images,unique_ips,
               tag,since4pass, extract(epoch from now())::bigint as last_modified
               FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts') q
@@ -802,6 +803,7 @@ impl QueriesNew for Client {
               id text,
               capcode text,
               country text,
+              troll_country text,
               country_name text,
               archived smallint,
               bumplimit smallint,
@@ -1376,7 +1378,7 @@ mod test {
         get_threads_modified_send_unknown_json: (YotsubaEndpoint::Threads, *BOARD, YotsubaStatement::ThreadsModified, JsonType::Unknown),
         get_threads_combined_send_unknown_json: (YotsubaEndpoint::Threads, *BOARD, YotsubaStatement::ThreadsCombined, JsonType::Unknown),
 
-        // // threads.json
+        // archive.json
         get_archive_send_added_json: (YotsubaEndpoint::Archive, *BOARD, YotsubaStatement::Threads, JsonType::AddedFields),
         get_archive_modified_send_added_json: (YotsubaEndpoint::Archive, *BOARD, YotsubaStatement::ThreadsModified, JsonType::AddedFields),
         get_archive_combined_send_added_json: (YotsubaEndpoint::Archive, *BOARD, YotsubaStatement::ThreadsCombined, JsonType::AddedFields),
