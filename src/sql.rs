@@ -452,15 +452,15 @@ impl DatabaseTrait<mysql::Statement, mysql_async::Row> for Pool {}
 
 /// 4chan single thread
 #[allow(dead_code)]
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Thread {
     /// List of posts
-    pub posts: Vec<Post>
+    pub posts: HashSet<Post>
 }
 
 impl Default for Thread {
     fn default() -> Self {
-        Self { posts: vec![] }
+        Self { posts: HashSet::new() }
     }
 }
 
@@ -468,7 +468,7 @@ impl Default for Thread {
 #[allow(dead_code)]
 #[cold]
 #[rustfmt::skip]
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone,  Eq, Hash)]
 #[serde(default)]
 pub struct Post {
     pub no:             u64,
@@ -508,6 +508,12 @@ pub struct Post {
     pub unique_ips:     Option<u32>,
     pub tag:            Option<String>,
     pub since4pass:     Option<u16>
+}
+
+impl PartialEq for Post {
+    fn eq(&self, other: &Self) -> bool {
+        self.no == other.no
+    }
 }
 
 impl Default for Post {
@@ -747,10 +753,11 @@ impl DiffTrait<Vec<u8>> for Vec<u8> {
                     Diff::Difference => tt.difference(&tt2).map(|&s| s).collect(),
                     Diff::Union => tt.union(&tt2).map(|&s| s).collect()
                 };
-                let mut diff: Vec<_> = diff.into_iter().collect();
-                diff.sort();
-                diff.dedup();
-                return Ok(diff.into_iter().collect());
+                // let mut diff: Vec<_> = diff.into_iter().collect();
+                // diff.sort();
+                // diff.dedup();
+                // return Ok(diff.into_iter().collect());
+                return Ok(diff);
             }
             YotsubaEndpoint::Threads => {
                 let set: ThreadsList = serde_json::from_slice(self).unwrap();

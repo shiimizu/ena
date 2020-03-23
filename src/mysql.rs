@@ -615,6 +615,9 @@ impl QueriesNew for Pool {
                 "UPDATE `{}` SET deleted = 1, timestamp_expired = unix_timestamp() WHERE num = ? AND subnum = 0",
                 id.board
             ),
+
+            // This is not used as MySQL takes too long processing this.
+            // So it is done locally with a HashSet
             YotsubaStatement::UpdateDeleteds => format!(
                 r#"
                     UPDATE `{board}`, (
@@ -653,6 +656,9 @@ impl QueriesNew for Pool {
             WHERE no is not null LOCK IN SHARE MODE;
             "#
             .to_string(),
+
+            // This is not used as MySQL takes too long processing this.
+            // So it is done locally with a HashSet
             YotsubaStatement::ThreadsModified => {
                 let threads = r#"
             select JSON_ARRAYAGG(c) from (
@@ -714,6 +720,9 @@ impl QueriesNew for Pool {
                     _ => archive
                 }
             }
+
+            // This is not used as MySQL takes too long processing this.
+            // So it is done locally with a HashSet
             YotsubaStatement::ThreadsCombined => {
                 let thread = format!(
                     r#"
@@ -890,26 +899,56 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 .await?;
                 Ok(1)
             }
+
             YotsubaStatement::UpdateDeleteds => {
-                let json = serde_json::from_slice::<serde_json::Value>(item?)?;
+                // {thread}.json
+                // get posts from db
+                // compare that with fetched posts
+                // mark deleted - the ones missing in fetched posts
+                let q: Thread = serde_json::from_slice(item?)?;
+                let new: Queue = q.posts.into_iter().map(|post| post.no).collect();
+                let min = new.iter().min().ok_or_else(|| {
+                    anyhow!("|QueriesExecutorNew::{}| Empty `min` from threads", statement)
+                })?;
+                // q.min();
                 let no = no?;
-                conn = conn
-                    .drop_query(format!(
-                        "SELECT *,1 from `{}` where thread_num={} for update;",
-                        board, no
-                    ))
+                let (conn, val) : (mysql_async::Conn, Option<serde_json::Value>) = conn
+                    .first_exec(format!(
+                        "SELECT JSON_ARRAYAGG(num) from `{board}` where thread_num=? and thread_num >= ? for update;",
+                        board = board
+                    ), (no, min))
                     .await?;
+                let val = val.ok_or_else(|| {
+                    anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
+                });
+
+                let orig: Queue = serde_json::from_value(val?)?;
+                let diff: HashSet<_> = orig.difference(&new).collect();
+                if diff.is_empty() {
+                    // Here, the threads diff return no changes, meaning no posts are deleted
+                    return Ok(1);
+                }
+                log::info!("min: {} thread_num: {} diff: {:?}", min, no, diff);
 
                 Ok(conn
-                    .prep_exec(
-                        self.inquiry(statement, id.clone()),
-                        params! {"jj" => json, "no" => &i64::try_from(no)? }
+                    .first_exec(
+                        format!(
+                            r#"
+                                UPDATE `{board}`, (
+                                    SELECT * FROM `{board}` where num in(
+                                        SELECT no from
+                                        JSON_TABLE(:jj,     "$[*]" COLUMNS(
+                                        `no`				bigint		PATH "$"))q) for update
+                                ) as `src`
+                                SET `{board}`.deleted = 1;"#,
+                            board = id.board
+                        ),
+                        params! {"jj" => serde_json::to_value(&diff)? }
                     )
-                    .await?
-                    .collect_and_drop()
-                    .await?
-                    .1
-                    .pop()
+                    .await
+                    // This will return empty since we're not selecting anything, so we can return a
+                    // code of 1.
+                    .map(|(c, val): (mysql_async::Conn, Option<u64>)| val)?
                     .unwrap_or(1))
             }
             YotsubaStatement::InitType

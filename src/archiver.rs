@@ -636,7 +636,13 @@ where
     {
         let board = info.board;
         let endpoint = id.endpoint;
-        for _ in 0..(info.retry_attempts + 1) {
+        let mut tries: i16 = -1;
+        let max_tries = info.retry_attempts as i16;
+        while tries <= max_tries {
+            tries += 1;
+            if self.is_finished() {
+                return;
+            }
             match self
                 .client
                 .get(
@@ -674,7 +680,10 @@ where
                                     "({})\t/{}/{}\t[{}/{}] |update_thread| {}",
                                     endpoint, board, thread, position, length, e
                                 );
+                                // This will loop until it gets done
+                                // It could be unwanted though
                                 sleep(Duration::from_millis(1500)).await;
+                                tries = 0;
                                 continue;
                             }
                             match self
@@ -697,7 +706,10 @@ where
                                         "({})\t/{}/{}\t[{}/{}] |update_deleteds| {}",
                                         endpoint, board, thread, position, length, e
                                     );
+                                    // This will loop until it gets done
+                                    // It could be unwanted though
                                     sleep(Duration::from_millis(1500)).await;
+                                    tries = 0;
                                     continue;
                                 }
                             }
