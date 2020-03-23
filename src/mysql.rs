@@ -914,13 +914,17 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 let no = no?;
                 let (conn, val) : (mysql_async::Conn, Option<serde_json::Value>) = conn
                     .first_exec(format!(
-                        "SELECT JSON_ARRAYAGG(num) from `{board}` where thread_num=? and thread_num >= ? for update;",
+                        "SELECT JSON_ARRAYAGG(num) from `{board}` where thread_num=? and thread_num >= ?;",
                         board = board
                     ), (no, min))
                     .await?;
                 let val = val.ok_or_else(|| {
                     anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
                 });
+                if val.is_err() {
+                    // Here, the threads diff return no changes, meaning no posts are deleted
+                    return Ok(1);
+                }
 
                 let orig: Queue = serde_json::from_value(val?)?;
                 let diff: HashSet<_> = orig.difference(&new).collect();
@@ -934,13 +938,12 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                     .first_exec(
                         format!(
                             r#"
-                                UPDATE `{board}`, (
-                                    SELECT * FROM `{board}` where num in(
-                                        SELECT no from
-                                        JSON_TABLE(:jj,     "$[*]" COLUMNS(
-                                        `no`				bigint		PATH "$"))q) for update
-                                ) as `src`
-                                SET `{board}`.deleted = 1;"#,
+                            UPDATE `{board}`
+                            SET deleted = 1
+                            where num in (
+                                    SELECT no from
+                                    JSON_TABLE(:jj,     "$[*]" COLUMNS(
+                                    `no`				bigint		PATH "$")) z);"#,
                             board = id.board
                         ),
                         params! {"jj" => serde_json::to_value(&diff)? }
