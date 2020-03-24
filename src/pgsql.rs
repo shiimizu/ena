@@ -754,7 +754,11 @@ impl QueriesNew for Client {
                 r#"
             INSERT INTO "{board}" (no, time, resto)
             SELECT x.* FROM
-              (SELECT no, time, resto FROM "{board}" where no=$2 or resto=$2 order by no) x
+              (
+                SELECT no, time, resto FROM "{board}" where (no=$2 or resto=$2) and no >= (
+                    (SELECT min(no) FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts'))
+                ) order by no
+              ) x
               --(SELECT * FROM "{board}" where no=$2 or resto=$2 order by no) x
             FULL JOIN
               (SELECT no, time, resto FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
