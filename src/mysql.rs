@@ -21,6 +21,14 @@ use std::{
 
 pub type Statement = mysql_async::Stmt<mysql_async::Conn>;
 
+// Exif field in Asagi schema
+// pub struct Exif {
+//     uniqueIps: String,
+//     archivedOn: u64,
+//     since4pass: String,
+//     trollCountry: String
+// }
+
 #[cold]
 #[allow(dead_code)]
 pub mod asagi {
@@ -569,6 +577,7 @@ impl QueriesNew for Pool {
                     NULLIF(cast(JSON_REMOVE(
                         JSON_OBJECT(
                         IF(unique_ips is null, 'null__', 'uniqueIps'), cast(unique_ips as char),
+                        IF(archived_on is null, 'null__', 'archivedOn'), archived_on,
                         IF(since4pass is null, 'null__', 'since4pass'), cast(since4pass as char),
                         IF(country or troll_country in('AC','AN','BL','CF','CM','CT','DM','EU','FC','GN','GY','JH','KN','MF','NB','NZ','PC','PR','RE','TM','TR','UN','WP'), 'trollCountry', 'null__' ), IFNULL(country, troll_country)), '$.null__') as char), '{{}}')    'exif' -- JSON in text format of uniqueIps, since4pass, and trollCountry. Has some deprecated fields but still used by Asagi and FF.
             FROM ( {schema_4chan_query} ) AS `4chan`) AS q
@@ -844,10 +853,11 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
             }
             YotsubaStatement::InitBoard => {
                 // Usually we'd just query the entire board + procedures + triggers creation
-                // But MySQL is taking too long because it drops and recreates the procedures + triggers 
-                // on each restart of this program so we have to handle it manually by checking if exists,
-                // if it does skip it, else create them.
-            
+                // But MySQL is taking too long because it drops and recreates the procedures +
+                // triggers on each restart of this program so we have to handle it
+                // manually by checking if exists, if it does skip it, else create
+                // them.
+
                 // MySQL doesn't use a schema so this can be None.
                 // Also the `None` identifier notfies the method to return the board creation string
                 let inner_id = QueryIdentifier { schema: None, ..id.clone() };
@@ -1064,10 +1074,10 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         let conn = self.get_conn().await?;
         let item = item.ok_or_else(|| {
             anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
-        });
+        })?;
         if matches!(endpoint, YotsubaEndpoint::Archive) {
-            let u: Queue = serde_json::from_slice(item?)?;
-            return Ok(conn
+            let u: Queue = serde_json::from_slice(item)?;
+            let ret: Queue = conn
                 .first_exec(
                     format!("select `{}` from metadata where board = '{}'", endpoint, board),
                     ()
@@ -1091,9 +1101,30 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                     YotsubaStatement::ThreadsModified =>
                         t.symmetric_difference(&u).map(|&s| s).collect(),
                     _ => t.union(&u).map(|&s| s).collect()
-                })?);
+                })?;
+
+            // Diff against archived/deleted
+            // Because this is archives, do additional checks for archived/deleted
+            match statement {
+                YotsubaStatement::Threads => {
+                    return Ok(ret);
+                }
+                _ => {
+                    // YotsubaStatement::ThreadsModified|YotsubaStatement::ThreadsCombined
+
+                    let conn = self.get_conn().await?;
+                    let (conn, v):(mysql_async::Conn, Option<Option<serde_json::Value>>) = conn.first(format!("select JSON_ARRAYAGG(num) from `{board}` where op=1 and (deleted=1 or exif like '%archived%');", board=id.board)).await?;
+                    let res = v.flatten().map(|val| serde_json::from_value::<HashSet<u64>>(val));
+                    if let Some(Ok(rr)) = res {
+                        return Ok(ret.difference(&rr).map(|&i| i).collect());
+                    } else {
+                        return Ok(ret);
+                    }
+                }
+            }
         }
-        let threads: Vec<Threads> = serde_json::from_slice(item?)?;
+        let threads: Vec<Threads> = serde_json::from_slice(item)?;
+        let conn = self.get_conn().await?;
         Ok(conn
             .first_exec(
                 format!("select `{}` from metadata where board = '{}'", endpoint, board),

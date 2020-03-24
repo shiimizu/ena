@@ -565,6 +565,14 @@ where
                 if self.config.settings.strict_mode {
                     _sem_thread = Some(semaphore.acquire().await);
                 }
+                if self.is_finished() {
+                    if let Err(_) = t.send((bs.clone(), statements_media.clone(), 0)) {
+                        // Don't display an error if we're sending the exit code
+                        // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
+                    }
+                    sleep(Duration::from_millis(1500)).await;
+                    break;
+                }
 
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, id, thread, position, threads_len, &statements).await;

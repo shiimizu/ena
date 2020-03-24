@@ -501,8 +501,8 @@ impl QueriesNew for Client {
                 endpoint = id.endpoint
             ),
             YotsubaStatement::Threads => {
-                // This endpoint will always be threads because archived threads are handled
-                // locally because it's just an array
+                // This endpoint will always be threads because archived threads
+                // are already in array format, we can just return them
                 "SELECT jsonb_agg(newv->'no')
                 FROM
                 (SELECT jsonb_array_elements(jsonb_array_elements($1::jsonb)->'threads') as newv)z
@@ -517,6 +517,8 @@ impl QueriesNew for Client {
             // we basically have a list of deleted and modified threads.
             // Return back this list to be processed.
             // Use the new threads.json as the base now.
+            // Additionally the fetched thread is checksummed against the thread in db
+            // if any changes have been made.
             YotsubaStatement::ThreadsModified => format!(
                 r#"
         SELECT (
@@ -564,7 +566,7 @@ impl QueriesNew for Client {
             ),
 
             // This query is only run ONCE at every startup
-            // Running a JOIN to compare against the entire DB on every INSERT/UPDATE
+            // Running a JOIN to compare against the entire DB on EVERY INSERT/UPDATE
             // would not be that great. That is not done here.
             // This gets all the threads from cache, compares it to the new json to get
             // new + modified threads Then compares that result to the database
@@ -1145,6 +1147,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
     ) -> Result<Queue>
     {
         log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
+        // This `get_list` method could be run with any one of the following:
         if !matches!(
             statement,
             YotsubaStatement::Threads
@@ -1157,6 +1160,9 @@ impl QueriesExecutorNew<Statement, Row> for Client {
                 statement
             ));
         }
+        // Inside `create_statements` we use `media_mode` as the `statement`
+        // Se we have to put in the right `statement` to get the right id
+
         let id = QueryIdentifier { media_mode: statement, ..id.clone() };
         // log::info!("{:?}", &id);
         let endpoint = id.endpoint;
@@ -1165,7 +1171,11 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         let item = item.ok_or_else(|| {
             anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
         });
-        if matches!(endpoint, YotsubaEndpoint::Archive) {
+
+        // Return the archive thread as a `Queue` because it's already an array
+        if matches!(endpoint, YotsubaEndpoint::Archive)
+            && matches!(statement, YotsubaStatement::Threads)
+        {
             return Ok(serde_json::from_slice(item?)?);
         }
 
