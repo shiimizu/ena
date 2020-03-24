@@ -94,8 +94,6 @@ async fn async_main() -> Result<u64> {
         config = Ok(config::read_config(cfg));
     }
     let config = config?;
-    println!("{:?}", config);
-
     let boards_len = config.boards.len();
     let asagi_mode = config.settings.asagi_mode;
 
