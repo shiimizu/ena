@@ -147,6 +147,7 @@ async fn async_main() -> Result<u64> {
             }
         });
         info!("Connected with:\t\t{}", config.settings.db_url);
+
         archiver = MuhArchiver::new(Box::new(
             archiver::YotsubaArchiver::new(db_client, http_client, config).await
         ));

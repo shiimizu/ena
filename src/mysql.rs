@@ -28,7 +28,6 @@ pub type Statement = mysql_async::Stmt<mysql_async::Conn>;
 //     since4pass: String,
 //     trollCountry: String
 // }
-
 #[cold]
 #[allow(dead_code)]
 pub mod asagi {
@@ -83,7 +82,7 @@ impl Archiver for YotsubaArchiver<Statement, mysql_async::Row, Pool, reqwest::Cl
     }
 }
 
-impl QueriesNew for Pool {
+impl QueryRaw for Pool {
     fn inquiry(&self, statement: YotsubaStatement, id: QueryIdentifier) -> String {
         match statement {
             YotsubaStatement::InitSchema => format!(
@@ -830,22 +829,19 @@ impl QueriesNew for Pool {
 }
 
 #[async_trait]
-impl QueriesExecutorNew<Statement, Row> for Pool {
+impl Query<Statement, Row> for Pool {
     async fn first(
         &self, statement: YotsubaStatement, id: &QueryIdentifier,
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<u64>
     {
-        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
+        log::debug!("|Query| Running: {} /{}/", statement, id.board);
         let endpoint = id.endpoint;
         let board = id.board;
-        let mut conn = self.get_conn().await?;
+        let conn = self.get_conn().await?;
 
-        let item = item.ok_or_else(|| {
-            anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
-        });
-        let no =
-            no.ok_or_else(|| anyhow!("|QueriesExecutorNew::{}| Empty `no` received", statement));
+        let item = item.ok_or_else(|| anyhow!("|Query::{}| Empty `json` item received", statement));
+        let no = no.ok_or_else(|| anyhow!("|Query::{}| Empty `no` received", statement));
         match statement {
             YotsubaStatement::InitSchema | YotsubaStatement::InitMetadata => {
                 conn.drop_query(&self.inquiry(statement, id.clone())).await?;
@@ -952,12 +948,12 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 .unwrap_or(0)),
             YotsubaStatement::UpdateMetadata => {
                 let json = serde_json::from_slice::<serde_json::Value>(item?)?;
-                conn = conn
-                    .drop_exec(
-                        "SELECT *,1 from `metadata` WHERE board = ? for update;",
-                        (&board.to_string(),)
-                    )
-                    .await?;
+                // conn = conn
+                //     .drop_exec(
+                //         "SELECT *,1 from `metadata` WHERE board = ? for update;",
+                //         (&board.to_string(),)
+                //     )
+                //     .await?;
                 Ok(conn
                     .first_exec(
                         self.inquiry(statement, id.clone()),
@@ -970,9 +966,9 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
             YotsubaStatement::UpdateThread => {
                 // The result of this query will be empty since it's not SELECTing anything
                 let json = serde_json::from_slice::<serde_json::Value>(item?)?;
-                conn = conn
-                    .drop_query(format!("SELECT *,1 from `{}` limit 1 for update;", board))
-                    .await?;
+                // conn = conn
+                //     .drop_query(format!("SELECT *,1 from `{}` limit 1 for update;", board))
+                //     .await?;
                 Ok(conn
                     .first_exec(self.inquiry(statement, id.clone()), params! {"jj" => json })
                     .await
@@ -981,13 +977,12 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
             }
             YotsubaStatement::Delete => {
                 let no = no?;
-                conn.drop_query(format!(
-                    "SELECT num, deleted, timestamp_expired,1 from `{}` WHERE num = {} for update;",
-                    board, no
-                ))
-                .await?
-                .drop_exec(self.inquiry(statement, id.clone()), (&i64::try_from(no)?,))
-                .await?;
+                // conn.drop_query(format!(
+                //     "SELECT num, deleted, timestamp_expired from `{}` WHERE num = {} for
+                // update;",     board, no
+                // ))
+                // .await?
+                conn.drop_exec(self.inquiry(statement, id.clone()), (&i64::try_from(no)?,)).await?;
                 Ok(1)
             }
 
@@ -998,9 +993,10 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 // mark deleted - the ones missing in fetched posts
                 let q: Thread = serde_json::from_slice(item?)?;
                 let new: Queue = q.posts.into_iter().map(|post| post.no).collect();
-                let min = new.iter().min().ok_or_else(|| {
-                    anyhow!("|QueriesExecutorNew::{}| Empty `min` from threads", statement)
-                })?;
+                let min = new
+                    .iter()
+                    .min()
+                    .ok_or_else(|| anyhow!("|Query::{}| Empty `min` from threads", statement))?;
                 // q.min();
                 let no = no?;
                 let (conn, val) : (mysql_async::Conn, Option<serde_json::Value>) = conn
@@ -1009,9 +1005,8 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                         board = board
                     ), (no, min))
                     .await?;
-                let val = val.ok_or_else(|| {
-                    anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
-                });
+                let val =
+                    val.ok_or_else(|| anyhow!("|Query::{}| Empty `json` item received", statement));
                 if val.is_err() {
                     // Here, the threads diff return no changes, meaning no posts are deleted
                     return Ok(1);
@@ -1053,7 +1048,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
             // YotsubaStatement::Threads => {},
             // YotsubaStatement::ThreadsModified => {},
             // YotsubaStatement::ThreadsCombined => {},
-            _ => Err(anyhow!("|QueriesExecutorNew| Unknown statement: {}", statement))
+            _ => Err(anyhow!("|Query| Unknown statement: {}", statement))
         }
     }
 
@@ -1062,7 +1057,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<Queue>
     {
-        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
+        log::debug!("|Query| Running: {} /{}/", statement, id.board);
         if !matches!(
             statement,
             YotsubaStatement::Threads
@@ -1070,7 +1065,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 | YotsubaStatement::ThreadsCombined
         ) {
             return Err(anyhow!(
-                "|QueriesExecutorNew::{}| Unknown statement: {}",
+                "|Query::{}| Unknown statement: {}",
                 YotsubaStatement::Threads,
                 statement
             ));
@@ -1079,9 +1074,8 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         let endpoint = id.endpoint;
         let board = id.board;
         let conn = self.get_conn().await?;
-        let item = item.ok_or_else(|| {
-            anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
-        })?;
+        let item =
+            item.ok_or_else(|| anyhow!("|Query::{}| Empty `json` item received", statement))?;
         if matches!(endpoint, YotsubaEndpoint::Archive) {
             let u: Queue = serde_json::from_slice(item)?;
             let ret: Queue = conn
@@ -1097,11 +1091,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 .flatten()
                 .map(|j| serde_json::from_value::<Queue>(j))
                 .ok_or_else(|| {
-                    anyhow!(
-                        "|QueriesExecutorNew::{}| Empty or null in getting {}",
-                        statement,
-                        endpoint
-                    )
+                    anyhow!("|Query::{}| Empty or null in getting {}", statement, endpoint)
                 })?
                 .map(|t: Queue| match statement {
                     YotsubaStatement::Threads => u,
@@ -1145,9 +1135,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
             .map(|j: Option<serde_json::Value>| j)
             .flatten()
             .map(|j| serde_json::from_value::<ThreadsList>(j))
-            .ok_or_else(|| {
-                anyhow!("|QueriesExecutorNew::{}| Empty or null in getting {}", statement, endpoint)
-            })?
+            .ok_or_else(|| anyhow!("|Query::{}| Empty or null in getting {}", statement, endpoint))?
             .map(|t: ThreadsList| match statement {
                 YotsubaStatement::Threads => Ok(t.to_queue()),
                 YotsubaStatement::ThreadsModified => t.symmetric_difference(endpoint, &threads),
@@ -1160,18 +1148,17 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<Vec<Row>>
     {
-        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
+        log::debug!("|Query| Running: {} /{}/", statement, id.board);
         if !matches!(statement, YotsubaStatement::Medias) {
             return Err(anyhow!(
-                "|QueriesExecutorNew::{}| Unknown statement: {}",
+                "|Query::{}| Unknown statement: {}",
                 YotsubaStatement::Medias,
                 statement
             ));
         }
         let id = QueryIdentifier { media_mode: statement, ..id.clone() };
         let conn = self.get_conn().await?;
-        let no =
-            no.ok_or_else(|| anyhow!("|QueriesExecutorNew::{}| Empty `no` received", statement));
+        let no = no.ok_or_else(|| anyhow!("|Query::{}| Empty `no` received", statement));
 
         Ok(conn
             .prep_exec(

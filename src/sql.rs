@@ -290,7 +290,7 @@ pub trait QueriesExecutor<S, R> {
 }
 
 /// New SQL queries to use
-pub trait QueriesNew {
+pub trait QueryRaw {
     fn inquiry(&self, statement: YotsubaStatement, id: QueryIdentifier) -> String;
 }
 
@@ -308,7 +308,7 @@ impl Ret for u64 {}
 ///
 /// See [`YotsubaStatement`]
 #[async_trait]
-pub trait QueriesExecutorNew<S, R> {
+pub trait Query<S, R> {
     /// For the rest of [`YotsubaStatement`]
     async fn first(
         &self, statement: YotsubaStatement, id: &QueryIdentifier, statements: &StatementStore<S>,
@@ -436,19 +436,10 @@ pub trait Queries {
 }
 
 #[async_trait]
-pub trait DatabaseTrait<S, R>:
-    QueriesNew + QueriesExecutorNew<S, R> + StatementTrait<S> + Send + Sync {
-}
+pub trait DatabaseTrait<S, R>: QueryRaw + Query<S, R> + StatementTrait<S> + Send + Sync {}
 
-// impl DatabaseTrait< tokio_postgres::Statement,u64> for tokio_postgres::Client {}
-// impl DatabaseTrait<tokio_postgres::Statement,Queue> for tokio_postgres::Client {}
 impl DatabaseTrait<tokio_postgres::Statement, tokio_postgres::Row> for tokio_postgres::Client {}
-// impl DatabaseTrait<tokio_postgres::Statement,bool> for tokio_postgres::Client {}
-
-// impl DatabaseTrait< mysql::Statement ,u64> for Pool {}
-// impl DatabaseTrait< mysql::Statement,Queue > for Pool {}
 impl DatabaseTrait<mysql::Statement, mysql_async::Row> for Pool {}
-// impl DatabaseTrait<mysql::Statement, bool> for Pool {}
 
 /// 4chan single thread
 #[allow(dead_code)]

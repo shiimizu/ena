@@ -599,7 +599,7 @@ where
                         // Don't display an error if we're sending the exit code
                         // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                     }
-                    sleep(Duration::from_millis(1500)).await;
+                    // sleep(Duration::from_millis(1500)).await;
                     break;
                 }
 
@@ -620,7 +620,7 @@ where
                         // Don't display an error if we're sending the exit code
                         // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                     }
-                    sleep(Duration::from_millis(1500)).await;
+                    // sleep(Duration::from_millis(1500)).await;
                     break;
                 }
             }

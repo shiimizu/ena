@@ -358,7 +358,6 @@ pub mod asagi {
     /// Nonexistent :)
     pub struct Schema;
 }
-
 #[async_trait]
 impl Archiver
     for YotsubaArchiver<Statement, tokio_postgres::Row, tokio_postgres::Client, reqwest::Client>
@@ -368,7 +367,7 @@ impl Archiver
     }
 }
 
-impl QueriesNew for Client {
+impl QueryRaw for Client {
     fn inquiry(&self, statement: YotsubaStatement, id: QueryIdentifier) -> String {
         let endpoint = id.endpoint;
         match statement {
@@ -1075,23 +1074,20 @@ impl QueriesNew for Client {
 
 /// For the rest of [`YotsubaStatement`]
 #[async_trait]
-impl QueriesExecutorNew<Statement, Row> for Client {
+impl Query<Statement, Row> for Client {
     async fn first(
         &self, statement: YotsubaStatement, id: &QueryIdentifier,
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<u64>
     {
-        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
+        log::debug!("|Query| Running: {} /{}/", statement, id.board);
         let id = QueryIdentifier { media_mode: statement, ..id.clone() };
         let board = id.board;
-        let received_statement = statements.get(&id).ok_or_else(|| {
-            anyhow!("|QueriesExecutorNew::{}| Empty statement from id: {:?}", statement, id)
-        });
-        let item = item.ok_or_else(|| {
-            anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
-        });
-        let no =
-            no.ok_or_else(|| anyhow!("|QueriesExecutorNew::{}| Empty `no` received", statement));
+        let received_statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|Query::{}| Empty statement from id: {:?}", statement, id));
+        let item = item.ok_or_else(|| anyhow!("|Query::{}| Empty `json` item received", statement));
+        let no = no.ok_or_else(|| anyhow!("|Query::{}| Empty `no` received", statement));
         match statement {
             YotsubaStatement::InitSchema
             | YotsubaStatement::InitType
@@ -1134,11 +1130,9 @@ impl QueriesExecutorNew<Statement, Row> for Client {
                 .ok()
                 .filter(|re| !re.is_empty())
                 .map(|re| re[0].try_get(0))
-                .ok_or_else(|| {
-                    anyhow!("|QueriesExecutorNew::{}| Empty entry in metadata", statement)
-                })?
+                .ok_or_else(|| anyhow!("|Query::{}| Empty entry in metadata", statement))?
                 .map(|b: bool| if b { 1u64 } else { 0u64 })?),
-            _ => Err(anyhow!("|QueriesExecutorNew| Unknown statement: {}", statement))
+            _ => Err(anyhow!("|Query| Unknown statement: {}", statement))
         }
     }
 
@@ -1147,7 +1141,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, _no: Option<u64>
     ) -> Result<Queue>
     {
-        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
+        log::debug!("|Query| Running: {} /{}/", statement, id.board);
         // This `get_list` method could be run with any one of the following:
         if !matches!(
             statement,
@@ -1156,7 +1150,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
                 | YotsubaStatement::ThreadsCombined
         ) {
             return Err(anyhow!(
-                "|QueriesExecutorNew::{}| Unknown statement: {}",
+                "|Query::{}| Unknown statement: {}",
                 YotsubaStatement::Threads,
                 statement
             ));
@@ -1169,9 +1163,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         let endpoint = id.endpoint;
         let board = id.board;
 
-        let item = item.ok_or_else(|| {
-            anyhow!("|QueriesExecutorNew::{}| Empty `json` item received", statement)
-        });
+        let item = item.ok_or_else(|| anyhow!("|Query::{}| Empty `json` item received", statement));
 
         // Return the archive thread as a `Queue` because it's already an array
         if matches!(endpoint, YotsubaEndpoint::Archive)
@@ -1182,9 +1174,9 @@ impl QueriesExecutorNew<Statement, Row> for Client {
 
         let json = serde_json::from_slice::<serde_json::Value>(item?)?;
         // let u: Vec<Threads> = serde_json::from_slice(item.unwrap())?; // artifact from mysql
-        let received_statement = statements.get(&id).ok_or_else(|| {
-            anyhow!("|QueriesExecutorNew::{}| Empty statement from id: {:?}", statement, &id)
-        });
+        let received_statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|Query::{}| Empty statement from id: {:?}", statement, &id));
         let res: Queue = if matches!(statement, YotsubaStatement::Threads) {
             self.query_one(received_statement?, &[&json]).await
         } else {
@@ -1194,11 +1186,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         .map(|r: Option<serde_json::Value>| r)?
         .map(|res| serde_json::from_value::<HashSet<Option<u64>>>(res))
         .ok_or_else(|| {
-            anyhow!(
-                "|QueriesExecutorNew::{}| Empty or null in getting from `{}` endpoint",
-                statement,
-                endpoint
-            )
+            anyhow!("|Query::{}| Empty or null in getting from `{}` endpoint", statement, endpoint)
         })?
         .map(|v| v.into_iter().filter(Option::is_some).map(Option::unwrap).collect())?;
         Ok(res)
@@ -1209,20 +1197,19 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         statements: &StatementStore<Statement>, _item: Option<&[u8]>, no: Option<u64>
     ) -> Result<Vec<Row>>
     {
-        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
+        log::debug!("|Query| Running: {} /{}/", statement, id.board);
         if !matches!(statement, YotsubaStatement::Medias) {
             return Err(anyhow!(
-                "|QueriesExecutorNew::{}| Unknown statement: {}",
+                "|Query::{}| Unknown statement: {}",
                 YotsubaStatement::Medias,
                 statement
             ));
         }
         let id = QueryIdentifier { media_mode: statement, ..id.clone() };
-        let no =
-            no.ok_or_else(|| anyhow!("|QueriesExecutorNew::{}| Empty `no` received", statement));
-        let received_statement = statements.get(&id).ok_or_else(|| {
-            anyhow!("|QueriesExecutorNew::{}| Empty statement from id: {:?}", statement, id)
-        });
+        let no = no.ok_or_else(|| anyhow!("|Query::{}| Empty `no` received", statement));
+        let received_statement = statements
+            .get(&id)
+            .ok_or_else(|| anyhow!("|Query::{}| Empty statement from id: {:?}", statement, id));
         Ok(self.query(received_statement?, &[&(no? as i64)]).await?)
     }
 
