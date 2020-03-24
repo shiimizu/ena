@@ -39,6 +39,7 @@ anyhow = "1.0"
 sha2 = "0.8"
 enum-iterator = "0.6"
 percent-encoding = "2.1"
+once_cell = "1.3"
 
 # Async
 async-trait = "0.1"
@@ -56,5 +57,4 @@ vergen = "3"
 
 [dev-dependencies]
 pretty_assertions = "0.6"
-once_cell = "1.3"
 

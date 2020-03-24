@@ -14,6 +14,9 @@ use std::{
     iter::{Chain, Repeat, StepBy, Take}
 };
 
+use once_cell::sync::OnceCell;
+pub static CONFIG_CONTENTS: OnceCell<String> = OnceCell::new();
+
 /// Display an ascii art with the crate version
 pub fn display() {
     println!(
@@ -164,11 +167,16 @@ pub struct BoardSettings {
 /// ommited in the config json. This is why Yotsuba::None will go through, its not being
 /// deserialized or parsed by serde_json, the default is merely being inserted, and no checks are
 /// done. See the overriden impl of `Deserialize` for `YotsubaBoard`.  
-/// It's overridden to ignore YotsubaBoard::None.
+/// It's overridden to ignore `YotsubaBoard::None`.
 impl Default for BoardSettings {
     fn default() -> Self {
         // Use a deserialized BoardSettings as base for all other boards
-        let new: BoardSettingsInner = read_json::<ConfigInner>("ena_config.json").board_settings;
+        let new: BoardSettingsInner = serde_json::from_str::<ConfigInner>(
+            &CONFIG_CONTENTS.get().expect("Config is not initialized")
+        )
+        .unwrap()
+        .board_settings;
+        // read_json::<ConfigInner>().board_settings;
         BoardSettings {
             board:               new.board,
             retry_attempts:      new.retry_attempts,
@@ -237,15 +245,16 @@ impl Default for BoardSettingsInner {
 
 /// Read a [`Config`] file
 #[allow(unused_assignments)]
-pub fn read_config(config_path: &str) -> Config {
+pub fn read_config(c: Config) -> Config {
     // Normally we'd be done here
     // read_json(config_path)
 
     // This is all to accomodate for a DB URL
-    let mut config: Config = read_json(config_path);
+    let mut config: Config = c; //read_json(config_path);
     let mut settings = config.settings;
     let mut result: Option<Config> = None;
 
+    // Parse db url and extract contents from it
     let mut s = settings.clone().db_url;
     s.clone().as_str().matches(|c: char| !c.is_alphanumeric()).for_each(|c| {
         s = s.replace(c, " ");
@@ -295,7 +304,12 @@ pub fn read_config(config_path: &str) -> Config {
     let bs = json.get_mut("boardSettings").unwrap().as_object_mut().unwrap();
     bs.remove("board").unwrap();
 
-    let computed_config: Config = serde_json::from_value(json).unwrap();
+    let mut computed_config: Config = serde_json::from_value(json).unwrap();
+    if computed_config.settings.asagi_mode
+        || computed_config.settings.engine.base() == Database::MySQL
+    {
+        computed_config.settings.schema = computed_config.settings.database.clone();
+    }
     computed_config
 }
 
@@ -363,7 +377,8 @@ pub fn display_full_version() {
 }
 
 pub fn display_help() {
-    println!("{main} {version}",
+    println!(
+        "{main} {version}",
         main = env!("CARGO_PKG_NAME"),
         version = env!("CARGO_PKG_VERSION")
     );

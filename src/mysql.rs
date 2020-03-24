@@ -14,10 +14,11 @@ use enum_iterator::IntoEnumIterator;
 use mysql_async::{prelude::*, Pool, Row};
 use std::{
     boxed::Box,
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     convert::TryFrom,
     sync::{Arc, Mutex}
 };
+
 pub type Statement = mysql_async::Stmt<mysql_async::Conn>;
 
 #[cold]
@@ -287,199 +288,6 @@ impl QueriesNew for Pool {
               
                 PRIMARY KEY (`day`)
               ) ENGINE={engine} DEFAULT CHARSET={charset} COLLATE={charset}_general_ci;
-              
-              DROP PROCEDURE IF EXISTS `update_thread_{board}`;
-    
-              CREATE PROCEDURE `update_thread_{board}` (tnum INT, ghost_num INT, p_timestamp INT,
-                p_media_hash VARCHAR(25), p_email VARCHAR(100))
-              BEGIN
-                DECLARE d_time_last INT;
-                DECLARE d_time_bump INT;
-                DECLARE d_time_ghost INT;
-                DECLARE d_time_ghost_bump INT;
-                DECLARE d_time_last_modified INT;
-                DECLARE d_image INT;
-              
-                SET d_time_last = 0;
-                SET d_time_bump = 0;
-                SET d_time_ghost = 0;
-                SET d_time_ghost_bump = 0;
-                SET d_image = p_media_hash IS NOT NULL;
-              
-                IF (ghost_num = 0) THEN
-                  SET d_time_last_modified = p_timestamp;
-                  SET d_time_last = p_timestamp;
-                  IF (p_email <> 'sage' OR p_email IS NULL) THEN
-                    SET d_time_bump = p_timestamp;
-                  END IF;
-                ELSE
-                  SET d_time_last_modified = p_timestamp;
-                  SET d_time_ghost = p_timestamp;
-                  IF (p_email <> 'sage' OR p_email IS NULL) THEN
-                    SET d_time_ghost_bump = p_timestamp;
-                  END IF;
-                END IF;
-              
-                UPDATE
-                  `{board}_threads` op
-                SET
-                  op.time_last = (
-                    COALESCE(
-                      GREATEST(op.time_op, d_time_last),
-                      op.time_op
-                    )
-                  ),
-                  op.time_bump = (
-                    COALESCE(
-                      GREATEST(op.time_bump, d_time_bump),
-                      op.time_op
-                    )
-                  ),
-                  op.time_ghost = (
-                    IF (
-                      GREATEST(
-                        IFNULL(op.time_ghost, 0),
-                        d_time_ghost
-                      ) <> 0,
-                      GREATEST(
-                        IFNULL(op.time_ghost, 0),
-                        d_time_ghost
-                      ),
-                      NULL
-                    )
-                  ),
-                  op.time_ghost_bump = (
-                    IF(
-                      GREATEST(
-                        IFNULL(op.time_ghost_bump, 0),
-                        d_time_ghost_bump
-                      ) <> 0,
-                      GREATEST(
-                        IFNULL(op.time_ghost_bump, 0),
-                        d_time_ghost_bump
-                      ),
-                      NULL
-                    )
-                  ),
-                  op.time_last_modified = (
-                    COALESCE(
-                      GREATEST(op.time_last_modified, d_time_last_modified),
-                      op.time_op
-                    )
-                  ),
-                  op.nreplies = (
-                    op.nreplies + 1
-                  ),
-                  op.nimages = (
-                    op.nimages + d_image
-                  )
-                  WHERE op.thread_num = tnum;
-              END;
-              
-              DROP PROCEDURE IF EXISTS `update_thread_timestamp_{board}`;
-              
-              CREATE PROCEDURE `update_thread_timestamp_{board}` (tnum INT, timestamp INT)
-              BEGIN
-                UPDATE
-                  `{board}_threads` op
-                SET
-                  op.time_last_modified = (
-                    GREATEST(op.time_last_modified, timestamp)
-                  )
-                WHERE op.thread_num = tnum;
-              END;
-              
-              DROP PROCEDURE IF EXISTS `create_thread_{board}`;
-              
-              CREATE PROCEDURE `create_thread_{board}` (num INT, timestamp INT)
-              BEGIN
-                INSERT IGNORE INTO `{board}_threads` VALUES (num, timestamp, timestamp,
-                  timestamp, NULL, NULL, timestamp, 0, 0, 0, 0);
-              END;
-              
-              DROP PROCEDURE IF EXISTS `delete_thread_{board}`;
-              
-              CREATE PROCEDURE `delete_thread_{board}` (tnum INT)
-              BEGIN
-                DELETE FROM `{board}_threads` WHERE thread_num = tnum;
-              END;
-              
-              DROP PROCEDURE IF EXISTS `insert_image_{board}`;
-              
-              CREATE PROCEDURE `insert_image_{board}` (n_media_hash VARCHAR(25),
-               n_media VARCHAR(20), n_preview VARCHAR(20), n_op INT)
-              BEGIN
-                IF n_op = 1 THEN
-                  INSERT INTO `{board}_images` (media_hash, media, preview_op, total)
-                  VALUES (n_media_hash, n_media, n_preview, 1)
-                  ON DUPLICATE KEY UPDATE
-                    media_id = LAST_INSERT_ID(media_id),
-                    total = (total + 1),
-                    preview_op = COALESCE(preview_op, VALUES(preview_op)),
-                    media = COALESCE(media, VALUES(media));
-                ELSE
-                  INSERT INTO `{board}_images` (media_hash, media, preview_reply, total)
-                  VALUES (n_media_hash, n_media, n_preview, 1)
-                  ON DUPLICATE KEY UPDATE
-                    media_id = LAST_INSERT_ID(media_id),
-                    total = (total + 1),
-                    preview_reply = COALESCE(preview_reply, VALUES(preview_reply)),
-                    media = COALESCE(media, VALUES(media));
-                END IF;
-              END;
-              
-              DROP PROCEDURE IF EXISTS `delete_image_{board}`;
-              
-              CREATE PROCEDURE `delete_image_{board}` (n_media_id INT)
-              BEGIN
-                UPDATE `{board}_images` SET total = (total - 1) WHERE media_id = n_media_id;
-              END;
-              
-              DROP TRIGGER IF EXISTS `before_ins_{board}`;
-              
-              CREATE TRIGGER `before_ins_{board}` BEFORE INSERT ON `{board}`
-              FOR EACH ROW
-              BEGIN
-                IF NEW.media_hash IS NOT NULL THEN
-                  CALL insert_image_{board}(NEW.media_hash, NEW.media_orig, NEW.preview_orig, NEW.op);
-                  SET NEW.media_id = LAST_INSERT_ID();
-                END IF;
-              END;
-              
-              DROP TRIGGER IF EXISTS `after_ins_{board}`;
-              
-              CREATE TRIGGER `after_ins_{board}` AFTER INSERT ON `{board}`
-              FOR EACH ROW
-              BEGIN
-                IF NEW.op = 1 THEN
-                  CALL create_thread_{board}(NEW.num, NEW.timestamp);
-                END IF;
-                CALL update_thread_{board}(NEW.thread_num, NEW.subnum, NEW.timestamp, NEW.media_hash, NEW.email);
-              END;
-              
-              DROP TRIGGER IF EXISTS `after_del_{board}`;
-              
-              CREATE TRIGGER `after_del_{board}` AFTER DELETE ON `{board}`
-              FOR EACH ROW
-              BEGIN
-                CALL update_thread_{board}(OLD.thread_num, OLD.subnum, OLD.timestamp, OLD.media_hash, OLD.email);
-                IF OLD.op = 1 THEN
-                  CALL delete_thread_{board}(OLD.num);
-                END IF;
-                IF OLD.media_hash IS NOT NULL THEN
-                  CALL delete_image_{board}(OLD.media_id);
-                END IF;
-              END;
-              
-              DROP TRIGGER IF EXISTS `after_upd_{board}`;
-              
-              CREATE TRIGGER `after_upd_{board}` AFTER UPDATE ON `{board}`
-              FOR EACH ROW
-              BEGIN
-                IF NEW.timestamp_expired <> 0 THEN
-                  CALL update_thread_timestamp_{board}(NEW.thread_num, NEW.timestamp_expired);
-                END IF;
-              END;
               
               "#,
                 board = id.board,
@@ -792,7 +600,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<u64>
     {
-        log::debug!("|QueriesExecutorNew| Running: {}", statement);
+        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
         let endpoint = id.endpoint;
         let board = id.board;
         let mut conn = self.get_conn().await?;
@@ -803,10 +611,294 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         let no =
             no.ok_or_else(|| anyhow!("|QueriesExecutorNew::{}| Empty `no` received", statement));
         match statement {
-            YotsubaStatement::InitSchema
-            | YotsubaStatement::InitMetadata
-            | YotsubaStatement::InitBoard => {
+            YotsubaStatement::InitSchema | YotsubaStatement::InitMetadata => {
                 conn.drop_query(&self.inquiry(statement, id.clone())).await?;
+                Ok(1)
+            }
+            YotsubaStatement::InitBoard => {
+                let conn = conn.drop_query(&self.inquiry(statement, id.clone())).await?;
+
+                let base: BTreeSet<_> = [
+                    "update_thread",
+                    "update_thread_timestamp",
+                    "create_thread",
+                    "delete_thread",
+                    "insert_image",
+                    "delete_image",
+                    "before_ins",
+                    "after_ins",
+                    "after_del",
+                    "after_upd"
+                ]
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+
+                let (conn, r): (mysql_async::Conn, Option<Row>) = conn
+                    .first(format!(
+                        "
+                select * from (select JSON_ARRAYAGG(trigger_name) as triggers
+                from information_schema.triggers
+                where trigger_schema = '{schema}'
+                and event_object_table = '{board}') x, 
+                (select JSON_ARRAYAGG(routine_name) as procs
+                from information_schema.routines
+                where routine_type = 'PROCEDURE'
+                AND routine_schema = '{schema}'
+                and routine_name like '%{board}')c;
+                ",
+                        schema = id.schema.clone().unwrap(),
+                        board = id.board
+                    ))
+                    .await?;
+
+                let a: Option<(
+                    Option<Option<serde_json::Value>>,
+                    Option<Option<serde_json::Value>>
+                )> = r.map(|q| (q.get("triggers"), q.get("procs")));
+
+                let mut procsb: BTreeSet<String> = BTreeSet::new();
+                if let Some((Some(Some(triggers)), Some(Some(procs)))) = a {
+                    procsb = serde_json::from_value(procs)?;
+                    let mut triggersb: BTreeSet<String> = serde_json::from_value(triggers)?;
+                    procsb.append(&mut triggersb);
+
+                    procsb = procsb
+                        .into_iter()
+                        .map(|s| s.replace(&["_", &id.board.to_string()].concat(), ""))
+                        .collect::<BTreeSet<_>>();
+                }
+                let diff = base.difference(&procsb).collect::<BTreeSet<_>>();
+
+                for a in diff {
+                    self.get_conn().await?.drop_query( 
+                    match a.as_str() {
+                        "update_thread" => {
+                            r#"
+                            CREATE PROCEDURE `update_thread_{board}` (tnum INT, ghost_num INT, p_timestamp INT,
+                                p_media_hash VARCHAR(25), p_email VARCHAR(100))
+                              BEGIN
+                                DECLARE d_time_last INT;
+                                DECLARE d_time_bump INT;
+                                DECLARE d_time_ghost INT;
+                                DECLARE d_time_ghost_bump INT;
+                                DECLARE d_time_last_modified INT;
+                                DECLARE d_image INT;
+                              
+                                SET d_time_last = 0;
+                                SET d_time_bump = 0;
+                                SET d_time_ghost = 0;
+                                SET d_time_ghost_bump = 0;
+                                SET d_image = p_media_hash IS NOT NULL;
+                              
+                                IF (ghost_num = 0) THEN
+                                  SET d_time_last_modified = p_timestamp;
+                                  SET d_time_last = p_timestamp;
+                                  IF (p_email <> 'sage' OR p_email IS NULL) THEN
+                                    SET d_time_bump = p_timestamp;
+                                  END IF;
+                                ELSE
+                                  SET d_time_last_modified = p_timestamp;
+                                  SET d_time_ghost = p_timestamp;
+                                  IF (p_email <> 'sage' OR p_email IS NULL) THEN
+                                    SET d_time_ghost_bump = p_timestamp;
+                                  END IF;
+                                END IF;
+                              
+                                UPDATE
+                                  `{board}_threads` op
+                                SET
+                                  op.time_last = (
+                                    COALESCE(
+                                      GREATEST(op.time_op, d_time_last),
+                                      op.time_op
+                                    )
+                                  ),
+                                  op.time_bump = (
+                                    COALESCE(
+                                      GREATEST(op.time_bump, d_time_bump),
+                                      op.time_op
+                                    )
+                                  ),
+                                  op.time_ghost = (
+                                    IF (
+                                      GREATEST(
+                                        IFNULL(op.time_ghost, 0),
+                                        d_time_ghost
+                                      ) <> 0,
+                                      GREATEST(
+                                        IFNULL(op.time_ghost, 0),
+                                        d_time_ghost
+                                      ),
+                                      NULL
+                                    )
+                                  ),
+                                  op.time_ghost_bump = (
+                                    IF(
+                                      GREATEST(
+                                        IFNULL(op.time_ghost_bump, 0),
+                                        d_time_ghost_bump
+                                      ) <> 0,
+                                      GREATEST(
+                                        IFNULL(op.time_ghost_bump, 0),
+                                        d_time_ghost_bump
+                                      ),
+                                      NULL
+                                    )
+                                  ),
+                                  op.time_last_modified = (
+                                    COALESCE(
+                                      GREATEST(op.time_last_modified, d_time_last_modified),
+                                      op.time_op
+                                    )
+                                  ),
+                                  op.nreplies = (
+                                    op.nreplies + 1
+                                  ),
+                                  op.nimages = (
+                                    op.nimages + d_image
+                                  )
+                                  WHERE op.thread_num = tnum;
+                              END;
+                            "#
+                        },
+                        "update_thread_timestamp" => {
+                        r#"
+              
+                        CREATE PROCEDURE `update_thread_timestamp_{board}` (tnum INT, timestamp INT)
+                        BEGIN
+                          UPDATE
+                            `{board}_threads` op
+                          SET
+                            op.time_last_modified = (
+                              GREATEST(op.time_last_modified, timestamp)
+                            )
+                          WHERE op.thread_num = tnum;
+                        END;
+                        
+                        "#
+                        },
+                        "create_thread" => {
+                            r#"
+              
+                            CREATE PROCEDURE `create_thread_{board}` (num INT, timestamp INT)
+                            BEGIN
+                              INSERT IGNORE INTO `{board}_threads` VALUES (num, timestamp, timestamp,
+                                timestamp, NULL, NULL, timestamp, 0, 0, 0, 0);
+                            END;
+                            
+                            "#
+                            },
+    "delete_thread" => {
+                            r#"
+              
+                            CREATE PROCEDURE `delete_thread_{board}` (tnum INT)
+                            BEGIN
+                              DELETE FROM `{board}_threads` WHERE thread_num = tnum;
+                            END;
+                            
+                            "#
+                            },
+    "insert_image" => {
+                            r#"
+              
+                            CREATE PROCEDURE `insert_image_{board}` (n_media_hash VARCHAR(25),
+                            n_media VARCHAR(20), n_preview VARCHAR(20), n_op INT)
+                           BEGIN
+                             IF n_op = 1 THEN
+                               INSERT INTO `{board}_images` (media_hash, media, preview_op, total)
+                               VALUES (n_media_hash, n_media, n_preview, 1)
+                               ON DUPLICATE KEY UPDATE
+                                 media_id = LAST_INSERT_ID(media_id),
+                                 total = (total + 1),
+                                 preview_op = COALESCE(preview_op, VALUES(preview_op)),
+                                 media = COALESCE(media, VALUES(media));
+                             ELSE
+                               INSERT INTO `{board}_images` (media_hash, media, preview_reply, total)
+                               VALUES (n_media_hash, n_media, n_preview, 1)
+                               ON DUPLICATE KEY UPDATE
+                                 media_id = LAST_INSERT_ID(media_id),
+                                 total = (total + 1),
+                                 preview_reply = COALESCE(preview_reply, VALUES(preview_reply)),
+                                 media = COALESCE(media, VALUES(media));
+                             END IF;
+                           END;
+                           
+                            "#
+                            },
+    "delete_image" => {
+                            r#"
+              
+                            CREATE PROCEDURE `delete_image_{board}` (n_media_id INT)
+                            BEGIN
+                              UPDATE `{board}_images` SET total = (total - 1) WHERE media_id = n_media_id;
+                            END;
+                            
+                            "#
+                            },
+    "before_ins" => {
+                            r#"
+              
+                            CREATE TRIGGER `before_ins_{board}` BEFORE INSERT ON `{board}`
+                            FOR EACH ROW
+                            BEGIN
+                              IF NEW.media_hash IS NOT NULL THEN
+                                CALL insert_image_{board}(NEW.media_hash, NEW.media_orig, NEW.preview_orig, NEW.op);
+                                SET NEW.media_id = LAST_INSERT_ID();
+                              END IF;
+                            END;
+                            
+                            "#
+                            },
+    "after_ins" => {
+                            r#"
+              
+                            CREATE TRIGGER `after_ins_{board}` AFTER INSERT ON `{board}`
+                            FOR EACH ROW
+                            BEGIN
+                              IF NEW.op = 1 THEN
+                                CALL create_thread_{board}(NEW.num, NEW.timestamp);
+                              END IF;
+                              CALL update_thread_{board}(NEW.thread_num, NEW.subnum, NEW.timestamp, NEW.media_hash, NEW.email);
+                            END;
+                            
+                            "#
+                            },
+    "after_del" => {
+                            r#"
+              
+                            CREATE TRIGGER `after_del_{board}` AFTER DELETE ON `{board}`
+                            FOR EACH ROW
+                            BEGIN
+                              CALL update_thread_{board}(OLD.thread_num, OLD.subnum, OLD.timestamp, OLD.media_hash, OLD.email);
+                              IF OLD.op = 1 THEN
+                                CALL delete_thread_{board}(OLD.num);
+                              END IF;
+                              IF OLD.media_hash IS NOT NULL THEN
+                                CALL delete_image_{board}(OLD.media_id);
+                              END IF;
+                            END;
+                            
+                            "#
+                            },
+    "after_upd" => {
+                            r#"
+                            CREATE TRIGGER `after_upd_{board}` AFTER UPDATE ON `{board}`
+                            FOR EACH ROW
+                            BEGIN
+                              IF NEW.timestamp_expired <> 0 THEN
+                                CALL update_thread_timestamp_{board}(NEW.thread_num, NEW.timestamp_expired);
+                              END IF;
+                            END;
+                            
+                            "#
+                            },
+                        _ => { "select '{board}';" },
+                    }.replace("{board}", &id.board.to_string()),
+                    
+                    ).await?;
+                }
+
                 Ok(1)
             }
             YotsubaStatement::Metadata => Ok(conn
@@ -932,7 +1024,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<Queue>
     {
-        log::debug!("|QueriesExecutorNew| Running: {}", statement);
+        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
         if !matches!(
             statement,
             YotsubaStatement::Threads
@@ -1008,7 +1100,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<Vec<Row>>
     {
-        log::debug!("|QueriesExecutorNew| Running: {}", statement);
+        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
         if !matches!(statement, YotsubaStatement::Medias) {
             return Err(anyhow!(
                 "|QueriesExecutorNew::{}| Unknown statement: {}",

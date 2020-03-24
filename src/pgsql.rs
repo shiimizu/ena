@@ -1074,7 +1074,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<u64>
     {
-        log::debug!("|QueriesExecutorNew| Running: {}", statement);
+        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
         let id = QueryIdentifier { media_mode: statement, ..id.clone() };
         let board = id.board;
         let received_statement = statements.get(&id).ok_or_else(|| {
@@ -1140,7 +1140,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, _no: Option<u64>
     ) -> Result<Queue>
     {
-        log::debug!("|QueriesExecutorNew| Running: {}", statement);
+        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
         if !matches!(
             statement,
             YotsubaStatement::Threads
@@ -1194,7 +1194,7 @@ impl QueriesExecutorNew<Statement, Row> for Client {
         statements: &StatementStore<Statement>, _item: Option<&[u8]>, no: Option<u64>
     ) -> Result<Vec<Row>>
     {
-        log::debug!("|QueriesExecutorNew| Running: {}", statement);
+        log::debug!("|QueriesExecutorNew| Running: {} /{}/", statement, id.board);
         if !matches!(statement, YotsubaStatement::Medias) {
             return Err(anyhow!(
                 "|QueriesExecutorNew::{}| Unknown statement: {}",
