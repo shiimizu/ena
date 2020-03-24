@@ -881,7 +881,7 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
 
                 let (conn, r): (mysql_async::Conn, Option<Row>) = conn
                     .first(format!(
-                        "
+                        r#"
                 select * from (select JSON_ARRAYAGG(trigger_name) as triggers
                 from information_schema.triggers
                 where trigger_schema = '{schema}'
@@ -890,8 +890,8 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 from information_schema.routines
                 where routine_type = 'PROCEDURE'
                 AND routine_schema = '{schema}'
-                and routine_name like '%{board}')c;
-                ",
+                and routine_name like '%\_{board}')c;
+                "#,
                         schema = id.schema.clone().unwrap(),
                         board = id.board
                     ))
@@ -903,23 +903,30 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
                 )> = r.map(|q| (q.get("triggers"), q.get("procs")));
 
                 let mut procsb: BTreeSet<String> = BTreeSet::new();
-                if let Some((Some(Some(triggers)), Some(Some(procs)))) = a {
-                    procsb = serde_json::from_value(procs)?;
+                if let Some((tr, pr)) = a {
+                    let procedures = pr.flatten().unwrap_or(serde_json::json!([]));
+                    let triggers = tr.flatten().unwrap_or(serde_json::json!([]));
+                    procsb = serde_json::from_value(procedures)?;
                     let mut triggersb: BTreeSet<String> = serde_json::from_value(triggers)?;
                     procsb.append(&mut triggersb);
 
                     procsb = procsb
                         .into_iter()
-                        .map(|s| s.replace(&["_", &id.board.to_string()].concat(), ""))
+                        .map(|s| {
+                            s.trim_end_matches(&["_", &id.board.to_string()].concat()).to_string()
+                        })
                         .collect::<BTreeSet<_>>();
                 }
+                // log::warn!("base: {:?}\nprocsb:{:?}", base, procsb);
                 let diff = base.difference(&procsb).collect::<BTreeSet<_>>();
+                // log::warn!("diff: {:?}", diff);
 
                 // Generate a new ID to call InitBoard with the specific trigger or procedure
                 // I'm using `schema` here ad the variable to pass it even though it isn't a schema,
                 // it's just to store the data.
                 for a in diff {
                     let inner_id = QueryIdentifier { schema: Some(a.clone()), ..id.clone() };
+                    // log::info!("{}_{}", a, id.board);
                     self.get_conn()
                         .await?
                         .drop_query(

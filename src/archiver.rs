@@ -158,6 +158,17 @@ where
                 }
             }
             YotsubaEndpoint::Media => {
+                // Create dirs. This is neccessary.
+                // This won't work on WSL trying to create a dir for windows.
+                // In that case just manually create the media dir + tmp dir inside it..
+                let media_path = &self.config.settings.path;
+                let path_temp: std::path::PathBuf = [&media_path, "/tmp"].iter().collect();
+                if !path_temp.is_dir() {
+                    if let Err(e) = std::fs::create_dir_all(&path_temp) {
+                        error!("Create media temp dirs: {}", e);
+                    }
+                }
+
                 // Wait for things to init
                 sleep(Duration::from_secs(2)).await;
 
@@ -167,9 +178,9 @@ where
                 let mut downloading = endpoint;
                 let mut exit_code: u8 = 1;
                 let engine = self.config.settings.engine;
+
                 // Custom poll rate instead of recv().await which polls at around 1s
                 // Sequential fetching to prevent client congestion and errors
-
                 loop {
                     sleep(dur).await;
                     if let Ok((media_info, statements, thread)) = r.try_recv() {
@@ -220,6 +231,9 @@ where
                                         "({})\t\t/{}/{} {}",
                                         endpoint, media_info.board, thread, e
                                     );
+                                    if self.is_finished() {
+                                        break;
+                                    }
                                     sleep(Duration::from_millis(1500)).await;
                                 }
                                 break;
@@ -579,6 +593,14 @@ where
                 let mut _sem_thread = None;
                 if self.config.settings.strict_mode {
                     _sem_thread = Some(semaphore.acquire().await);
+                }
+                if self.is_finished() {
+                    if let Err(_) = sender.send((bs.clone(), statements_media.clone(), 0)) {
+                        // Don't display an error if we're sending the exit code
+                        // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
+                    }
+                    sleep(Duration::from_millis(1500)).await;
+                    break;
                 }
 
                 let now_thread = tokio::time::Instant::now();
@@ -1029,55 +1051,67 @@ where
                                 break;
                             }
 
-                            if let Ok(mut dest) = std::fs::File::create(&temp_path) {
-                                if std::io::copy(&mut body.as_slice(), &mut dest).is_ok() {
-                                    let final_path_dir;
-                                    let final_path;
-                                    if asagi {
-                                        // Example:
-                                        // 1540970147550
-                                        // /1540/97
-                                        let name = if mode.is_thumbs() {
-                                            row.get::<&str, String>("preview_orig")?
-                                        } else {
-                                            row.get::<&str, String>("media_orig")?
-                                        };
-                                        let subdirs = (&name[..4], &name[4..6]);
-                                        final_path_dir = format!(
-                                            "{}/{}/{}/{}",
-                                            path, info.board, subdirs.0, subdirs.1
-                                        );
-                                        final_path = format!("{}/{}", final_path_dir, name);
-                                    } else {
-                                        // Example:
-                                        // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
-                                        // /1/0a
-                                        let name = format!("{:x}", hash_bytes.unwrap());
-                                        let len = name.len();
-                                        let subdirs = (&name[len - 1..], &name[len - 3..len - 1]);
-                                        final_path_dir =
-                                            format!("{}/media/{}/{}", path, subdirs.0, subdirs.1);
-                                        final_path = format!("{}/{}{}", final_path_dir, name, ext);
+                            match std::fs::File::create(&temp_path) {
+                                Err(e) => error!(
+                                    "/{}/{} Temp file path ({}): {}",
+                                    board, no, &temp_path, e
+                                ),
+                                Ok(mut dest) => {
+                                    match std::io::copy(&mut body.as_slice(), &mut dest) {
+                                        Err(e) => error!("Copy to temp to file path: {}", e),
+                                        Ok(_) => {
+                                            let final_path_dir;
+                                            let final_path;
+                                            if asagi {
+                                                // Example:
+                                                // 1540970147550
+                                                // /1540/97
+                                                let name = if mode.is_thumbs() {
+                                                    row.get::<&str, String>("preview_orig")?
+                                                } else {
+                                                    row.get::<&str, String>("media_orig")?
+                                                };
+                                                let subdirs = (&name[..4], &name[4..6]);
+                                                final_path_dir = format!(
+                                                    "{}/{}/{}/{}",
+                                                    path, info.board, subdirs.0, subdirs.1
+                                                );
+                                                final_path = format!("{}/{}", final_path_dir, name);
+                                            } else {
+                                                // Example:
+                                                // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
+                                                // /1/0a
+                                                let name = format!("{:x}", hash_bytes.unwrap());
+                                                let len = name.len();
+                                                let subdirs =
+                                                    (&name[len - 1..], &name[len - 3..len - 1]);
+                                                final_path_dir = format!(
+                                                    "{}/media/{}/{}",
+                                                    path, subdirs.0, subdirs.1
+                                                );
+                                                final_path =
+                                                    format!("{}/{}{}", final_path_dir, name, ext);
+                                            }
+                                            if Path::new(&final_path).exists() {
+                                                warn!("EXISTS: {}", final_path);
+                                                if let Err(e) = std::fs::remove_file(&temp_path) {
+                                                    error!("Remove temp: {}", e);
+                                                }
+                                            } else {
+                                                if let Err(e) =
+                                                    std::fs::create_dir_all(&final_path_dir)
+                                                {
+                                                    error!("Create final dir: {}", e);
+                                                }
+                                                if let Err(e) =
+                                                    std::fs::rename(&temp_path, &final_path)
+                                                {
+                                                    error!("Rename temp to final: {}", e);
+                                                }
+                                            }
+                                        }
                                     }
-
-                                    if Path::new(&final_path).exists() {
-                                        warn!("EXISTS: {}", final_path);
-                                        if let Err(e) = std::fs::remove_file(&temp_path) {
-                                            error!("Remove temp: {}", e);
-                                        }
-                                    } else {
-                                        if let Err(e) = std::fs::create_dir_all(&final_path_dir) {
-                                            error!("Create final dir: {}", e);
-                                        }
-                                        if let Err(e) = std::fs::rename(&temp_path, &final_path) {
-                                            error!("Rename temp to final: {}", e);
-                                        }
-                                    }
-                                } else {
-                                    error!("Error copying file to a temporary path");
                                 }
-                            } else {
-                                error!("Error creating a temporary file path");
                             }
 
                             break;
