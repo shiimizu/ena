@@ -18,8 +18,9 @@ use tokio::{
 
 use anyhow::{Context, Result};
 use chrono::Local;
-
 use log::*;
+use std::io::{self, Read};
+
 fn main() {
     config::check_version();
     // config::display();
@@ -27,24 +28,63 @@ fn main() {
     let start_time = Local::now();
     pretty_env_logger::try_init_timed_custom_env("ENA_LOG").unwrap();
 
-    match Builder::new().enable_all().threaded_scheduler().build() {
+    let ret = match Builder::new().enable_all().threaded_scheduler().build() {
         Ok(mut runtime) => runtime.block_on(async {
-            if let Err(e) = async_main().await {
-                error!("{}", e);
+            match async_main().await {
+                Ok(o) => o,
+                Err(e) => {
+                    error!("{}", e);
+                    1
+                }
             }
         }),
-        Err(e) => error!("{}", e)
+        Err(e) => {
+            error!("{}", e);
+            1
+        }
+    };
+    
+    if ret != 0 {
+        info!(
+            "\nStarted on:\t{}\nFinished on:\t{}",
+            start_time.to_rfc2822(),
+            Local::now().to_rfc2822()
+        );
     }
-
-    info!(
-        "\nStarted on:\t{}\nFinished on:\t{}",
-        start_time.to_rfc2822(),
-        Local::now().to_rfc2822()
-    );
 }
 
 async fn async_main() -> Result<u64> {
-    let config = config::read_config("ena_config.json");
+    let mut args = std::env::args().skip(1).peekable();
+    let mut config: Result<config::Config> = Err(anyhow::anyhow!("Empty config file"));
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                config::display_help();
+                return Ok(0);
+            }
+            "--version" | "-v" => {
+                config::display_full_version();
+                return Ok(0);
+            }
+            "--config" | "-c" =>
+                if let Some(filename) = args.peek() {
+                    if filename == "-" {
+                        let mut file = String::new();
+                        std::io::stdin().read_to_string(&mut file)?;
+                        config = Ok(serde_json::from_str(&file)?);
+                    } else {
+                        let file = std::fs::File::open(filename)?;
+                        let reader = std::io::BufReader::new(file);
+                        config = Ok(serde_json::from_reader(reader)?);
+                    }
+                },
+            _ => {}
+        }
+    }
+    if config.is_err() {
+        config = Ok(config::read_config("ena_config.json"));
+    }
+    let config = config?;
     let boards_len = config.boards.len();
     let asagi_mode = config.settings.asagi_mode;
 
@@ -114,5 +154,5 @@ async fn async_main() -> Result<u64> {
         sleep(Duration::from_millis(1100)).await;
     }
     archiver.run().await;
-    Ok(0)
+    Ok(1)
 }

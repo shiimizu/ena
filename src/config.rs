@@ -356,9 +356,22 @@ pub fn display_full_version() {
         env!("VERGEN_SHA_SHORT"),
         env!("CARGO_PKG_DESCRIPTION")
     );
-    println!("\nBuild info:\n    {}", env!("VERGEN_TARGET_TRIPLE"));
-    println!("    {}", env!("VERGEN_BUILD_TIMESTAMP"));
-    println!("    {}", env!("VERGEN_SHA"));
+    println!("\nBUILD-INFO:");
+    println!("    target                  {}", env!("VERGEN_TARGET_TRIPLE"));
+    println!("    timestamp               {}", env!("VERGEN_BUILD_TIMESTAMP"));
+    println!("    hash                    {}", env!("VERGEN_SHA"));
+}
+
+pub fn display_help() {
+    println!("{main} {version}",
+        main = env!("CARGO_PKG_NAME"),
+        version = env!("CARGO_PKG_VERSION")
+    );
+    println!("\nFLAGS:");
+    println!("    -h, --help              Prints help information");
+    println!("    -V, --version           Prints version information");
+    println!("\nOPTIONS:");
+    println!("    -c, --config            Specify a config file or pass '-' for stdin");
 }
 
 /// Create an iterator that mimics the thread refresh system  
