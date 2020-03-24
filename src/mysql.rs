@@ -1105,12 +1105,13 @@ impl QueriesExecutorNew<Statement, Row> for Pool {
 
             // Diff against archived/deleted
             // Because this is archives, do additional checks for archived/deleted
+            // This might be unwanted as the size of the database grows.
             match statement {
-                YotsubaStatement::Threads => {
+                YotsubaStatement::Threads | YotsubaStatement::ThreadsModified => {
                     return Ok(ret);
                 }
                 _ => {
-                    // YotsubaStatement::ThreadsModified|YotsubaStatement::ThreadsCombined
+                    // YotsubaStatement::ThreadsCombined
 
                     let conn = self.get_conn().await?;
                     let (conn, v):(mysql_async::Conn, Option<Option<serde_json::Value>>) = conn.first(format!("select JSON_ARRAYAGG(num) from `{board}` where op=1 and (deleted=1 or exif like '%archived%');", board=id.board)).await?;

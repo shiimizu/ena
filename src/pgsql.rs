@@ -571,7 +571,8 @@ impl QueriesNew for Client {
             // This gets all the threads from cache, compares it to the new json to get
             // new + modified threads Then compares that result to the database
             // where a thread is deleted or archived, and takes only the threads
-            // where's it's not deleted or archived
+            // where's it's not deleted or archived.
+            // This might be unwanted as the size of the database grows.
             YotsubaStatement::ThreadsCombined => format!(
                 r#"
         select jsonb_agg(c) from (

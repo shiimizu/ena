@@ -126,8 +126,14 @@ where
             ));
         }
 
-        while let Some(Err(e)) = fut.next().await {
-            error!("{}", e);
+        // There's a huge difference between: Some(Err(e))
+        // And the following: ...
+        // The former won't catch all results, and will catch only the first one, ending all the
+        // rest.
+        while let Some(a) = fut.next().await {
+            if let Err(e) = a {
+                error!("{}", e);
+            }
         }
         Ok(())
     }
@@ -152,16 +158,18 @@ where
                 }
             }
             YotsubaEndpoint::Media => {
+                // Wait for things to init
                 sleep(Duration::from_secs(2)).await;
 
                 let dur = Duration::from_millis(250);
                 let mut r =
-                    rx.ok_or_else(|| anyhow!("|compute::Media| UnboundedReceiver was empty"))?;
+                    rx.ok_or_else(|| anyhow!("|media::compute| UnboundedReceiver was empty"))?;
                 let mut downloading = endpoint;
                 let mut exit_code: u8 = 1;
                 let engine = self.config.settings.engine;
                 // Custom poll rate instead of recv().await which polls at around 1s
                 // Sequential fetching to prevent client congestion and errors
+
                 loop {
                     sleep(dur).await;
                     if let Ok((media_info, statements, thread)) = r.try_recv() {
@@ -202,11 +210,19 @@ where
                         if thread != 0
                             && (media_info.download_thumbnails || media_info.download_media)
                         {
-                            if let Err(e) = self
-                                .fetch_media(&media_info, &id, &statements, thread, downloading)
-                                .await
-                            {
-                                error!("({})\t\t/{}/{} {}", endpoint, media_info.board, thread, e)
+                            loop {
+                                if let Err(e) = self
+                                    .fetch_media(&media_info, &id, &statements, thread, downloading)
+                                    .await
+                                {
+                                    // Loop until this gets resolved
+                                    error!(
+                                        "({})\t\t/{}/{} {}",
+                                        endpoint, media_info.board, thread, e
+                                    );
+                                    sleep(Duration::from_millis(1500)).await;
+                                }
+                                break;
                             }
                         }
                     } else {
@@ -222,6 +238,7 @@ where
                 r.close();
             }
         }
+
         Ok(())
     }
 
@@ -243,7 +260,7 @@ where
         while tries < max_tries {
             tries += 1;
             if self.is_finished() {
-                return;
+                break;
             }
             match self
                 .client
@@ -382,8 +399,6 @@ where
                                             for i in dr {
                                                 local_threads_list.insert(i);
                                             }
-                                        // local_threads_list = &mut list;
-                                        // local_threads_list.append(&mut list);
                                         } else {
                                             info!(
                                                 "({})\t/{}/\t\tSeems like there was no modified threads..",
@@ -504,6 +519,7 @@ where
         // This mimics the thread refresh rate
         let original_ratelimit = config::refresh_rate(bs.refresh_delay, 5, 10);
         let mut ratelimit = original_ratelimit.clone();
+        let sender = tx.ok_or_else(|| anyhow!("|fetch_board| UnboundedSender is empty"))?;
         loop {
             let now = tokio::time::Instant::now();
 
@@ -557,7 +573,6 @@ where
 
             // Download each thread
             let mut position = 1;
-            let t = tx.clone().ok_or_else(|| anyhow!("|fetch_board| UnboundedSender is empty"))?;
             let mut threads = local_threads_list.drain();
             while let Some(thread) = threads.next() {
                 // Semaphore
@@ -565,18 +580,10 @@ where
                 if self.config.settings.strict_mode {
                     _sem_thread = Some(semaphore.acquire().await);
                 }
-                if self.is_finished() {
-                    if let Err(_) = t.send((bs.clone(), statements_media.clone(), 0)) {
-                        // Don't display an error if we're sending the exit code
-                        // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
-                    }
-                    sleep(Duration::from_millis(1500)).await;
-                    break;
-                }
 
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, id, thread, position, threads_len, &statements).await;
-                if let Err(e) = t.send((bs.clone(), statements_media.clone(), thread)) {
+                if let Err(e) = sender.send((bs.clone(), statements_media.clone(), thread)) {
                     error!(
                         "(media)\t\t/{}/{}\t[{}/{}] {}",
                         &bs.board, thread, position, threads_len, e
@@ -587,7 +594,7 @@ where
                 // Ratelimit
                 tokio::time::delay_until(now_thread + ratel).await;
                 if self.is_finished() {
-                    if let Err(_) = t.send((bs.clone(), statements_media.clone(), 0)) {
+                    if let Err(_) = sender.send((bs.clone(), statements_media.clone(), 0)) {
                         // Don't display an error if we're sending the exit code
                         // error!("(media)\t/{}/{}\t[{}/{}] {}", &bs.board, 0, 0, 0, e);
                     }
@@ -632,7 +639,6 @@ where
                 break;
             }
         }
-        // channel.close();
         Ok(())
     }
 
@@ -649,7 +655,7 @@ where
         while tries < max_tries {
             tries += 1;
             if self.is_finished() {
-                return;
+                break;
             }
             match self
                 .client
