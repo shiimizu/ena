@@ -661,6 +661,9 @@ where
                 break;
             }
         }
+
+        // Send the code to exit
+        if let Err(_) = sender.send((bs.clone(), statements_media.clone(), 0)) {}
         Ok(())
     }
 
