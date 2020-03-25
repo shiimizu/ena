@@ -22,8 +22,6 @@ use log::*;
 use std::io::Read;
 
 fn main() {
-    config::check_version();
-    config::display();
 
     let start_time = Local::now();
     pretty_env_logger::try_init_timed_custom_env("ENA_LOG").unwrap();
@@ -128,8 +126,8 @@ async fn async_main() -> Result<u64> {
         .build()
         .expect("Err building the HTTP Client");
 
-    let archiver;
 
+    let archiver;
     // Determine which engine is being used
     if config.settings.engine.base() == Database::PostgreSQL {
         let (db_client, connection) =
@@ -146,6 +144,7 @@ async fn async_main() -> Result<u64> {
                 error!("Connection error: {}", e);
             }
         });
+        config::display();
         info!("Connected with:\t\t{}", config.settings.db_url);
 
         archiver = MuhArchiver::new(Box::new(
@@ -153,6 +152,7 @@ async fn async_main() -> Result<u64> {
         ));
     } else {
         let pool = mysql_async::Pool::new(&config.settings.db_url);
+        config::display();
         info!("Connected with:\t\t{}", config.settings.db_url);
 
         archiver = MuhArchiver::new(Box::new(
