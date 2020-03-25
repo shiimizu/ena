@@ -835,7 +835,11 @@ impl Query<Statement, Row> for Pool {
         statements: &StatementStore<Statement>, item: Option<&[u8]>, no: Option<u64>
     ) -> Result<u64>
     {
-        log::debug!("|Query| Running: {} /{}/", statement, id.board);
+        if matches!(statement, YotsubaStatement::InitBoard) {
+            log::info!("|Query| Running: {} /{}/", statement, id.board);
+        } else {
+            log::debug!("|Query| Running: {} /{}/", statement, id.board);
+        }
         let endpoint = id.endpoint;
         let board = id.board;
         let conn = self.get_conn().await?;

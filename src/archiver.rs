@@ -158,13 +158,12 @@ where
                 }
             }
             YotsubaEndpoint::Media => {
-                // Create dirs. This is neccessary.
-                // This won't work on WSL trying to create a dir for windows.
-                // In that case just manually create the media dir + tmp dir inside it..
+                // Create dirs
                 let media_path = &self.config.settings.path;
-                let path_temp: std::path::PathBuf = [&media_path, "/tmp"].iter().collect();
+                let temp_path = [&media_path, "/tmp"].concat();
+                let path_temp = Path::new(&temp_path);
                 if !path_temp.is_dir() {
-                    if let Err(e) = std::fs::create_dir_all(&path_temp) {
+                    if let Err(e) = std::fs::create_dir_all(&temp_path) {
                         error!("Create media temp dirs: {}", e);
                     }
                 }
