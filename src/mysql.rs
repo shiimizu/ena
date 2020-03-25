@@ -991,10 +991,12 @@ impl Query<Statement, Row> for Pool {
             }
 
             YotsubaStatement::UpdateDeleteds => {
-                // {thread}.json
+                // {thread_endpoint}.json
                 // get posts from db
                 // compare that with fetched posts
                 // mark deleted - the ones missing in fetched posts
+                // This method kinda makes things slow though
+
                 let q: Thread = serde_json::from_slice(item?)?;
                 let new: Queue = q.posts.into_iter().map(|post| post.no).collect();
                 let min = new
@@ -1022,7 +1024,7 @@ impl Query<Statement, Row> for Pool {
                     // Here, the threads diff return no changes, meaning no posts are deleted
                     return Ok(1);
                 }
-                log::info!("min: {} thread_num: {} diff: {:?}", min, no, diff);
+                log::info!("({})\t/{}/{}\tDeleted posts: {:?}", id.endpoint, id.board, no, diff);
 
                 Ok(conn
                     .first_exec(

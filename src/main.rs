@@ -23,7 +23,7 @@ use std::io::Read;
 
 fn main() {
     config::check_version();
-    // config::display();
+    config::display();
 
     let start_time = Local::now();
     pretty_env_logger::try_init_timed_custom_env("ENA_LOG").unwrap();
