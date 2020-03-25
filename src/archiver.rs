@@ -935,16 +935,21 @@ where
         // In Asagi there's no rehashing of the file.
         // So if it exists on disk just skip it.
         if asagi {
-            let name = if mode.is_thumbs() {
-                row.get::<&str, String>("preview_orig")?
+            let media_type;
+            let name;
+            if mode.is_thumbs() {
+                media_type = "thumb";
+                name = row.get::<&str, String>("preview_orig")?
             } else {
-                row.get::<&str, String>("media_orig")?
+                media_type = "image";
+                name = row.get::<&str, String>("media_orig")?
             };
             let subdirs = (&name[..4], &name[4..6]);
             let final_path = format!(
-                "{path}/{board}/{sub0}/{sub1}/{filename}",
+                "{path}/{board}/{media_type}/{sub0}/{sub1}/{filename}",
                 path = path,
-                board = info.board.to_string(),
+                board = info.board,
+                media_type = media_type,
                 sub0 = subdirs.0,
                 sub1 = subdirs.1,
                 filename = name
@@ -972,7 +977,6 @@ where
             }
         } else {
             if asagi {
-                //log::warn!("preview_orig media_orig");
                 format!(
                     "{}/{}/{}",
                     domain,
@@ -1066,15 +1070,24 @@ where
                                                 // Example:
                                                 // 1540970147550
                                                 // /1540/97
-                                                let name = if mode.is_thumbs() {
-                                                    row.get::<&str, String>("preview_orig")?
+                                                let media_type;
+                                                let name;
+                                                if mode.is_thumbs() {
+                                                    media_type = "thumb";
+                                                    name =
+                                                        row.get::<&str, String>("preview_orig")?
                                                 } else {
-                                                    row.get::<&str, String>("media_orig")?
+                                                    media_type = "image";
+                                                    name = row.get::<&str, String>("media_orig")?
                                                 };
                                                 let subdirs = (&name[..4], &name[4..6]);
                                                 final_path_dir = format!(
-                                                    "{}/{}/{}/{}",
-                                                    path, info.board, subdirs.0, subdirs.1
+                                                    "{path}/{board}/{media_type}/{sub0}/{sub1}",
+                                                    path = path,
+                                                    board = info.board,
+                                                    media_type = media_type,
+                                                    sub0 = subdirs.0,
+                                                    sub1 = subdirs.1
                                                 );
                                                 final_path = format!("{}/{}", final_path_dir, name);
                                             } else {
