@@ -227,13 +227,14 @@ where
                                 {
                                     // Loop until this gets resolved
                                     error!(
-                                        "({})\t\t/{}/{} {}",
+                                        "({})\t\t/{}/{} |fetch_media| {}",
                                         endpoint, media_info.board, thread, e
                                     );
                                     if self.is_finished() {
                                         break;
                                     }
                                     sleep(Duration::from_millis(1500)).await;
+                                    continue;
                                 }
                                 break;
                             }
