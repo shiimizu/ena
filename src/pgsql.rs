@@ -449,7 +449,7 @@ impl QueryRaw for Client {
                 format!(
                     r#"
             CREATE TABLE IF NOT EXISTS "{board}" (
-              no bigint NOT NULL,
+              no bigint,
               subnum bigint,
               tim bigint,
               resto bigint NOT NULL DEFAULT 0,
@@ -489,9 +489,9 @@ impl QueryRaw for Client {
               md5 bytea,
               sha256 bytea,
               sha256t bytea,
-              extra jsonb,
-              PRIMARY KEY (no{extra_constraint}),
-              CONSTRAINT "unique_no_{board}" UNIQUE (no{extra_constraint}));
+              extra jsonb);
+            
+            CREATE UNIQUE INDEX IF NOT EXISTS "unq_idx_no_subnum_{board}" on "{board}"(no, coalesce(subnum,0){extra_constraint});
             
             {timescale_extra}
             
@@ -679,7 +679,7 @@ impl QueryRaw for Client {
               tag,since4pass, extract(epoch from now())::bigint as last_modified
               FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts') q
               WHERE q.no IS NOT NULL
-            ON CONFLICT (no{extra_constraint}) 
+            ON CONFLICT (no, coalesce(subnum,0){extra_constraint}) 
             DO
               UPDATE SET 
               no = excluded.no,
@@ -823,7 +823,7 @@ impl QueryRaw for Client {
               --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
             ON x.no = z.no
             WHERE z.no is null
-            ON CONFLICT (no{extra_constraint}) 
+            ON CONFLICT (no, coalesce(subnum,0){extra_constraint}) 
             DO
             UPDATE
             SET deleted_on = extract(epoch from now())::bigint,
