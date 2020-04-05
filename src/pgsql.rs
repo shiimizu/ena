@@ -89,7 +89,7 @@ pub mod core {
     ///                                           Table "asagi.a"
     ///      Column     |   Type   | Collation | Nullable | Default | Storage  | Stats target | Description
     /// ----------------+----------+-----------+----------+---------+----------+--------------+-------------
-    ///  no             | bigint   |           | not null |         | plain    |              |
+    ///  no             | bigint   |           |          |         | plain    |              |
     ///  subnum         | bigint   |           |          |         | plain    |              |
     ///  tim            | bigint   |           |          |         | plain    |              |
     ///  resto          | bigint   |           | not null | 0       | plain    |              |
@@ -131,7 +131,10 @@ pub mod core {
     ///  sha256t        | bytea    |           |          |         | extended |              |
     ///  extra          | jsonb    |           |          |         | extended |              |
     /// Indexes:
-    ///     "unique_no_{board}" PRIMARY KEY, btree (no)
+    ///     "unq_idx_no_subnum_a" UNIQUE, btree (no, COALESCE(subnum, 0::bigint))
+    ///     "idx_a_no_resto" btree (no, resto)
+    ///     "idx_a_time" btree (((floor(("time" / 86400)::double precision) * '86400'::double precision)::bigint))
+    ///     "trgm_idx_a_com" gin (com asagi.gin_trgm_ops)
     /// ```
     ///
     /// </p>

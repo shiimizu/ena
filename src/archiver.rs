@@ -699,7 +699,7 @@ where
                 Err(e) => {
                     error!("({})\t/{}/{}\tFetching thread: {}", endpoint, board, thread, e);
                     sleep(Duration::from_secs(1)).await;
-                },
+                }
                 Ok((_, status, body)) => match status {
                     StatusCode::OK =>
                         if body.is_empty() {

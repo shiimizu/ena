@@ -22,7 +22,6 @@ use log::*;
 use std::io::Read;
 
 fn main() {
-
     let start_time = Local::now();
     pretty_env_logger::try_init_timed_custom_env("ENA_LOG").unwrap();
 
@@ -125,7 +124,6 @@ async fn async_main() -> Result<u64> {
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
         .build()
         .expect("Err building the HTTP Client");
-
 
     let archiver;
     // Determine which engine is being used

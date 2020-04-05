@@ -46,7 +46,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 
 ### Installation
 1. [Download][latest-link] the pre-compiled binaries _**or**_ build from source for the latest builds.  
-You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After that, clone the repo and build.
+You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After that, clone the repo and build. Set your [environment variable](https://github.com/shiimizu/ena/wiki/Configuration#extra-environment-variables) to view output.  
 	```console
 	$ git clone https://github.com/shiimizu/ena.git
 	$ cd ena
