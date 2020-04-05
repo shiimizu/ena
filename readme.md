@@ -25,7 +25,7 @@ Ena</h1><h4 align="center">An ultra lightweight imageboard archiver<br><br>
 
 <br>
 
-Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store. Check the [wiki](https://github.com/shiimizu/ena/wiki) for more information
+Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store. Check the [wiki](https://github.com/shiimizu/ena/wiki) for more information.
 
 ### Features
 * Asagi compatible - Use as a [drop-in replacement](https://github.com/shiimizu/ena/wiki/Asagi) if you want.

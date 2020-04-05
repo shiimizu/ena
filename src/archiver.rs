@@ -603,6 +603,7 @@ where
                     break;
                 }
 
+                // Download the single thread
                 let now_thread = tokio::time::Instant::now();
                 self.assign_to_thread(&bs, id, thread, position, threads_len, &statements).await;
                 if let Err(e) = sender.send((bs.clone(), statements_media.clone(), thread)) {
@@ -695,6 +696,10 @@ where
                 )
                 .await
             {
+                Err(e) => {
+                    error!("({})\t/{}/{}\tFetching thread: {}", endpoint, board, thread, e);
+                    sleep(Duration::from_secs(1)).await;
+                },
                 Ok((_, status, body)) => match status {
                     StatusCode::OK =>
                         if body.is_empty() {
@@ -778,10 +783,6 @@ where
                         break;
                     }
                     _e => {}
-                },
-                Err(e) => {
-                    error!("({})\t/{}/{}\tFetching thread: {}", endpoint, board, thread, e);
-                    sleep(Duration::from_secs(1)).await;
                 }
             }
         }

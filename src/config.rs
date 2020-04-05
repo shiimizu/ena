@@ -373,7 +373,7 @@ pub fn display_full_version() {
     println!("\nBUILD-INFO:");
     println!("    target                  {}", env!("VERGEN_TARGET_TRIPLE"));
     println!("    timestamp               {}", env!("VERGEN_BUILD_TIMESTAMP"));
-    println!("    hash                    {}", env!("VERGEN_SHA"));
+    println!("    revision                {}", env!("VERGEN_SHA"));
 }
 
 pub fn display_help() {

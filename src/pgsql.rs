@@ -15,7 +15,7 @@ pub mod core {
     //! Implementation of the default schema.  
     //!
     //! - [`Client`] The PostgreSQL implementation ([`tokio_postgres`]) to run the SQL queries
-    //! - [`Schema`] The schema and list of SQL queries that `ena` uses
+    //! - [`Schema`](struct.Schema.html) The schema and list of SQL queries that `ena` uses
     #[allow(unused_imports)]
     use super::*;
     use std::ops::Deref;
@@ -49,8 +49,8 @@ pub mod core {
     /// The schema for each row.  
     ///
     /// This is just for documentation.  
-    /// Optimized specifically for Postgres by using column tetris to save space.  
-    /// Reasonable changes were also made to the original schema.
+    /// Optimized specifically for Postgres by using [column tetris](https://www.2ndquadrant.com/en/blog/on-rocks-and-sand/) to save space.  
+    /// The original schema is used as a base with reasonable changes made.  
     ///
     /// ## Added
     /// - [`subnum`](struct.Post.html#structfield.subnum) For ghost posts
@@ -67,7 +67,7 @@ pub mod core {
     ///   [`archived_on`](struct.Post.html#structfield.archived_on)  
     /// ## Modified  
     /// - [`md5`](struct.Post.html#structfield.md5) From base64 to binary, to save space
-    /// - [`country`](struct.Post.html#structfield.country) Use `troll_country` if [`country`] is `NULL`
+    /// - [`country`](struct.Post.html#structfield.country) Use `troll_country` if [`country`](#structfield.country) is `NULL`
     /// - To boolean, to save space
     ///     - [`sticky`](struct.Post.html#structfield.sticky)
     ///     - [`closed`](struct.Post.html#structfield.closed)
@@ -81,6 +81,62 @@ pub mod core {
     /// For example: [`custom_spoiler`](struct.Post.html#structfield.custom_spoiler) should ideally
     /// be [`u8`].
     ///
+    /// ---
+    /// <details><summary>▶ <b>SQL table query</b></summary>
+    /// <p>
+    ///
+    /// ```sql
+    ///                                           Table "asagi.a"
+    ///      Column     |   Type   | Collation | Nullable | Default | Storage  | Stats target | Description
+    /// ----------------+----------+-----------+----------+---------+----------+--------------+-------------
+    ///  no             | bigint   |           | not null |         | plain    |              |
+    ///  subnum         | bigint   |           |          |         | plain    |              |
+    ///  tim            | bigint   |           |          |         | plain    |              |
+    ///  resto          | bigint   |           | not null | 0       | plain    |              |
+    ///  time           | bigint   |           | not null | 0       | plain    |              |
+    ///  last_modified  | bigint   |           |          |         | plain    |              |
+    ///  archived_on    | bigint   |           |          |         | plain    |              |
+    ///  deleted_on     | bigint   |           |          |         | plain    |              |
+    ///  fsize          | bigint   |           |          |         | plain    |              |
+    ///  w              | integer  |           |          |         | plain    |              |
+    ///  h              | integer  |           |          |         | plain    |              |
+    ///  tn_w           | integer  |           |          |         | plain    |              |
+    ///  tn_h           | integer  |           |          |         | plain    |              |
+    ///  replies        | integer  |           |          |         | plain    |              |
+    ///  images         | integer  |           |          |         | plain    |              |
+    ///  unique_ips     | integer  |           |          |         | plain    |              |
+    ///  custom_spoiler | smallint |           |          |         | plain    |              |
+    ///  since4pass     | smallint |           |          |         | plain    |              |
+    ///  sticky         | boolean  |           |          |         | plain    |              |
+    ///  closed         | boolean  |           |          |         | plain    |              |
+    ///  filedeleted    | boolean  |           |          |         | plain    |              |
+    ///  spoiler        | boolean  |           |          |         | plain    |              |
+    ///  m_img          | boolean  |           |          |         | plain    |              |
+    ///  bumplimit      | boolean  |           |          |         | plain    |              |
+    ///  imagelimit     | boolean  |           |          |         | plain    |              |
+    ///  name           | text     |           |          |         | extended |              |
+    ///  sub            | text     |           |          |         | extended |              |
+    ///  com            | text     |           |          |         | extended |              |
+    ///  filename       | text     |           |          |         | extended |              |
+    ///  ext            | text     |           |          |         | extended |              |
+    ///  trip           | text     |           |          |         | extended |              |
+    ///  id             | text     |           |          |         | extended |              |
+    ///  capcode        | text     |           |          |         | extended |              |
+    ///  country        | text     |           |          |         | extended |              |
+    ///  country_name   | text     |           |          |         | extended |              |
+    ///  semantic_url   | text     |           |          |         | extended |              |
+    ///  tag            | text     |           |          |         | extended |              |
+    ///  md5            | bytea    |           |          |         | extended |              |
+    ///  sha256         | bytea    |           |          |         | extended |              |
+    ///  sha256t        | bytea    |           |          |         | extended |              |
+    ///  extra          | jsonb    |           |          |         | extended |              |
+    /// Indexes:
+    ///     "unique_no_{board}" PRIMARY KEY, btree (no)
+    /// ```
+    ///
+    /// </p>
+    /// </details>
+    /// 
     /// ---  
     /// The following below is taken from the [official docs](https://github.com/4chan/4chan-API) where applicable.  
     #[cold]
@@ -294,8 +350,8 @@ pub mod core {
         
         /// Appears: ` `  
         /// Possible values:  
-        /// <font style="color:#789922;">> Optional field for extra schema additions</font>
-        pub extra: Option<Vec<u8>>
+        /// <font style="color:#789922;">> Optional field for extra column additions</font>
+        pub extra: Option<serde_json::Value>
     }
 
     impl Default for Post {
