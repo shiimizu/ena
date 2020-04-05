@@ -494,7 +494,7 @@ impl QueryRaw for Client {
               sha256t bytea,
               extra jsonb);
             
-            CREATE UNIQUE INDEX IF NOT EXISTS "unq_idx_no_subnum_{board}" on "{board}"(no, coalesce(subnum,0){extra_constraint});
+            CREATE UNIQUE INDEX IF NOT EXISTS "unq_idx_no_subnum_{board}" on "{board}"(no, coalesce(subnum,0));
             
             {timescale_extra}
             
@@ -506,12 +506,10 @@ impl QueryRaw for Client {
             CREATE INDEX IF NOT EXISTS "trgm_idx_{board}_com" ON "{board}" USING gin (com gin_trgm_ops);
             -- SET enable_seqscan TO OFF;"#,
                     board = id.board,
-                    extra_constraint =
-                        if matches!(id.engine, Database::TimescaleDB) { r#","time""# } else { "" },
                     timescale_extra = if matches!(id.engine, Database::TimescaleDB) {
                         format!(
                             r#"CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-                        SELECT public.create_hypertable('{board}', 'time', chunk_time_interval => 2592000);"#,
+                        SELECT public.create_hypertable('{board}', 'no', chunk_time_interval => 3900000);"#,
                             board = id.board
                         )
                     } else {
@@ -686,7 +684,7 @@ impl QueryRaw for Client {
               tag,since4pass, extract(epoch from now())::bigint as last_modified
               FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts') q
               WHERE q.no IS NOT NULL
-            ON CONFLICT (no, coalesce(subnum,0){extra_constraint}) 
+            ON CONFLICT (no, coalesce(subnum,0)) 
             DO
               UPDATE SET 
               no = excluded.no,
@@ -801,9 +799,7 @@ impl QueryRaw for Client {
                 excluded.tag,
                 excluded.since4pass
               WHERE excluded.no IS NOT NULL AND excluded.no = "{board}".no )"#,
-                board = id.board,
-                extra_constraint =
-                    if matches!(id.engine, Database::TimescaleDB) { r#","time""# } else { "" }
+                board = id.board
             ),
             YotsubaStatement::Delete => format!(
                 r#"
@@ -830,16 +826,14 @@ impl QueryRaw for Client {
               --(SELECT * FROM jsonb_populate_recordset(null::"schema_4chan", $1::jsonb->'posts')) z
             ON x.no = z.no
             WHERE z.no is null
-            ON CONFLICT (no, coalesce(subnum,0){extra_constraint}) 
+            ON CONFLICT (no, coalesce(subnum,0)) 
             DO
             UPDATE
             SET deleted_on = extract(epoch from now())::bigint,
               last_modified = extract(epoch from now())::bigint
             WHERE
             "{board}".deleted_on is NULL; "#,
-                board = id.board,
-                extra_constraint =
-                    if matches!(id.engine, Database::TimescaleDB) { r#","time""# } else { "" }
+                board = id.board
             ),
             YotsubaStatement::InitType => r#"
         DO $$
