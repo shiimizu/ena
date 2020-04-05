@@ -434,6 +434,10 @@ impl QueryRaw for Client {
                 r#"
             CREATE SCHEMA IF NOT EXISTS "{schema}";
             SET search_path TO "{schema}";
+            CREATE TABLE IF NOT EXISTS index_counters (
+                          id character varying(50) NOT NULL,
+                          val integer NOT NULL,
+                          PRIMARY KEY (id));
             "#,
                 schema = id.schema.unwrap()
             ),
@@ -509,7 +513,8 @@ impl QueryRaw for Client {
                     timescale_extra = if matches!(id.engine, Database::TimescaleDB) {
                         format!(
                             r#"CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-                        SELECT public.create_hypertable('{board}', 'no', chunk_time_interval => 3900000);"#,
+                            select public.create_hypertable('{board}', 'no', if_not_exists => true, chunk_time_interval => 3900000);
+                            "#,
                             board = id.board
                         )
                     } else {
@@ -1035,7 +1040,7 @@ impl QueryRaw for Client {
                     "_images",
                     format!(
                         r#"
-          SELECT ROW_NUMBER() OVER(ORDER by x.media) AS media_id, * FROM (
+          SELECT ROW_NUMBER() OVER(ORDER by zz.media) AS media_id, * FROM (
             SELECT
               ENCODE(md5, 'base64') AS media_hash,
               MAX(tim)::text || max(ext) as media,
@@ -1046,7 +1051,7 @@ impl QueryRaw for Client {
               encode(sha256, 'hex')::text || max(ext) as media_sha256,
               (CASE WHEN MAX(resto) = 0 THEN encode(sha256, 'hex')::text || 's.jpg' ELSE NULL END) AS preview_op_sha256,
               (CASE WHEN MAX(resto) != 0 THEN encode(sha256t, 'hex')::text || 's.jpg' ELSE NULL END) AS preview_reply_sha256
-            FROM "{board}" WHERE md5 IS NOT NULL GROUP BY md5, sha256, sha256t)x;
+            FROM "{board}" WHERE md5 IS NOT NULL GROUP BY md5, sha256, sha256t)zz;
         "#,
                         board = board
                     )
@@ -1082,12 +1087,8 @@ impl QueryRaw for Client {
       
         {6}
       
-        CREATE INDEX IF NOT EXISTS "idx_{0}_time" on "{0}"(((floor((("{0}"."time" / 86400))::double precision) * '86400'::double precision)::bigint));
+        CREATE INDEX IF NOT EXISTS "idx_{0}_time" on "{0}"(((floor((("time" / 86400))::double precision) * '86400'::double precision)::bigint));
       
-        CREATE TABLE IF NOT EXISTS index_counters (
-                      id character varying(50) NOT NULL,
-                      val integer NOT NULL,
-                      PRIMARY KEY (id));
         "#,
                     board,
                     main_view(true),
