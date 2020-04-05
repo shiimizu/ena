@@ -10,8 +10,8 @@
     "charset": "utf8",
     "path": "./archive",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0",
-    "apiUrl": "http://a.4cdn.org",
-    "mediaUrl": "http://i.4cdn.org",
+    "apiUrl": "https://a.4cdn.org",
+    "mediaUrl": "https://i.4cdn.org",
     "asagiMode": false,
     "strictMode": true
   },
