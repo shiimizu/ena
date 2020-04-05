@@ -68,7 +68,7 @@ pub mod core {
     /// ## Modified  
     /// - [`md5`](struct.Post.html#structfield.md5) From base64 to binary, to save space
     /// - [`country`](struct.Post.html#structfield.country) Use `troll_country` if [`country`](#structfield.country) is `NULL`
-    /// - To boolean, to save space
+    /// - To [`bool`], to save space
     ///     - [`sticky`](struct.Post.html#structfield.sticky)
     ///     - [`closed`](struct.Post.html#structfield.closed)
     ///     - [`filedeleted`](struct.Post.html#structfield.filedeleted)
@@ -509,9 +509,13 @@ impl QueryRaw for Client {
                     extra_constraint =
                         if matches!(id.engine, Database::TimescaleDB) { r#","time""# } else { "" },
                     timescale_extra = if matches!(id.engine, Database::TimescaleDB) {
-                        r#"SELECT create_hypertable('c', 'time', chunk_time_interval => 2592000);"#
+                        format!(
+                            r#"CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+                        SELECT public.create_hypertable('{board}', 'time', chunk_time_interval => 2592000);"#,
+                            board = id.board
+                        )
                     } else {
-                        ""
+                        "".into()
                     },
                 )
                 // 1day => sec: 86400
