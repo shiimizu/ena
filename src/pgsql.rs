@@ -97,14 +97,14 @@ pub mod core {
     ///  last_modified  | bigint   |           |          |         | plain    |              |
     ///  archived_on    | bigint   |           |          |         | plain    |              |
     ///  deleted_on     | bigint   |           |          |         | plain    |              |
-    ///  fsize          | bigint   |           |          |         | plain    |              |
+    ///  fsize          | integer  |           |          |         | plain    |              |
     ///  w              | integer  |           |          |         | plain    |              |
     ///  h              | integer  |           |          |         | plain    |              |
-    ///  tn_w           | integer  |           |          |         | plain    |              |
-    ///  tn_h           | integer  |           |          |         | plain    |              |
     ///  replies        | integer  |           |          |         | plain    |              |
     ///  images         | integer  |           |          |         | plain    |              |
     ///  unique_ips     | integer  |           |          |         | plain    |              |
+    ///  tn_w           | smallint |           |          |         | plain    |              |
+    ///  tn_h           | smallint |           |          |         | plain    |              |
     ///  custom_spoiler | smallint |           |          |         | plain    |              |
     ///  since4pass     | smallint |           |          |         | plain    |              |
     ///  sticky         | boolean  |           |          |         | plain    |              |
@@ -191,7 +191,7 @@ pub mod core {
         /// Appears: `always if post has attachment`  
         /// Possible values: `any positive integer`  
         /// <font style="color:#789922;">> Size of uploaded file in bytes</font>
-        pub fsize: Option<i64>,
+        pub fsize: Option<i32>,
     
         /// Appears: `always if post has attachment`  
         /// Possible values: `any positive integer`  
@@ -202,16 +202,6 @@ pub mod core {
         /// Possible values: `any positive integer`  
         /// <font style="color:#789922;">> Image height dimension</font>
         pub h: Option<i32>,
-    
-        /// Appears: `always if post has attachment`  
-        /// Possible values: `any positive integer`  
-        /// <font style="color:#789922;">> Thumbnail image width dimension</font>
-        pub tn_w: Option<i32>,
-    
-        /// Appears: `always if post has attachment`  
-        /// Possible values: `any positive integer`  
-        /// <font style="color:#789922;">> Thumbnail image height dimension</font>
-        pub tn_h: Option<i32>,
     
         /// Appears: `OP only`  
         /// Possible values: `0` or `any positive integer`  
@@ -227,6 +217,16 @@ pub mod core {
         /// Possible values: `any positive integer`  
         /// <font style="color:#789922;">> Number of unique posters in a thread</font>
         pub unique_ips: Option<i32>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Thumbnail image width dimension</font>
+        pub tn_w: Option<i16>,
+    
+        /// Appears: `always if post has attachment`  
+        /// Possible values: `any positive integer`  
+        /// <font style="color:#789922;">> Thumbnail image height dimension</font>
+        pub tn_h: Option<i16>,
     
         /// Appears: `if post has attachment and attachment is spoilered`  
         /// Possible values: `1-10` or not set  
@@ -371,11 +371,11 @@ pub mod core {
                 fsize:          None,
                 w:              None,
                 h:              None,
-                tn_w:           None,
-                tn_h:           None,
                 replies:        None,
                 images:         None,
                 unique_ips:     None,
+                tn_w:           None,
+                tn_h:           None,
                 custom_spoiler: None,
                 since4pass:     None,
                 sticky:         None,
@@ -457,14 +457,14 @@ impl QueryRaw for Client {
               last_modified bigint,
               archived_on bigint,
               deleted_on bigint,
-              fsize bigint,
+              fsize int,
               w int,
               h int,
-              tn_w int,
-              tn_h int,
               replies int,
               images int,
               unique_ips int,
+              tn_w smallint,
+              tn_h smallint,
               custom_spoiler smallint,
               since4pass smallint,
               sticky boolean,
@@ -853,12 +853,12 @@ impl QueryRaw for Client {
               ext text,
               w int,
               h int,
-              tn_w int,
-              tn_h int,
+              tn_w smallint,
+              tn_h smallint,
               tim bigint,
               "time" bigint,
               "md5" text,
-              fsize bigint,
+              fsize int,
               m_img smallint,
               resto int,
               trip text,
