@@ -58,7 +58,7 @@ pub mod core {
     /// - [`last_modified`](struct.Post.html#structfield.last_modified) For context and possible use
     ///   of search engines
     /// - [`sha256`](struct.Post.html#structfield.sha256) For file dedup and to prevent [MD5 collisions](https://github.com/4chan/4chan-API/issues/70)
-    /// - [`sha256t`](struct.Post.html#structfield.sha256t) For file dedup and to prevent [MD5 collisions](https://github.com/4chan/4chan-API/issues/70)
+    /// - [`sha256t`](struct.Post.html#structfield.sha256t) For thumbnail dedup and to prevent [MD5 collisions](https://github.com/4chan/4chan-API/issues/70)
     /// - [`extra`](struct.Post.html#structfield.extra) For any future schema changes
     /// ## Removed
     /// - [`now`](struct.Post.html#structfield.now) Redundant with
@@ -89,7 +89,7 @@ pub mod core {
     ///                                           Table "asagi.a"
     ///      Column     |   Type   | Collation | Nullable | Default | Storage  | Stats target | Description
     /// ----------------+----------+-----------+----------+---------+----------+--------------+-------------
-    ///  no             | bigint   |           |          |         | plain    |              |
+    ///  no             | bigint   |           | not null |         | plain    |              |
     ///  subnum         | bigint   |           |          |         | plain    |              |
     ///  tim            | bigint   |           |          |         | plain    |              |
     ///  resto          | bigint   |           | not null | 0       | plain    |              |
@@ -452,7 +452,7 @@ impl QueryRaw for Client {
                 format!(
                     r#"
             CREATE TABLE IF NOT EXISTS "{board}" (
-              no bigint,
+              no bigint NOT NULL,
               subnum bigint,
               tim bigint,
               resto bigint NOT NULL DEFAULT 0,
