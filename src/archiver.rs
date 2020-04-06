@@ -155,6 +155,7 @@ where
             YotsubaEndpoint::Archive | YotsubaEndpoint::Threads => {
                 if let Err(e) = self.fetch_board(endpoint, info, semaphore, tx, rx).await {
                     error!("|fetch_board| An error has occurred {}", e);
+                    return Err(e);
                 }
             }
             YotsubaEndpoint::Media => {
@@ -165,6 +166,7 @@ where
                 if !path_temp.is_dir() {
                     if let Err(e) = std::fs::create_dir_all(&temp_path) {
                         error!("Create media temp dirs: {}", e);
+                        return Err(anyhow!(e));
                     }
                 }
 
@@ -635,15 +637,25 @@ where
             // list of threads it was processing before + new ones.
             if threads_len > 0 && update_metadata {
                 if let Some(ft) = &fetched_threads {
-                    if let Err(e) = self
-                        .query
-                        .first(YotsubaStatement::UpdateMetadata, id, &statements, Some(&ft), None)
-                        .await
-                    // self.query.update_metadata(&statements, endpoint, current_board, &ft).await
-                    {
-                        error!("Error updating metadata at the end! {}", e);
+                    // Loop until successful
+                    loop {
+                        if let Err(e) = self
+                            .query
+                            .first(
+                                YotsubaStatement::UpdateMetadata,
+                                id,
+                                &statements,
+                                Some(&ft),
+                                None
+                            )
+                            .await
+                        {
+                            error!("Error updating metadata at the end! {}", e);
+                            sleep(Duration::from_millis(1500)).await;
+                            continue;
+                        }
+                        break;
                     }
-
                     // Reset
                     update_metadata = false;
                 }
@@ -698,7 +710,7 @@ where
             {
                 Err(e) => {
                     error!("({})\t/{}/{}\tFetching thread: {}", endpoint, board, thread, e);
-                    sleep(Duration::from_secs(1)).await;
+                    sleep(Duration::from_secs(1500)).await;
                 }
                 Ok((_, status, body)) => match status {
                     StatusCode::OK =>
@@ -707,7 +719,7 @@ where
                                 "({})\t/{}/{}\t<{}> Body was found to be empty!",
                                 endpoint, board, thread, status
                             );
-                            sleep(Duration::from_secs(1)).await;
+                            sleep(Duration::from_millis(1500)).await;
                         } else {
                             if let Err(e) = self
                                 .query
@@ -775,6 +787,11 @@ where
                                 "({})\t/{}/{}\t[{}/{}] |delete| {}",
                                 endpoint, board, thread, position, length, e
                             );
+                            // Could be a database error
+                            // Loop until successful
+                            sleep(Duration::from_millis(1500)).await;
+                            tries = 0;
+                            continue;
                         }
                         warn!(
                             "({})\t/{}/{}\t[{}/{}] <DELETED>",
