@@ -86,8 +86,15 @@ async fn async_main() -> Result<u64> {
     }
     if config.is_err() {
         let filename = "ena_config.json";
-        config::CONFIG_CONTENTS.set(std::fs::read_to_string(filename)?).unwrap();
-        let cfg: config::Config = config::read_json(filename);
+        config::CONFIG_CONTENTS
+            .set(std::fs::read_to_string(filename).unwrap_or({
+                error!("`{}` not found! Using default config file", filename);
+                serde_json::to_string(&config::ConfigInner::default())?
+            }))
+            .unwrap();
+        let cfg: config::Config = serde_json::from_str::<config::Config>(
+            &config::CONFIG_CONTENTS.get().expect("Empty config")
+        )?;
         config = Ok(config::read_config(cfg));
     }
     let config = config?;

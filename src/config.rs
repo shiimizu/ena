@@ -196,7 +196,7 @@ impl Default for BoardSettings {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
-struct ConfigInner {
+pub struct ConfigInner {
     settings:       Settings,
     board_settings: BoardSettingsInner,
     boards:         Vec<BoardSettingsInner>
