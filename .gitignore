@@ -6,6 +6,7 @@ Cargo.lock
 
 # Local stuff
 *doc*
+*musl*
 src/other
 docker
 json
