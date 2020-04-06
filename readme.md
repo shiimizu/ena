@@ -5,6 +5,7 @@ Ena</h1><h4 align="center">An ultra lightweight imageboard archiver<br><br>
 [![Latest Version][latest-badge]][latest-link]
 [![License][license-badge]][license-url]
 [![Build Status][build-badge]][build-url]
+[![Documentation][doc-badge]][doc-url]
 [![Unsafe Forbidden][safety-badge]][safety-url]
 [![Matrix Chat][chat-badge]][chat-link]
 
@@ -14,6 +15,8 @@ Ena</h1><h4 align="center">An ultra lightweight imageboard archiver<br><br>
 [license-url]: LICENSE
 [build-badge]: https://img.shields.io/github/workflow/status/shiimizu/ena/Rust?logo=github&style=flat-square
 [build-url]: https://github.com/shiimizu/ena/actions?query=workflow%3ARust
+[doc-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square
+[doc-url]: https://shiimizu.github.io/ena.docs
 [safety-badge]: https://img.shields.io/badge/unsafe-forbidden-green.svg?style=flat-square
 [safety-url]: https://github.com/rust-secure-code/safety-dance/
 [chat-link]: https://matrix.to/#/#bibanon-chat:matrix.org
@@ -28,9 +31,9 @@ Ena</h1><h4 align="center">An ultra lightweight imageboard archiver<br><br>
 Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store. Check the [wiki](https://github.com/shiimizu/ena/wiki) for more information.
 
 ### Features
-* Asagi compatible - Use as a [drop-in replacement](https://github.com/shiimizu/ena/wiki/Asagi) if you want.
-* Memory efficient - Using less than 5mb for a single board. Less than 30mb for all 72 boards.
-* Bandwidth efficient - [API](https://github.com/4chan/4chan-API) requests stay low without sacrificing any posts by using only `threads.json` and `archive.json`, instead of continously polling every thread for updates.
+* Asagi compatible - Use as a [drop-in replacement](https://github.com/shiimizu/ena/wiki/Asagi) if you want
+* Memory efficient - Using less than 5mb for a single board. Less than 30mb for all 72 boards
+* Bandwidth efficient - [API](https://github.com/4chan/4chan-API) requests stay low without sacrificing any posts by using only `threads.json` and `archive.json`, instead of continously polling every thread for updates
 * Preserved comments - Comments are untouched in their original HTML format
 * Hashed files - Media files and thumbnails are hashed with SHA256
 
@@ -63,10 +66,7 @@ You'll need [Rust](https://www.rust-lang.org/tools/install) installed. After tha
 Much of my personal time and research went into 4chan for *educational purposes* and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. At the time there wasn't any avaliable practical solutions nor were they production ready, so I decided to help out.
 
 ### Why Rust?
-I wanted something fast, safe, and ideally able to withstand long-term usage.
-* [Energy Efficiency across Programming Languages](https://sites.google.com/view/energy-efficiency-languages/results)
-* [Which programs are fastest?](https://benchmarksgame-team.pages.debian.net/benchmarksgame/which-programs-are-fastest.html)
-* [Why should I rust?](https://www.reddit.com/r/rust/comments/ekuiql/why_should_i_rust/)
+I wanted something fast, durable, and ideally able to withstand long-term usage. Rust has memory safety guarantee, no GC, speed like C, and an ecosystem like Python's. Paying upfront in development time in return for less debugging and runtime errors is a small price to pay. Generally, if it compiles, you can rest assured there won't be any low level hiccups as would be in other languages.
 
 ### What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?
