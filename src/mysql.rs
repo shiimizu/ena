@@ -539,11 +539,11 @@ impl QueryRaw for Pool {
             ),
             YotsubaStatement::UpdateThread => format!(
                 r#"
-            INSERT INTO `{board}`(`poster_ip`,`num`,`subnum`,`thread_num`,`op`,`timestamp`,`timestamp_expired`,`preview_orig`,`preview_w`,`preview_h`,`media_filename`,`media_w`,`media_h`,`media_size`,`media_hash`,`media_orig`,`spoiler`,`deleted`,`capcode`,`email`,`name`,`trip`,`title`,`comment`,`delpass`,`sticky`,`locked`,`poster_hash`,`poster_country`,`exif`)
+            INSERT INTO `{board}`(`num`,`subnum`,`thread_num`,`op`,`timestamp`,`timestamp_expired`,`preview_orig`,`preview_w`,`preview_h`,`media_filename`,`media_w`,`media_h`,`media_size`,`media_hash`,`media_orig`,`spoiler`,`deleted`,`capcode`,`email`,`name`,`trip`,`title`,`comment`,`delpass`,`sticky`,`locked`,`poster_hash`,`poster_country`,`exif`)
             SELECT *
             FROM (SELECT
                     -- _id																'media_id',
-                    IF(unique_ips IS NULL, 0, unique_ips)							'poster_ip',	-- Unused in Asagi. Used in FF.
+                    -- null																'poster_ip',	-- Unused in Asagi. Used in FF.
                     no																'num',
                     0																'subnum',		-- Unused in Asagi. Used in FF for ghost posts.
                     IF(resto=0, no, resto)											'thread_num',
