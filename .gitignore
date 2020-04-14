@@ -2,7 +2,6 @@
 target
 cache
 **/*.rs.bk
-Cargo.lock
 
 # Local stuff
 *doc*
