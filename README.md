@@ -11,7 +11,7 @@ Ena</h1><p align="center">An ultra lightweight imageboard archiver</p><h4 align=
 [![Matrix Chat][matrix-chat-badge]][matrix-chat-link]
 
 [repo-url]: https://github.com/shiimizu/ena
-[latest-badge]: https://img.shields.io/github/v/release/shiimizu/ena?color=ca7f85&style=flat-square
+[latest-badge]: https://img.shields.io/github/v/release/shiimizu/ena?color=e68a91&style=flat-square
 [latest-link]: https://github.com/shiimizu/ena/releases/latest
 [license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue&style=flat-square
 [license-url]: LICENSE
