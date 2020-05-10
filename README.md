@@ -34,9 +34,13 @@ Ena</h1><p align="center">An ultra lightweight imageboard archiver</p><h4 align=
 
 <br>
 
-Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store.  
+
 
 ![Demo](./img/demo.gif)
+
+
+Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store.  
+
 
 ## Features
 
