@@ -69,7 +69,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 * [PostgreSQL](https://www.postgresql.org/download/) >= 11.0
 
 ## Getting Started
-Download the [latest][latest-link] release binaries or build it from source.  
+Download the [latest][latest-link] release binaries or build it from source. Have [OpenSSL](https://www.openssl.org/source/) installed.  
 
 You can simply build for your host machine as follows:
 ```bash
