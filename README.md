@@ -36,6 +36,8 @@ Ena</h1><p align="center">An ultra lightweight imageboard archiver</p><h4 align=
 
 Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store.  
 
+![Demo](./img/demo.gif)
+
 ## Features
 
 * **Asagi compatible**<br>
@@ -85,6 +87,23 @@ Make sure your PostgreSQL server is running.
 
 You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks.  
 Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
+
+## Usage
+```
+ena
+An ultra-low resource imageboard archiver
+
+USAGE:
+    ena
+    ena [OPTIONS] [-c CONFIGFILE]
+    ena [OPTIONS]
+    command | ena [-c -]
+
+OPTIONS:
+    -c, --config            Specify a config file or pass '-' for stdin
+    -h, --help              Prints help information
+    -v, --version           Prints version information
+```
 
 ## Why do this?
 Much of my personal time and research went into 4chan for *educational purposes* and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. At the time there wasn't any avaliable practical solutions nor were they production ready, so I decided to help out.
