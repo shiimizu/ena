@@ -16,7 +16,7 @@ use tokio::{
     time::{delay_for as sleep, Duration}
 };
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Result};
 use chrono::Local;
 use log::*;
 use std::io::Read;
@@ -41,7 +41,7 @@ fn main() {
         }
     };
 
-    if ret != 0 {
+    if ret != 0 && ((Local::now().timestamp() - start_time.timestamp()) > 1) {
         info!(
             "\nStarted on:\t{}\nFinished on:\t{}",
             start_time.to_rfc2822(),
@@ -52,7 +52,7 @@ fn main() {
 
 async fn async_main() -> Result<u64> {
     let mut args = std::env::args().skip(1).peekable();
-    let mut config: Result<config::Config> = Err(anyhow::anyhow!("Empty config file"));
+    let mut config: Result<config::Config> = Err(anyhow!("Empty config file"));
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
@@ -88,7 +88,9 @@ async fn async_main() -> Result<u64> {
         let filename = "ena_config.json";
         config::CONFIG_CONTENTS
             .set(std::fs::read_to_string(filename).unwrap_or({
-                error!("`{}` not found! Using default config file", filename);
+                if !std::path::Path::new(filename).exists() {
+                    error!("`{}` not found! Using default built-in config file", filename);
+                }
                 serde_json::to_string(&config::ConfigInner::default())?
             }))
             .unwrap();
@@ -102,29 +104,29 @@ async fn async_main() -> Result<u64> {
     let asagi_mode = config.settings.asagi_mode;
 
     if config.boards.is_empty() {
-        panic!("No boards specified");
+        return Err(anyhow!("No boards specified"));
     }
 
     // Find duplicate boards
     for info in &config.boards {
         let count = &config.boards.iter().filter(|&n| n.board == info.board).count();
         if *count > 1 {
-            panic!("Multiple occurrences of `{}` found :: `{}`", info.board, count);
+            return Err(anyhow!("Multiple occurrences of `{}` found :: `{}`", info.board, count));
         }
     }
 
     if config.settings.asagi_mode && config.settings.engine.base() != Database::MySQL {
-        unimplemented!("Asagi mode outside of MySQL. Found: `{}`", &config.settings.engine)
+        return Err(anyhow!("Asagi mode outside of MySQL. Found: `{}`", &config.settings.engine));
     }
 
     if !config.settings.asagi_mode && config.settings.engine.base() == Database::MySQL {
-        unimplemented!("Only the Asagi schema is implemented for MySQL")
+        return Err(anyhow!("Only the Asagi schema is implemented for MySQL"));
     }
 
     if config.settings.asagi_mode && !config.settings.strict_mode {
-        unimplemented!(
+        return Err(anyhow!(
             "The Asagi schema can only be used in strict mode because of MySQL's lack of concurrency"
-        )
+        ));
     }
 
     let http_client = reqwest::ClientBuilder::new()
@@ -135,26 +137,27 @@ async fn async_main() -> Result<u64> {
     let archiver;
     // Determine which engine is being used
     if config.settings.engine.base() == Database::PostgreSQL {
-        let (db_client, connection) =
-            tokio_postgres::connect(&config.settings.db_url, tokio_postgres::NoTls)
-                .await
-                .context(format!(
-                    "\nPlease check your settings. Connection url used: {}",
-                    config.settings.db_url
-                ))
-                .expect("Connecting to database");
+        let res = tokio_postgres::connect(&config.settings.db_url, tokio_postgres::NoTls).await;
+        match res {
+            Ok((db_client, connection)) => {
+                tokio::spawn(async move {
+                    if let Err(e) = connection.await {
+                        error!("Connection error: {}", e);
+                    }
+                });
+                config::display();
+                info!("Connected with:\t\t{}", config.settings.db_url);
 
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("Connection error: {}", e);
+                archiver = MuhArchiver::new(Box::new(
+                    archiver::YotsubaArchiver::new(db_client, http_client, config).await
+                ));
             }
-        });
-        config::display();
-        info!("Connected with:\t\t{}", config.settings.db_url);
-
-        archiver = MuhArchiver::new(Box::new(
-            archiver::YotsubaArchiver::new(db_client, http_client, config).await
-        ));
+            Err(e) => {
+                error!("Please check your configuration");
+                error!("Connection URL used: {}", config.settings.db_url);
+                return Err(anyhow!(e));
+            }
+        }
     } else {
         let pool = mysql_async::Pool::new(&config.settings.db_url);
         config::display();

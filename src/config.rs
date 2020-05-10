@@ -171,7 +171,7 @@ impl Default for BoardSettings {
         let new: BoardSettingsInner = serde_json::from_str::<ConfigInner>(
             &CONFIG_CONTENTS.get().expect("Config is not initialized")
         )
-        .unwrap()
+        .unwrap_or(ConfigInner::default())
         .board_settings;
         // read_json::<ConfigInner>().board_settings;
         BoardSettings {
