@@ -1,6 +1,6 @@
 [package]
 name = "ena"
-version = "0.6.2"
+version = "0.6.3"
 authors = ["shiimizu <shiimizu@protonmail.com>"]
 edition = "2018"
 description = "An ultra-low resource imageboard archiver"
