@@ -82,7 +82,7 @@ pub mod core {
     /// be [`u8`].
     ///
     /// ---
-    /// <details><summary>▶ <b>SQL table query</b></summary>
+    /// <details><summary><b>SQL table query</b></summary>
     /// <p>
     ///
     /// ```sql
@@ -346,7 +346,7 @@ pub mod core {
         /// <font style="color:#789922;">> 65 character (hex), binary SHA256 hash of file</font>
         pub sha256: Option<Vec<u8>>,
     
-        /// Appears: `always if post has attachment`, excludes `/f/`  
+        /// Appears: `always if post has thumbnail attachment`, excludes `/f/`  
         /// Possible values:  
         /// <font style="color:#789922;">> 65 character (hex), binary SHA256 hash of thumbnail</font>
         pub sha256t: Option<Vec<u8>>,
