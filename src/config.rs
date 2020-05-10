@@ -2,10 +2,7 @@
 //!
 //! Used to parse the config file or read from environment variables.  
 //! Also supplied are various helper functions for a CLI program.
-use crate::{
-    enums::{StringExt, YotsubaBoard},
-    sql::Database
-};
+use crate::{enums::YotsubaBoard, sql::Database};
 use anyhow::{Context, Result};
 use enum_iterator::IntoEnumIterator;
 use serde::{self, Deserialize, Serialize};
@@ -364,11 +361,10 @@ pub fn check_version() {
 /// ```
 pub fn display_full_version() {
     println!(
-        "{} v{}-{}\n    {}",
-        env!("CARGO_PKG_NAME").to_string().capitalize(),
+        "{} {} (rev {})",
+        env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
-        env!("VERGEN_SHA_SHORT"),
-        env!("CARGO_PKG_DESCRIPTION")
+        env!("VERGEN_SHA_SHORT")
     );
     println!("\nBUILD-INFO:");
     println!("    target                  {}", env!("VERGEN_TARGET_TRIPLE"));
@@ -376,17 +372,30 @@ pub fn display_full_version() {
     println!("    revision                {}", env!("VERGEN_SHA"));
 }
 
+/// Display the help information
+///
+/// # Example
+///
+/// ```
+/// use ena::config;
+/// config::display_help();
+/// ```
 pub fn display_help() {
     println!(
-        "{main} {version}",
+        "{main} {version}\n{description}",
         main = env!("CARGO_PKG_NAME"),
-        version = env!("CARGO_PKG_VERSION")
+        version = env!("CARGO_PKG_VERSION"),
+        description = env!("CARGO_PKG_DESCRIPTION")
     );
-    println!("\nFLAGS:");
-    println!("    -h, --help              Prints help information");
-    println!("    -V, --version           Prints version information");
+    println!("\nUSAGE:");
+    println!("    {}", env!("CARGO_PKG_NAME"));
+    println!("    {} [OPTIONS] [-c CONFIGFILE]", env!("CARGO_PKG_NAME"));
+    println!("    {} [OPTIONS]", env!("CARGO_PKG_NAME"));
+    println!("    command | {} [-c -]", env!("CARGO_PKG_NAME"));
     println!("\nOPTIONS:");
     println!("    -c, --config            Specify a config file or pass '-' for stdin");
+    println!("    -h, --help              Prints help information");
+    println!("    -v, --version           Prints version information");
 }
 
 /// Create an iterator that mimics the thread refresh system  
