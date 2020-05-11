@@ -439,14 +439,11 @@ pub fn refresh_rate(
 }
 
 /// Safe read a json file
-#[allow(dead_code)]
-pub fn read_json_try<T>(path: &str) -> Option<T>
+pub fn read_json_try<T>(path: &str) -> Result<T, serde_json::Error>
 where T: serde::de::DeserializeOwned {
-    std::fs::File::open(path)
-        .and_then(|file| Ok(std::io::BufReader::new(file)))
-        .ok()
-        .and_then(|reader| serde_json::from_reader(reader).ok())
-        .flatten()
+    let file = std::fs::File::open(path).unwrap();
+    let reader = std::io::BufReader::new(file);
+    serde_json::from_reader(reader)
 }
 
 /// Read a json file

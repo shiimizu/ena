@@ -69,16 +69,16 @@ async fn async_main() -> Result<u64> {
                         let mut file = String::new();
                         std::io::stdin().read_to_string(&mut file)?;
                         config::CONFIG_CONTENTS.set(file.clone()).unwrap();
-                        // config = Ok(serde_json::from_str(&file)?);
-                        let cfg: config::Config = serde_json::from_str(&file)?;
+                        let cfg = serde_json::from_str(&file)?;
                         config = Ok(config::read_config(cfg));
                     } else {
-                        // let file = std::fs::File::open(filename)?;
-                        // let reader = std::io::BufReader::new(file);
                         config::CONFIG_CONTENTS.set(std::fs::read_to_string(filename)?).unwrap();
-                        let cfg: config::Config = config::read_json(filename);
-                        config = Ok(config::read_config(cfg));
-                        // config = Ok(serde_json::from_reader(reader)?);
+                        match config::read_json_try(filename) {
+                            Ok(cfg) => {
+                                config = Ok(config::read_config(cfg));
+                            }
+                            Err(e) => return Err(anyhow!(e))
+                        }
                     }
                 },
             _ => {}
