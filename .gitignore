@@ -23,6 +23,8 @@ img/*
 *.zip
 *.7z
 *.log
+*cache*
+*build*
 justfile
 changes.log
 !ena_config.json

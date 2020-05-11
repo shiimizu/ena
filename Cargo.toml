@@ -10,7 +10,7 @@ readme = "readme.md"
 keywords = ["4chan", "archiver", "scraper", "crawler"]
 categories = ["command-line-utilities"]
 build = "src/build.rs"
-	
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
