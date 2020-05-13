@@ -1,21 +1,21 @@
-<h1 align="center"><img src="./img/yotsuba-and-ena.png" alt="Yotsuba&Ena!" width="470" /><br>
-Ena</h1><p align="center">An ultra lightweight imageboard archiver</p><h4 align="center">
+<h1 align="center"><!--<img src="./img/yotsuba-and-ena.png" alt="Yotsuba&Ena!" width="470" /><br>-->
+Ena</h1><p align="center">An imageboard archiver written in Rust</p><h4 align="center">
 <div align="center">
 
 [![Latest Version][latest-badge]][latest-link]
 [![Documentation][doc-badge]][doc-url]
 [![License][license-badge]][license-url]
-[![Build Status][build-badge]][build-url]
 [![Unsafe Forbidden][safety-badge]][safety-url]
-[![Discord Chat][discord-chat-badge]][discord-chat-link]
+[![Build Status][build-badge]][build-url]
 [![Matrix Chat][matrix-chat-badge]][matrix-chat-link]
+[![Discord Chat][discord-chat-badge]][discord-chat-link]
 
 [repo-url]: https://github.com/shiimizu/ena
-[latest-badge]: https://img.shields.io/github/v/release/shiimizu/ena?color=e68a91&style=flat-square
+[latest-badge]: https://img.shields.io/github/v/release/shiimizu/ena?color=orange&style=flat-square
 [latest-link]: https://github.com/shiimizu/ena/releases/latest
 [license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue&style=flat-square
 [license-url]: LICENSE
-[doc-badge]: https://img.shields.io/badge/docs-latest-orange.svg?style=flat-square
+[doc-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square
 [doc-url]: https://shiimizu.github.io/ena.docs
 [build-badge]: https://img.shields.io/github/workflow/status/shiimizu/ena/Rust?logo=github&style=flat-square
 [build-url]: https://github.com/shiimizu/ena/actions?query=workflow%3ARust
@@ -34,18 +34,13 @@ Ena</h1><p align="center">An ultra lightweight imageboard archiver</p><h4 align=
 
 <br>
 
-
-
 ![Demo](./img/demo.gif)
 
 
-Low resource and high performance archiver to save posts, images and all relevant data from 4chan into a local database and local image store.  
+Low resource and high performance archiver to save posts, images and all relevant data from an imageboard into a local database and local image store. Currently only supports 4chan.  
 
 
 ## Features
-
-* **Asagi compatible**<br>
- Capable as a [drop-in replacement](https://github.com/shiimizu/ena/wiki/Asagi)
 
 * **Memory efficient**<br>
  Using less than 5mb for a single board and less than 30mb for all 72 boards
@@ -62,26 +57,15 @@ Low resource and high performance archiver to save posts, images and all relevan
 * **Preserved comments**<br>
  Untouched in their original HTML format
 
-<!--
-# Edge cases covered
-* banned posts
-* thread/post/file deletions
-* massive threads consisting of thousands of posts
-  -->
+* **Asagi compatible**<br>
+ Capable as a [drop-in replacement](https://github.com/shiimizu/ena/wiki/Asagi)
+
 
 ## Runtime dependencies
 * [PostgreSQL](https://www.postgresql.org/download/) >= 11.0
 
 ## Getting Started
-Download the [latest][latest-link] release binaries or build it from source. Have [OpenSSL](https://www.openssl.org/source/) installed.  
-
-You can simply build for your host machine as follows:
-```bash
-git clone https://github.com/shiimizu/ena.git
-cd ena
-cargo build --release
-```
-Grab the binary from `target/release/`. For more information, see the [building guide](https://github.com/shiimizu/ena/wiki/Building).  
+Download the [latest release][latest-link] or build from source.  
 
 Set your environment variable to `ENA_LOG=ena=info` for console output. 
 
@@ -91,6 +75,22 @@ Make sure your PostgreSQL server is running.
 
 You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks.  
 Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
+
+## Building
+Make sure you have [OpenSSL](https://www.openssl.org/source/) and [Rust](https://www.rust-lang.org/tools/install) installed. Then run:
+
+```
+cargo install --git https://github.com/shiimizu/ena
+```
+
+Or the traditional way: 
+```bash
+git clone https://github.com/shiimizu/ena.git
+cd ena
+cargo build --release
+# Grab the binary from: target/release/
+```
+For more information, see the [building guide](https://github.com/shiimizu/ena/wiki/Building). 
 
 ## Usage
 ```
