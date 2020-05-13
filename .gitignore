@@ -23,10 +23,10 @@ img/*
 *.zip
 *.7z
 *.log
+*cloudflare*
 *cache*
 *build*
 justfile
 changes.log
 !ena_config.json
-!img/yotsuba-and-ena.png
 !img/demo.gif
