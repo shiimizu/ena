@@ -23,6 +23,7 @@ img/*
 *.zip
 *.7z
 *.log
+*.sh
 *cloudflare*
 *cache*
 *build*
