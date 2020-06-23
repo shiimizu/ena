@@ -1,8 +1,8 @@
 {
   "settings": {
     "engine": "postgresql",
-    "database": "fftest",
-    "schema": "asagi",
+    "database": "db",
+    "schema": "public",
     "host": "localhost",
     "port": 5432,
     "username": "postgres",
@@ -23,10 +23,11 @@
     "downloadMedia": false,
     "downloadThumbnails": true,
     "keepMedia": false,
-    "keepThumbnails": false
+    "keepThumbnails": true
   },
   "boards": [
-    { "board": "po" },
-    { "board": "n" }
+    { "board": "e" },
+    { "board": "n" },
+    { "board": "a" }
   ]
 }
