@@ -43,7 +43,7 @@ fn main() {
 
     if ret != 0 && ((Local::now().timestamp() - start_time.timestamp()) > 1) {
         info!(
-            "\nStarted on:\t{}\nFinished on:\t{}",
+            "\n Started on:\t{}\n Finished on:\t{}",
             start_time.to_rfc2822(),
             Local::now().to_rfc2822()
         );
@@ -54,13 +54,13 @@ async fn async_main() -> Result<u64> {
     let mut args = std::env::args().skip(1).peekable();
     let mut config: Result<config::Config> = Err(anyhow!("Empty config file"));
     while let Some(arg) = args.next() {
-        match arg.as_str() {
+        match arg.as_ref() {
             "--help" | "-h" => {
                 config::display_help();
                 return Ok(0);
             }
-            "--version" | "-v" => {
-                config::display_full_version();
+            "--version" | "-V" => {
+                config::display_version();
                 return Ok(0);
             }
             "--config" | "-c" =>
@@ -80,8 +80,11 @@ async fn async_main() -> Result<u64> {
                             Err(e) => return Err(anyhow!(e))
                         }
                     }
+                    break;
                 },
-            _ => {}
+            unknown_arg => {
+                return Err(anyhow!("Unknown argument: {}", unknown_arg))
+            }
         }
     }
     if config.is_err() {
@@ -123,12 +126,6 @@ async fn async_main() -> Result<u64> {
         return Err(anyhow!("Only the Asagi schema is implemented for MySQL"));
     }
 
-    if config.settings.asagi_mode && !config.settings.strict_mode {
-        return Err(anyhow!(
-            "The Asagi schema can only be used in strict mode because of MySQL's lack of concurrency"
-        ));
-    }
-
     let http_client = reqwest::ClientBuilder::new()
         .default_headers(config::default_headers(&config.settings.user_agent).unwrap())
         .build()
@@ -161,7 +158,18 @@ async fn async_main() -> Result<u64> {
     } else {
         let pool = mysql_async::Pool::new(&config.settings.db_url);
         config::display();
-        info!("Connected with:\t\t{}", config.settings.db_url);
+        info!(
+            "Connected with:\t\t{}",
+            format!(
+                "{engine}://{username}:{password}@{host}:{port}/{database}",
+                engine = &config.settings.engine.base().to_string().to_lowercase(),
+                username = "*********",
+                password = "***",
+                host = &config.settings.host,
+                port = &config.settings.port,
+                database = &config.settings.database
+            )
+        );
 
         archiver = MuhArchiver::new(Box::new(
             archiver::YotsubaArchiver::new(pool, http_client, config).await

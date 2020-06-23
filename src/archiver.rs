@@ -222,23 +222,34 @@ where
                         if thread != 0
                             && (media_info.download_thumbnails || media_info.download_media)
                         {
-                            loop {
-                                if let Err(e) = self
+                            for fetch_media_count in 1.. {
+                                match self
                                     .fetch_media(&media_info, &id, &statements, thread, downloading)
                                     .await
                                 {
-                                    // Loop until this gets resolved
-                                    error!(
-                                        "({})\t\t/{}/{} |fetch_media| {}",
-                                        endpoint, media_info.board, thread, e
-                                    );
-                                    if self.is_finished() {
+                                    Ok(_) => {
+                                        if fetch_media_count > 1 {
+                                            info!(
+                                                "({})\t\t/{}/{} |fetch_media| <RESOLVED>",
+                                                endpoint, media_info.board, thread
+                                            );
+                                        }
                                         break;
                                     }
-                                    sleep(Duration::from_millis(1500)).await;
-                                    continue;
+                                    Err(e) => {
+                                        error!(
+                                            "({})\t\t/{}/{} |fetch_media| #{} {}",
+                                            endpoint,
+                                            media_info.board,
+                                            thread,
+                                            fetch_media_count,
+                                            e,
+                                        );
+                                        if self.is_finished() {
+                                            break;
+                                        }
+                                    }
                                 }
-                                break;
                             }
                         }
                     } else {
@@ -688,10 +699,10 @@ where
     {
         let board = info.board;
         let endpoint = id.endpoint;
-        let mut tries: i16 = -1;
-        let max_tries = info.retry_attempts as i16;
-        while tries < max_tries {
-            tries += 1;
+        // TODO: Make retry_attempts safe at config level. have it >0
+        // +1 since the for loop starts from 0
+        let max_tries = core::cmp::min(1, info.retry_attempts + 1);
+        for tries in 0..max_tries {
             if self.is_finished() {
                 break;
             }
@@ -709,43 +720,104 @@ where
                 .await
             {
                 Err(e) => {
-                    error!("({})\t/{}/{}\tFetching thread: {}", endpoint, board, thread, e);
+                    error!(
+                        "({})\t/{}/{}\tFetching thread (Attempt #{}): {}",
+                        endpoint, board, thread, tries, e
+                    );
                     sleep(Duration::from_secs(1500)).await;
                 }
                 Ok((_, status, body)) => match status {
                     StatusCode::OK =>
                         if body.is_empty() {
                             error!(
-                                "({})\t/{}/{}\t<{}> Body was found to be empty!",
-                                endpoint, board, thread, status
+                                "({})\t/{}/{}\t<{}> Body was found to be empty! (Attempt #{})",
+                                endpoint, board, thread, status, tries
                             );
                             sleep(Duration::from_millis(1500)).await;
                         } else {
-                            if let Err(e) = self
-                                .query
-                                .first(
-                                    YotsubaStatement::UpdateThread,
-                                    id,
-                                    statements,
-                                    Some(&body),
-                                    None
-                                )
-                                .await
-                            {
-                                error!(
-                                    "({})\t/{}/{}\t[{}/{}] |update_thread| {}",
-                                    endpoint, board, thread, position, length, e
-                                );
-                                // This will loop until it gets done
-                                // It could be unwanted though
-                                sleep(Duration::from_millis(1500)).await;
-                                tries = 0;
-                                continue;
+                            for update_thread_count in 1.. {
+                                match self
+                                    .query
+                                    .first(
+                                        YotsubaStatement::UpdateThread,
+                                        id,
+                                        statements,
+                                        Some(&body),
+                                        None
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        if update_thread_count > 1 {
+                                            info!(
+                                                "({})\t/{}/{}\t[{}/{}] |update_thread| <RESOLVED>",
+                                                endpoint, board, thread, position, length
+                                            )
+                                        }
+                                        break;
+                                    }
+                                    Err(e) => error!(
+                                        "({})\t/{}/{}\t[{}/{}] |update_thread| #{} {}",
+                                        endpoint,
+                                        board,
+                                        thread,
+                                        position,
+                                        length,
+                                        update_thread_count,
+                                        e
+                                    )
+                                }
                             }
+                            for update_deleteds_count in 1.. {
+                                match self
+                                    .query
+                                    .first(
+                                        YotsubaStatement::UpdateDeleteds,
+                                        id,
+                                        statements,
+                                        Some(&body),
+                                        Some(thread)
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        info!(
+                                            "({})\t/{}/{}\t[{}/{}]{}",
+                                            endpoint,
+                                            board,
+                                            thread,
+                                            position,
+                                            length,
+                                            if update_deleteds_count == 1 {
+                                                ""
+                                            } else {
+                                                " <RESOLVED>"
+                                            }
+                                        );
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "({})\t/{}/{}\t[{}/{}] |update_deleteds| #{} {}",
+                                            endpoint,
+                                            board,
+                                            thread,
+                                            position,
+                                            length,
+                                            update_deleteds_count,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            break;
+                        },
+                    StatusCode::NOT_FOUND => {
+                        for delete_count in 1.. {
                             match self
                                 .query
                                 .first(
-                                    YotsubaStatement::UpdateDeleteds,
+                                    YotsubaStatement::Delete,
                                     id,
                                     statements,
                                     Some(&body),
@@ -753,45 +825,20 @@ where
                                 )
                                 .await
                             {
-                                Ok(_) => info!(
-                                    "({})\t/{}/{}\t[{}/{}]",
-                                    endpoint, board, thread, position, length
-                                ),
-                                Err(e) => {
-                                    error!(
-                                        "({})\t/{}/{}\t[{}/{}] |update_deleteds| {}",
-                                        endpoint, board, thread, position, length, e
-                                    );
-                                    // This will loop until it gets done
-                                    // It could be unwanted though
-                                    sleep(Duration::from_millis(1500)).await;
-                                    tries = 0;
-                                    continue;
+                                Ok(_) => {
+                                    if delete_count > 1 {
+                                        info!(
+                                            "({})\t/{}/{}\t[{}/{}] |delete| <RESOLVED>",
+                                            endpoint, board, thread, position, length
+                                        )
+                                    }
+                                    break;
                                 }
+                                Err(e) => error!(
+                                    "({})\t/{}/{}\t[{}/{}] |delete| #{} {}",
+                                    endpoint, board, thread, position, length, delete_count, e
+                                )
                             }
-                            break;
-                        },
-                    StatusCode::NOT_FOUND => {
-                        if let Err(e) = self
-                            .query
-                            .first(
-                                YotsubaStatement::Delete,
-                                id,
-                                statements,
-                                Some(&body),
-                                Some(thread)
-                            )
-                            .await
-                        {
-                            error!(
-                                "({})\t/{}/{}\t[{}/{}] |delete| {}",
-                                endpoint, board, thread, position, length, e
-                            );
-                            // Could be a database error
-                            // Loop until successful
-                            sleep(Duration::from_millis(1500)).await;
-                            tries = 0;
-                            continue;
                         }
                         warn!(
                             "({})\t/{}/{}\t[{}/{}] <DELETED>",
@@ -799,7 +846,12 @@ where
                         );
                         break;
                     }
-                    _e => {}
+                    unknown_status_code => {
+                        warn!(
+                            "({})\t/{}/{}\t[{}/{}] <{}>",
+                            endpoint, board, thread, position, length, unknown_status_code
+                        );
+                    }
                 }
             }
         }
@@ -976,7 +1028,8 @@ where
                 filename = name
             );
             if Path::new(&final_path).exists() {
-                warn!("EXISTS: {}", final_path);
+                // TODO: Add ENA_WARN_MEDIA_EXISTS as warning by default is too verbose
+                // warn!("EXISTS: {}", final_path);
                 return Ok((u64::try_from(no)?, None, mode));
             }
         }
@@ -1020,21 +1073,22 @@ where
         };
 
         debug!("(media)\t\t/{}/{}#{}\t {}", board, thread, no, &url);
-        for ra in 0..(info.retry_attempts + 1) {
+        let max_tries = core::cmp::min(1, info.retry_attempts + 1);
+        for ra in 0..max_tries {
             match self.client.get(&url, None).await {
                 Err(e) => {
                     error!(
-                        "(media)\t/{}/{}\tFetching media: {} {}",
+                        "(media)\t/{}/{}\tFetching media{}:  {}",
                         board,
                         thread,
                         e,
-                        if ra > 0 { format!("Attempt #{}", ra) } else { "".into() }
+                        if ra > 0 { format!(" Attempt #{}", ra) } else { "".into() }
                     );
                     sleep(Duration::from_secs(1)).await;
                 }
                 Ok((_, status, body)) => match status {
                     StatusCode::NOT_FOUND => {
-                        error!("(media)\t/{}/{}\t<{}> {}", board, no, status, &url);
+                        warn!("(media)\t/{}/{}\t<{}> {}", board, no, status, &url);
                         break;
                     }
                     StatusCode::OK => {
@@ -1066,9 +1120,9 @@ where
                             let mut hash_bytes = None;
                             if !asagi {
                                 let mut hasher = Sha256::new();
-                                hasher.input(&body);
-                                hash_bytes = Some(hasher.result());
-                                hashsum = Some(hash_bytes.unwrap().as_slice().to_vec());
+                                hasher.update(&body);
+                                hash_bytes = Some(hasher.finalize());
+                                hashsum = Some(hash_bytes.unwrap().to_vec());
                                 // hashsum = Some(format!("{:x}", hash_bytes));
                             }
 
@@ -1127,7 +1181,9 @@ where
                                                     format!("{}/{}{}", final_path_dir, name, ext);
                                             }
                                             if Path::new(&final_path).exists() {
-                                                warn!("EXISTS: {}", final_path);
+                                                // TODO:
+                                                // Add ENA_WARN_MEDIA_EXISTS as warning by default is too verbose
+                                                // warn!("EXISTS: {}", final_path);
                                                 if let Err(e) = std::fs::remove_file(&temp_path) {
                                                     error!("Remove temp: {}", e);
                                                 }

@@ -87,7 +87,7 @@ impl QueryRaw for Pool {
         match statement {
             YotsubaStatement::InitSchema => format!(
                 r#"
-            SET SESSION transaction_isolation='READ-COMMITTED';
+            SET SESSION transaction_isolation='SERIALIZABLE';
             begin;
             -- SET GLOBAL binlog_format = 'ROW';
             
@@ -997,6 +997,7 @@ impl Query<Statement, Row> for Pool {
                 // mark deleted - the ones missing in fetched posts
                 // This method kinda makes things slow though
 
+                // TODO: Do this diff in the database
                 let q: Thread = serde_json::from_slice(item?)?;
                 let new: Queue = q.posts.into_iter().map(|post| post.no).collect();
                 let min = new
@@ -1024,7 +1025,8 @@ impl Query<Statement, Row> for Pool {
                     // Here, the threads diff return no changes, meaning no posts are deleted
                     return Ok(1);
                 }
-                log::info!("({})\t/{}/{}\tDeleted posts: {:?}", id.endpoint, id.board, no, diff);
+                // TODO: this reports the deleted posts that are already in the thread rather than report new deleteds  
+                log::debug!("({})\t/{}/{}\tDeleted posts: {:?}", id.endpoint, id.board, no, diff);
 
                 Ok(conn
                     .first_exec(

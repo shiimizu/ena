@@ -333,42 +333,21 @@ pub fn ena_resume() -> bool {
     var("ENA_RESUME").ok().map(|a| a.parse::<bool>().ok()).flatten().unwrap_or(false)
 }
 
-/// Check to see if the first argument passed to the program is `-v` or `--version`  
-///
-/// Then display build information
-///
-/// # Example
-///
-/// ```
-/// use ena::config;
-/// config::check_version();
-/// ```
-pub fn check_version() {
-    std::env::args().nth(1).filter(|arg| matches!(arg.as_str(), "-v" | "--version")).map(|_| {
-        display_full_version();
-        std::process::exit(0)
-    });
-}
-
 /// Display the build information
 ///
 /// # Example
 ///
 /// ```
 /// use ena::config;
-/// config::display_full_version();
+/// config::display_version();
 /// ```
-pub fn display_full_version() {
+pub fn display_version() {
     println!(
         "{} {} (rev {})",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_SHA_SHORT")
     );
-    println!("\nBUILD-INFO:");
-    println!("    target                  {}", env!("VERGEN_TARGET_TRIPLE"));
-    println!("    timestamp               {}", env!("VERGEN_BUILD_TIMESTAMP"));
-    println!("    revision                {}", env!("VERGEN_SHA"));
 }
 
 /// Display the help information
@@ -390,11 +369,11 @@ pub fn display_help() {
     println!("    {}", env!("CARGO_PKG_NAME"));
     println!("    {} [OPTIONS] [-c CONFIGFILE]", env!("CARGO_PKG_NAME"));
     println!("    {} [OPTIONS]", env!("CARGO_PKG_NAME"));
-    println!("    command | {} [-c -]", env!("CARGO_PKG_NAME"));
+    println!("    command | {} -c -", env!("CARGO_PKG_NAME"));
     println!("\nOPTIONS:");
     println!("    -c, --config            Specify a config file or pass '-' for stdin");
     println!("    -h, --help              Prints help information");
-    println!("    -v, --version           Prints version information");
+    println!("    -V, --version           Prints version information");
 }
 
 /// Create an iterator that mimics the thread refresh system  
