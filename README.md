@@ -101,12 +101,12 @@ USAGE:
     ena
     ena [OPTIONS] [-c CONFIGFILE]
     ena [OPTIONS]
-    command | ena [-c -]
+    command | ena -c -
 
 OPTIONS:
     -c, --config            Specify a config file or pass '-' for stdin
     -h, --help              Prints help information
-    -v, --version           Prints version information
+    -V, --version           Prints version information
 ```
 
 ## Why do this?
