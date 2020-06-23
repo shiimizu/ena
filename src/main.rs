@@ -82,9 +82,7 @@ async fn async_main() -> Result<u64> {
                     }
                     break;
                 },
-            unknown_arg => {
-                return Err(anyhow!("Unknown argument: {}", unknown_arg))
-            }
+            unknown_arg => return Err(anyhow!("Unknown argument: {}", unknown_arg))
         }
     }
     if config.is_err() {
@@ -131,6 +129,16 @@ async fn async_main() -> Result<u64> {
         .build()
         .expect("Err building the HTTP Client");
 
+    let conn_url_display = format!(
+        "{engine}://{username}:{password}@{host}:{port}/{database}",
+        engine = &config.settings.engine.base().to_string().to_lowercase(),
+        username = "*********",
+        password = "***",
+        host = &config.settings.host,
+        port = &config.settings.port,
+        database = &config.settings.database
+    );
+
     let archiver;
     // Determine which engine is being used
     if config.settings.engine.base() == Database::PostgreSQL {
@@ -143,7 +151,7 @@ async fn async_main() -> Result<u64> {
                     }
                 });
                 config::display();
-                info!("Connected with:\t\t{}", config.settings.db_url);
+                info!("Connected with:\t\t{}", conn_url_display);
 
                 archiver = MuhArchiver::new(Box::new(
                     archiver::YotsubaArchiver::new(db_client, http_client, config).await
@@ -151,25 +159,14 @@ async fn async_main() -> Result<u64> {
             }
             Err(e) => {
                 error!("Please check your configuration");
-                error!("Connection URL used: {}", config.settings.db_url);
+                error!("Connection URL used: {}", conn_url_display);
                 return Err(anyhow!(e));
             }
         }
     } else {
         let pool = mysql_async::Pool::new(&config.settings.db_url);
         config::display();
-        info!(
-            "Connected with:\t\t{}",
-            format!(
-                "{engine}://{username}:{password}@{host}:{port}/{database}",
-                engine = &config.settings.engine.base().to_string().to_lowercase(),
-                username = "*********",
-                password = "***",
-                host = &config.settings.host,
-                port = &config.settings.port,
-                database = &config.settings.database
-            )
-        );
+        info!("Connected with:\t\t{}", conn_url_display);
 
         archiver = MuhArchiver::new(Box::new(
             archiver::YotsubaArchiver::new(pool, http_client, config).await
