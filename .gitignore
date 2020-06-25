@@ -9,7 +9,7 @@ cache
 src/other
 docker
 json
-archive
+archive*
 a_src
 txt
 test
