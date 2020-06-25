@@ -106,6 +106,9 @@ where
             );
             self.query.first(YotsubaStatement::InitBoard, id, &statements, None, None).await?;
             self.query.first(YotsubaStatement::InitViews, id, &statements, None, None).await?;
+            if self.is_finished() {
+                break;
+            }
 
             if board.download_archives {
                 fut.push(self.compute(
@@ -160,13 +163,15 @@ where
             }
             YotsubaEndpoint::Media => {
                 // Create dirs
-                let media_path = &self.config.settings.path;
-                let temp_path = [&media_path, "/tmp"].concat();
-                let path_temp = Path::new(&temp_path);
-                if !path_temp.is_dir() {
-                    if let Err(e) = std::fs::create_dir_all(&temp_path) {
-                        error!("Create media temp dirs: {}", e);
-                        return Err(anyhow!(e));
+                if info.keep_media || info.keep_thumbnails {
+                    let media_path = &self.config.settings.path;
+                    let temp_path = [&media_path, "/tmp"].concat();
+                    let path_temp = Path::new(&temp_path);
+                    if !path_temp.is_dir() {
+                        if let Err(e) = std::fs::create_dir_all(&temp_path) {
+                            error!("Create media temp dirs: {}", e);
+                            return Err(anyhow!(e));
+                        }
                     }
                 }
 
@@ -994,7 +999,7 @@ where
         } else {
             no = row.get::<&str, i64>("no")?;
             tim = row.get::<&str, i64>("tim")?;
-            ext = row.get::<&str, String>("ext")?;
+            ext = if mode.is_thumbs() { ".jpg".into() } else { row.get::<&str, String>("ext")? };
             resto = row.get::<&str, i64>("resto")?;
 
             // For display purposes. Only show the thread no
@@ -1004,6 +1009,7 @@ where
         let mut hashsum: Option<Vec<u8>> = None;
         let domain = &self.config.settings.media_url;
         let board = &info.board;
+        let s = if mode.is_thumbs() { "s" } else { "" };
 
         // In Asagi there's no rehashing of the file.
         // So if it exists on disk just skip it.
@@ -1063,32 +1069,37 @@ where
                 )
             } else {
                 format!(
-                    "{}/{}/{}{}",
-                    domain,
-                    board,
-                    tim,
-                    if mode.is_thumbs() { "s.jpg" } else { &ext }
+                    "{domain}/{board}/{tim}{s}{ext}",
+                    domain = domain,
+                    board = board,
+                    tim = tim,
+                    s = s,
+                    ext = &ext
                 )
             }
         };
 
         debug!("(media)\t\t/{}/{}#{}\t {}", board, thread, no, &url);
         let max_tries = core::cmp::min(1, info.retry_attempts + 1);
-        for ra in 0..max_tries {
+        for get_media_tries in 0..max_tries {
             match self.client.get(&url, None).await {
                 Err(e) => {
                     error!(
-                        "(media)\t/{}/{}\tFetching media{}:  {}",
+                        "(media)\t\t/{}/{}\tFetching media{}:  {}",
                         board,
                         thread,
+                        if get_media_tries > 0 {
+                            format!(" Attempt #{}", get_media_tries)
+                        } else {
+                            "".into()
+                        },
                         e,
-                        if ra > 0 { format!(" Attempt #{}", ra) } else { "".into() }
                     );
                     sleep(Duration::from_secs(1)).await;
                 }
                 Ok((_, status, body)) => match status {
                     StatusCode::NOT_FOUND => {
-                        warn!("(media)\t/{}/{}\t<{}> {}", board, no, status, &url);
+                        warn!("(media)\t\t/{}/{}\t<{}> {}", board, no, status, &url);
                         break;
                     }
                     StatusCode::OK => {
@@ -1099,6 +1110,17 @@ where
                             );
                             sleep(Duration::from_secs(1)).await;
                         } else {
+                            if get_media_tries > 0 {
+                                warn!(
+                                    "(media)\t\t/{board}/{no}\t<{tim}{s}{ext}> <RESOLVED>",
+                                    board = board,
+                                    no = no,
+                                    tim = tim,
+                                    s = s,
+                                    ext = ext
+                                );
+                            }
+
                             // Download to temp file. This is guaranteed be unique because the file
                             // name is based on `tim`.
                             let temp_path = if asagi {
@@ -1113,7 +1135,14 @@ where
                                     }
                                 )
                             } else {
-                                format!("{}/tmp/{}_{}{}", path, no, tim, ext)
+                                format!(
+                                    "{path}/tmp/{no}_{tim}{s}{ext}",
+                                    path = path,
+                                    no = no,
+                                    tim = tim,
+                                    s = s,
+                                    ext = ext
+                                )
                             };
 
                             // Hashing
@@ -1182,7 +1211,8 @@ where
                                             }
                                             if Path::new(&final_path).exists() {
                                                 // TODO:
-                                                // Add ENA_WARN_MEDIA_EXISTS as warning by default is too verbose
+                                                // Add ENA_WARN_MEDIA_EXISTS as warning by default
+                                                // is too verbose
                                                 // warn!("EXISTS: {}", final_path);
                                                 if let Err(e) = std::fs::remove_file(&temp_path) {
                                                     error!("Remove temp: {}", e);

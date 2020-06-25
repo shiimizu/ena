@@ -1025,7 +1025,8 @@ impl Query<Statement, Row> for Pool {
                     // Here, the threads diff return no changes, meaning no posts are deleted
                     return Ok(1);
                 }
-                // TODO: this reports the deleted posts that are already in the thread rather than report new deleteds  
+                // TODO: this reports the deleted posts that are already in the thread rather than
+                // report new deleteds
                 log::debug!("({})\t/{}/{}\tDeleted posts: {:?}", id.endpoint, id.board, no, diff);
 
                 Ok(conn
