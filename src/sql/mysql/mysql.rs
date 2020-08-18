@@ -111,7 +111,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         if board == "boards" {
             // pintln!("board_table_exists: Creating `boards` table");
             let boards_table = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/boards_table.sql"));
-            let common = get_sql_template(board, &opt.database.engine, &opt.database.charset,  &opt.database.collate, include_str!("templates/common.sql"));
+            let common = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/common.sql"));
             conn.query_drop(&boards_table).await.unwrap();
             conn.query_drop(&common).await.unwrap();
             // No one checks the result of this function anyways so it's okay to return anything
@@ -126,8 +126,8 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         if res.is_none() {
             // let boards = get_sql_template(board, &opt.database.engine, &opt.database.charset,
             // &opt.database.collate, include_str!("templates/boards.sql"));
-            let boards = get_sql_template(board, &opt.database.engine,  &opt.database.charset,  &opt.database.collate, include_str!("templates/boards.sql"));
-            let triggers = get_sql_template(board, &opt.database.engine,  &opt.database.charset, &opt.database.collate, include_str!("templates/triggers.sql"));
+            let boards = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/boards.sql"));
+            let triggers = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/triggers.sql"));
             let query = [boards, triggers].concat();
             pintln!("Creating tables for /"(board)"/");
             conn.query_drop(query).await.unwrap();
@@ -181,7 +181,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         let res: Result<Vec<mysql_async::Row>> = conn.exec(statement, (thread,)).await.map_err(|e| eyre!(e));
         Either::Right(res)
     }
-    
+
     async fn thread_get_media(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
         let mut conn = self.write().await;
         let store = STATEMENTS.read().await;
@@ -557,7 +557,7 @@ pub mod queries {
     pub fn thread_get(board: &str) -> String {
         format!("SELECT * FROM `{board}` WHERE thread_num = ? AND subnum = 0 ORDER BY num;", board = board)
     }
-    
+
     pub fn thread_get_media(board: &str) -> String {
         format!("SELECT * FROM `{board}` WHERE thread_num = ? AND subnum = 0 AND media_hash IS NOT NULL ORDER BY num;", board = board)
     }

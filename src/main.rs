@@ -21,8 +21,9 @@ use ctrlc;
 use futures::{
     channel::oneshot,
     future::Either,
-    stream::{FuturesUnordered, StreamExt},
+    stream::FuturesUnordered,
 };
+use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
 use reqwest::{
@@ -36,7 +37,7 @@ use std::{
     fmt::Debug,
     fs::File,
     io::Read,
-    sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -65,7 +66,7 @@ pub trait Archiver {
     async fn download_boards_index(&self) -> Result<()>;
     async fn download_board(&self, board_info: &Board, thread_type: &str, startup: bool) -> Result<()>;
     async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: &str) -> Result<()>;
-    async fn download_media(&self, board_info: &Board, post: &yotsuba::Post) -> Result<()>;
+    async fn download_media(&self, board_info: &Board, md5:Vec<u8>, tim: u64, ext:String, filename_media: Option<String>, checksum: Option<Vec<u8>>) -> Result<()>;
 }
 /*
 #[derive(Deserialize, Debug)]
@@ -281,10 +282,8 @@ static INIT: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
 static SEMAPHORE_AMOUNT: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
 static MEDIA_SEMAPHORE_AMOUNT: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
 
-static SEMAPHORE: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| 
-    futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT.load(Ordering::SeqCst) as usize ));
-static MEDIA_SEMAPHORE: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| 
-futures_intrusive::sync::Semaphore::new(true, MEDIA_SEMAPHORE_AMOUNT.load(Ordering::SeqCst) as usize ));
+static SEMAPHORE: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT.load(Ordering::SeqCst) as usize));
+static MEDIA_SEMAPHORE: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, MEDIA_SEMAPHORE_AMOUNT.load(Ordering::SeqCst) as usize));
 
 struct FourChan<D> {
     client:    reqwest::Client,
@@ -545,8 +544,8 @@ fn get_opt() -> Result<Opt> {
 
 async fn test_main() -> Result<()> {
     let opt = get_opt()?;
-    
-    println!("{:#?}",opt);
+
+    println!("{:#?}", opt);
     return Ok(());
 
     if !opt.asagi_mode {
@@ -677,8 +676,8 @@ where D: sql::QueryExecutor + Sync + Send
             loop {
                 let hz = Duration::from_millis(250);
                 let mut interval = Duration::from_millis(30_000); // this is temporary, it's updated at the end of the for loop
-                // let mut ratelimit_orig = sql::refresh_rate(30, 5, 10);
-                // let mut ratelimit = ratelimit_orig.clone();
+                                                                  // let mut ratelimit_orig = sql::refresh_rate(30, 5, 10);
+                                                                  // let mut ratelimit = ratelimit_orig.clone();
                 let now = Instant::now();
                 for _board in _boards.iter() {
                     if startup {
@@ -889,11 +888,11 @@ where D: sql::QueryExecutor + Sync + Send
                                     }
                                 }
                             }
-                            
+
                             if get_ctrlc() >= 1 {
                                 break;
                             }
-                            
+
                             // Update threads/archive cache at the end
                             if thread_type == "threads" {
                                 self.db_client.board_upsert_threads(board_info.id, &board_info.board, &body_json, &lm).await.unwrap();
@@ -971,7 +970,6 @@ where D: sql::QueryExecutor + Sync + Send
                             // ignore if err, it means it's empty or incomplete
                             match serde_json::from_slice::<serde_json::Value>(&body) {
                                 Ok(mut thread_json) => {
-                                    
                                     if !board_info.with_tail {
                                         update_post_with_extra(&mut thread_json);
                                     }
@@ -1057,67 +1055,110 @@ where D: sql::QueryExecutor + Sync + Send
                                                 }
                                             },
                                     }
-                                    
+
                                     if board_info.with_full_media || board_info.with_thumbnails {
-                                    // Get Thread
-                                    let either = self.db_client.thread_get(board_info, thread).await;
-                                    match either {
-                                        Either::Right(res) => {
-                                            match res {
+                                        // Get Thread
+                                        let either = self.db_client.thread_get(board_info, thread).await;
+                                        match either {
+                                            Either::Right(res) => match res {
                                                 Err(e) => epintln!("download_threaD: /"(&board_info.board)"/"(thread)"\t" (e)),
                                                 Ok(rows) => {
-                                                    let post = yotsuba::Post::default();
-                                                    let mut fut = rows.into_iter().map(|row| {
-                                                        self.download_media(board_info, &post)
-                                                    }).collect::<FuturesUnordered<_>>();
-                                                    while let Some(res) = fut.next().await {
-                                                        res.unwrap(); 
+                                                    {
+                                                        let mut fut_thumbs = rows.iter().map(|row| 
+                                                        {
+                                                            // Get the filename. Account for /f/
+                                                            let tim = row.get::<Option<String>, &str>("media_orig").flatten().unwrap_or_default().split(".").nth(0).unwrap().parse::<u64>().unwrap();
+                                                            let filename_media = if board_info.board == "f" {
+                                                                Some(percent_encoding::utf8_percent_encode(&row.get::<Option<String>, &str>("media_filename").flatten().unwrap_or_default(), percent_encoding::NON_ALPHANUMERIC).to_string())
+                                                            } else {
+                                                                None
+                                                            };
+                                                            self.download_media(board_info, vec![],tim,"s.jpg".into(), filename_media, None)
+                                                        }
+                                                        ).collect::<FuturesUnordered<_>>();
+                                                        while let Some(res) = fut_thumbs.next().await {
+                                                            res.unwrap();
+                                                        }
                                                     }
-                                                },
-                                            }
-                                        },
-                                        Either::Left(res) => {
-                                            match res {
+                                                    let mut fut = rows.iter().map(|row| 
+                                                    {
+                                                        // Get the filename. Account for /f/
+                                                        let ext = row.get::<Option<String>, &str>("media_filename").flatten().unwrap_or_default().split(".").last().unwrap().to_string();
+                                                        let tim = row.get::<Option<String>, &str>("media_orig").flatten().unwrap_or_default().split(".").nth(0).unwrap().parse::<u64>().unwrap();
+                                                        let filename_media = if board_info.board == "f" {
+                                                            Some(percent_encoding::utf8_percent_encode(&row.get::<Option<String>, &str>("media_filename").flatten().unwrap_or_default(), percent_encoding::NON_ALPHANUMERIC).to_string())
+                                                        } else {
+                                                            None
+                                                        };
+                                                        // let md5 = md5.as_str().unwrap();
+                                                        // let md5_bytes = base64::decode(md5.as_bytes())?;
+                                                        self.download_media(board_info, vec![], tim,ext, filename_media, None)
+                                                    }
+                                                    ).collect::<FuturesUnordered<_>>();
+                                                    while let Some(res) = fut.next().await {
+                                                        res.unwrap();
+                                                    }
+                                                }
+                                            },
+                                            Either::Left(res) => match res {
                                                 Err(e) => epintln!("download_threaD: /"(&board_info.board)"/"(thread)"\t" (e)),
                                                 Ok(rows) => {
                                                     futures::pin_mut!(rows);
                                                     let post = yotsuba::Post::default();
                                                     let mut fut = FuturesUnordered::new();
+                                                    let mut fut_thumbs = FuturesUnordered::new();
                                                     while let Some(Ok(row)) = rows.next().await {
-                                                        fut.push(self.download_media(board_info, &post));    
+                                                        let filename_media = if board_info.board == "f" {
+                                                            Some(percent_encoding::utf8_percent_encode(row.get::<&str, Option<&str>>("filename").unwrap_or_default(), percent_encoding::NON_ALPHANUMERIC).to_string())
+                                                        }
+                                                        else {
+                                                            None
+                                                        };
+                                                        let md5 :Vec<u8> = row.get("md5");
+                                                        let tim = row.get::<&str, i64>("tim") as u64;
+                                                        if board_info.with_thumbnails {
+                                                            let checksum : Option<Vec<u8>> = row.get("sha256t");
+                                                            fut_thumbs.push(self.download_media(board_info, md5.clone(), tim, "s.jpg".into(), filename_media.clone(), checksum));
+                                                        }
+                                                        if board_info.with_full_media {
+                                                            let checksum : Option<Vec<u8>> = row.get("sha256");
+                                                            let ext = row.get::<&str, Option<String>>("ext").unwrap_or_default();
+                                                            fut.push(self.download_media(board_info, md5,tim,  ext, filename_media, checksum));
+                                                        } 
                                                     }
-                                                    
+                                                    while let Some(res) = fut_thumbs.next().await {
+                                                        res.unwrap();
+                                                    }
                                                     while let Some(res) = fut.next().await {
-                                                        res.unwrap(); 
+                                                        res.unwrap();
                                                     }
-                                                },
-                                            }
-                                        },
-                                    }
-                                    // let mut fut = posts.iter().filter(|post|
-                                    // post.get("md5").map(|md5|
-                                    // md5.as_str()).flatten().is_some()).map(|post|
-                                    // self.download_media(board_info,
-                                    // post)).collect::<FuturesUnordered<_>>(); 
-                                    // while let Some(res)
-                                    // = fut.next().await {
-                                    // res.unwrap(); }
+                                                }
+                                            },
+                                        }
+                                        // let mut fut = posts.iter().filter(|post|
+                                        // post.get("md5").map(|md5|
+                                        // md5.as_str()).flatten().is_some()).map(|post|
+                                        // self.download_media(board_info,
+                                        // post)).collect::<FuturesUnordered<_>>();
+                                        // while let Some(res)
+                                        // = fut.next().await {
+                                        // res.unwrap(); }
 
-                                    if get_ctrlc() >= 1 {
-                                        break;
+                                        if get_ctrlc() >= 1 {
+                                            break;
+                                        }
                                     }
-                                    }
-                                    
+
                                     // Update thread's last_modified
                                     self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
                                     break; // exit the retry loop
-
                                 }
                                 Err(e) => {
                                     eprintln!("download_thread: ({}) /{}/{}{} {} {:?}", thread_type, board_info.board, thread, if board_info.with_tail { "-tail" } else { "" }, e, &last_modified);
                                 }
                             }
                         }
+                        
                         StatusCode::NOT_FOUND => {
                             if board_info.with_tail {
                                 let mut _board_info = board_info.clone();
@@ -1170,7 +1211,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                 }
                                                 Err(e) => {
                                                     eprintln!(
-                                                        "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted][{err}]",
+                                                        "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted] [{err}]",
                                                         thread_type = thread_type,
                                                         board = &board_info.board,
                                                         thread = thread,
@@ -1215,7 +1256,102 @@ where D: sql::QueryExecutor + Sync + Send
         Ok(())
     }
 
-    async fn download_media(&self, board_info: &Board, post: &yotsuba::Post) -> Result<()> {
+    async fn download_media(&self, board_info: &Board, md5: Vec<u8>, tim: u64, ext:String, filename_media: Option<String>, checksum: Option<Vec<u8>>) -> Result<()> {
+        
+        // let s = fomat!("" {});
+        // let a = checksum.as_ref().map(|v| format!("{:x}",HexSlice(v.as_slice())) );
+        // let s = format!("{:x}", HexSlice(checksum.as_ref().unwrap().as_slice()));
+        // let len = s.len();
+        // let ss = &s[len - 1..];
+        // let sss = &s[len - 3..len - 1];
+        
+        // Directory Structure:
+        // Asagi Example:
+        // 1540970147550
+        // media/{board}/{image|thumb}/1540/97
+        // 
+        // Ena Example:
+        // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
+        // media/1/0a
+        let filename_time = fomat!((tim));
+        let file_path = fomat!(
+            if self.opt.asagi_mode {
+                (self.opt.media_dir.display())"/"(filename_time.as_str()[..4])"/"(filename_time.as_str()[4..6])"/"(&filename_time)
+            } else {
+                if let Some(hash) = checksum.as_ref().map(|v| format!("{:x}", HexSlice(v.as_slice())) ) {
+                    (self.opt.media_dir.display())"/"(&hash[hash.len() - 1..])"/"(&hash[hash.len() -3..hash.len()-1])"/"(&hash)(filename_time.split('.').nth(1).unwrap())
+                } else { "" }
+            }
+        );
+        
+        let exists = if !file_path.is_empty() {
+            // TODO check md5 of file here
+            // This would only call in the beginning and is OK
+            if exists(&file_path) {
+                let vec = md5_of_file(file_path.clone()).await.unwrap();
+                md5.as_slice() == vec.as_slice() 
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        if exists {
+            return Ok(());
+        }
+        
+        let url = fomat!(
+            (&self.opt.media_url)
+            "/"
+            (&board_info.board)
+            "/"
+            if board_info.board == "f" {
+                (filename_media.as_ref().unwrap()) if self.opt.asagi_mode { "" } else { (ext) }
+            } else {
+                (tim)(ext)
+            }
+        );
+        let sem = MEDIA_SEMAPHORE.acquire(1).await;
+        for retry in 0..=board_info.retry_attempts {
+        let res = self.client.get(url.as_str()).send().await;
+        match res {
+            Err(e) => {
+                epintln!("download_media: " (e));        
+            },
+            Ok(resp) => {
+                match resp.status() {
+                    StatusCode::OK => {
+                        
+                        let mut file =  smol::Unblock::new(File::create(&file_path).unwrap());
+                        let mut writer  = io::BufWriter::new(&mut file);
+                        let mut stream = resp.bytes_stream();
+                        while let Some(item) = stream.next().await {
+                            writer.write_all(&item?).await.unwrap();
+                        }
+                        writer.flush().await.unwrap();
+                        writer.close().await.unwrap();
+        
+                        // save to file
+                        // verify checksum md5
+                        // calc sha256 on postgres
+                        // upsert hash to db for postgres
+                        let mut hasher = Md5::new();
+                        // md5_prev_vec == md5_new_vec
+                        break;
+                    },
+                    StatusCode::NOT_FOUND => {
+                        break;
+                    },
+                    status => {
+                        epintln!("download_media: " (status));
+                    },
+                }
+            },
+        }
+            sleep(Duration::from_secs(1)).await;
+        }
+        
         // println!("/{}/{} | {} [media]", board_info.board, post["resto"].as_u64().unwrap(),
         // post["no"].as_u64().unwrap()); DL thumbs or not
         // Validate file & hash
@@ -1225,6 +1361,27 @@ where D: sql::QueryExecutor + Sync + Send
     }
 }
 
+// From `hex-slice` crate
+pub struct HexSlice<'a, T: 'a>(&'a [T]);
+use core::fmt;
+// use core::fmt::Write;
+impl<'a, T: fmt::LowerHex> fmt::LowerHex for HexSlice<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let val = self.0;
+        for b in val {
+            fmt::LowerHex::fmt(b, f)?
+        }
+        Ok(())
+        // fmt_inner_hex(self.0, f, fmt::LowerHex::fmt)
+    }
+}
+
+fn fmt_inner_hex<T, F: Fn(&T, &mut fmt::Formatter) -> fmt::Result>(slice: &[T], f: &mut fmt::Formatter, fmt_fn: F) -> fmt::Result {
+    for  val in slice.iter() {
+        fmt_fn(val, f)?;
+    }
+    Ok(())
+}
 /*
 async fn async_main(mut receiver: oneshot::Receiver<()>, config: Opt) -> Result<()> {
     let mut headers = reqwest::header::HeaderMap::new();

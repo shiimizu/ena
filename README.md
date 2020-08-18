@@ -47,6 +47,62 @@
 * `cls; c r -q -j4 -- --asagi --engine mysql --name ena2 --schema ena2 --port 3306 --username root --password zxc --charset utf8mb4 --collate utf8mb4_unicode_ci --watch-boards -b b`
 
 -->
+# Ena
+```
+ena 0.8.0-dev
+An ultra-low resource imageboard archiver
+
+USAGE:
+    ena [FLAGS] [OPTIONS] --boards <boards>... --threads <threads>...
+
+FLAGS:
+        --asagi              Enable Asagi mode to use Ena as an Asagi drop-in
+        --quickstart         Download everything in the beginning with no limits and then throttle
+        --strict             Download sequentially rather than concurrently. This sets limit to 1
+        --watch-boards       Enable archiving the boards
+        --watch-threads      Enable archiving the live threads until it's deleted or archived
+        --with-archives      Download archived threads as well
+        --with-full-media    Download full media as well
+        --with-tail          Prefer to use tail json if available
+        --with-threads       Download live threads as well
+        --with-thumbnails    Download thumbnails as well
+    -h, --help               Prints help information
+    -V, --version            Prints version information
+
+OPTIONS:
+    -c, --config <config>
+            Use config file or pass `-` to read from stdin [env: CONFIG]  [default: config.yml]
+
+    -b, --boards <boards>...                     Get boards [example: a,b,c] [env: BOARDS]
+        --exclude-boards <boards-excluded>...
+            Exclude boards (Only applies to boards from boardslist, not threadslist) [example: a,b,c] [env:
+            BOARDS_EXCLUDED]
+    -t, --threads <threads>...                   Get threads [env: THREADS]
+        --interval-boards <interval-boards>
+            Delay (ms) between fetching each board [env: INTERVAL_BOARDS]  [default: 30000]
+
+        --interval-threads <interval-threads>
+            Delay (ms) between fetching each thread [env: INTERVAL_THREADS]  [default: 1000]
+
+        --limit <limit>                          Limit concurrency [env: LIMIT]  [default: 151]
+    -m, --media-dir <media-dir>                  Media download location [env: MEDIA_DIR]
+    -j, --media-threads <media-threads>          # of greenthreads to get media [env: MEDIA_THREADS]  [default: 151]
+        --retry-attempts <retry-attempts>         [env: RETRY_ATTEMPTS]  [default: 3]
+    -A, --user-agent <user-agent>                Set user agent [env: USER_AGENT]
+        --api-url <api-url>                      Set api endpoint url [env: API_URL]
+        --media-url <media-url>                  Set media endpoint url [env: MEDIA_URL]
+        --db-url <url>                           Set database url [env: ENA_DATABASE_URL]
+        --engine <engine>                        Set database engine [env: ENA_DATABASE_ENGINE]
+        --name <name>                            Set database name [env: ENA_DATABASE_NAME]
+        --schema <schema>                        Set database schema [env: ENA_DATABASE_SCHEMA]
+        --host <host>                            Set database host [env: ENA_DATABASE_HOST]
+        --port <port>                            Set database port [env: ENA_DATABASE_PORT]
+        --username <username>                    Set database user [env: ENA_DATABASE_USERNAME]
+        --password <password>                    Set database password [env: ENA_DATABASE_PASSWORD]
+        --charset <charset>                      Set database charset [env: ENA_DATABASE_CHARSET]
+        --collate <collate>                      Set database charset [env: ENA_DATABASE_COLLATE]
+
+```
 
 # General
 - [x] TimeScale

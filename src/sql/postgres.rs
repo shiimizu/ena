@@ -8,11 +8,7 @@ use color_eyre::eyre::{eyre, Result};
 use futures::{future::Either, stream::Iter};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::{
-    // collections::{HashMap, HashSet},
-    collections::HashMap,
-    fmt::Debug,
-};
+use std::{collections::HashMap, fmt::Debug};
 use strum::IntoEnumIterator;
 use tokio_postgres::types::{FromSql, ToSql};
 
@@ -86,7 +82,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
         Either::Left(res)
     }
-    
+
     async fn thread_get_media(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadGet).unwrap();

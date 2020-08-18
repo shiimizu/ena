@@ -1,5 +1,5 @@
 [package]
-name = "asql"
+name = "ena"
 version = "0.8.0-dev"
 description = "An ultra-low resource imageboard archiver"
 authors = ["shiimizu <shiimizu@protonmail.com>"]
@@ -23,6 +23,7 @@ opt-level = 3
 
 # Async
 futures = "0.3"
+futures-lite = { git = "https://github.com/stjepang/futures-lite.git" }
 futures-intrusive = "0.3"
 async-trait = "0.1"
 smol = { git = "https://github.com/stjepang/smol", features = ["tokio02"] }

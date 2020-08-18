@@ -88,42 +88,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cff77d8686867eceff3105329d4698d96c2391c176d5d03adc90c7389162b5b8"
 
 [[package]]
-name = "asql"
-version = "0.8.0-dev"
-dependencies = [
- "ammonia",
- "async-std",
- "async-trait",
- "color-eyre",
- "ctrlc",
- "fomat-macros",
- "format-sql-query",
- "futures",
- "futures-intrusive",
- "html-escape",
- "itertools 0.9.0",
- "md-5",
- "mysql_async",
- "num_cpus",
- "once_cell",
- "percent-encoding",
- "postgres-types",
- "pretty_assertions",
- "regex",
- "reqwest",
- "serde",
- "serde-diff",
- "serde_json",
- "serde_yaml",
- "smol",
- "structopt",
- "strum",
- "strum_macros",
- "tokio-postgres",
- "url",
-]
-
-[[package]]
 name = "async-channel"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -155,7 +119,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90f47c78ea98277cb1f5e6f60ba4fc762f5eafe9f6511bc2f7dfd8b75c225650"
 dependencies = [
  "async-io",
- "futures-lite",
+ "futures-lite 0.1.11",
  "multitask",
  "parking 1.0.6",
  "scoped-tls",
@@ -170,7 +134,7 @@ checksum = "3ae22a338d28c75b53702b66f77979062cb29675db376d99e451af4fa79dedb3"
 dependencies = [
  "cfg-if",
  "concurrent-queue",
- "futures-lite",
+ "futures-lite 0.1.11",
  "libc",
  "once_cell",
  "parking 2.0.0",
@@ -326,7 +290,7 @@ checksum = "2ad97f54e1c9030ad57fae2f5e3791447f48bb225ab20f9d80515e7017d04378"
 dependencies = [
  "async-channel",
  "atomic-waker",
- "futures-lite",
+ "futures-lite 0.1.11",
  "once_cell",
  "waker-fn",
 ]
@@ -716,6 +680,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd56b59865bce947ac5958779cfa508f6c3b9497cc762b7e24a12d11ccde2c4f"
 
 [[package]]
+name = "ena"
+version = "0.8.0-dev"
+dependencies = [
+ "ammonia",
+ "async-std",
+ "async-trait",
+ "color-eyre",
+ "ctrlc",
+ "fomat-macros",
+ "format-sql-query",
+ "futures",
+ "futures-intrusive",
+ "futures-lite 0.1.10",
+ "html-escape",
+ "itertools 0.9.0",
+ "md-5",
+ "mysql_async",
+ "num_cpus",
+ "once_cell",
+ "percent-encoding",
+ "postgres-types",
+ "pretty_assertions",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde-diff",
+ "serde_json",
+ "serde_yaml",
+ "smol",
+ "structopt",
+ "strum",
+ "strum_macros",
+ "tokio-postgres",
+ "url",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -913,6 +914,20 @@ name = "futures-io"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "de27142b013a8e869c14957e6d2edeef89e97c289e69d042ee3a49acd8b51789"
+
+[[package]]
+name = "futures-lite"
+version = "0.1.10"
+source = "git+https://github.com/stjepang/futures-lite.git#0c2e4ab00b8a93e439fd026bac599f5aeef37738"
+dependencies = [
+ "fastrand",
+ "futures-core",
+ "futures-io",
+ "memchr",
+ "parking 2.0.0",
+ "pin-project-lite",
+ "waker-fn",
+]
 
 [[package]]
 name = "futures-lite"
@@ -2427,7 +2442,7 @@ dependencies = [
  "blocking",
  "cfg-if",
  "easy-parallel",
- "futures-lite",
+ "futures-lite 0.1.11",
  "num_cpus",
  "tokio",
 ]

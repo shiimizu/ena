@@ -1,16 +1,8 @@
-// use anyhow::{anyhow, Result};
 use color_eyre::eyre::{eyre, Result};
-// use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-// clap::{Arg, ArgGroup},
-// use structopt::{clap::ArgGroup, StructOpt};
 use structopt::StructOpt;
 use url::Url;
-
-fn toggle_bool(i: u64) -> bool {
-    i == 0
-}
 
 // default_value must be closely tied to Default::default() for sanity.
 // Since structopt doesn't use Default::default...
@@ -89,26 +81,11 @@ impl Default for Board {
         }
     }
 }
-// #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-// #[serde(default)]
-// pub(crate) struct OptInner {
-//     pub board_settings: Board,
-// }
-
-// impl Default for OptInner {
-//     fn default() -> Self {
-//         Self {
-//             board_settings: Board::default(),
-//         }
-//     }
-// }
 
 fn boards_cli_string(board: &str) -> Result<Board> {
     let board = board.to_lowercase();
-    // if !board.is_empty() && (board.chars().all(|c| c.is_ascii_alphabetic()) || board == "3" || board
-    // == "r9k" || board == "s4s") {
     if !board.is_empty() {
-        // This will get patched at post processing so it's ok to use default here
+        // This will get patched at post processing so it's OK to use default here
         let mut b = Board::default();
         b.board = board;
         Ok(b)
@@ -130,23 +107,6 @@ fn threads_cli_string(thread: &str) -> Result<String> {
     }
 }
 
-// fn threads_cli(threads: &str) -> Vec<&str> {
-//     let mut v: Vec<&str> = threads.split(",").filter(|s| s.chars().all(|c|
-// c.is_ascii_alphanumeric())).filter(|s| !s.is_empty()).collect();     v.dedup();
-//     v
-// }
-
-// fn boards_cli(threads: &str) -> Vec<&str> {
-//     let mut v: Vec<&str> = threads.split(",").filter(|s| s.chars().all(|c|
-// c.is_ascii_alphabetic())).filter(|s| !s.is_empty()).collect();     v.sort();
-//     v.dedup();
-//     v
-// }
-
-// fn with(arg: &str) -> Result<bool> {
-//     Ok(true)
-// }
-
 #[cfg(test)]
 mod tests {
     #[ignore]
@@ -167,7 +127,6 @@ mod tests {
 }
 
 #[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
-// #[structopt(about = "Experimental archiver")]
 #[structopt(about)]
 #[serde(default)]
 // CLI Options
@@ -200,7 +159,7 @@ pub struct Opt {
     /// Get boards [example: a,b,c]
     #[structopt(display_order(2), short, long,  multiple(true), required_unless("config"),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
     pub boards: Vec<Board>,
-    
+
     /// Exclude boards (Only applies to boards from boardslist, not threadslist) [example: a,b,c]
     #[structopt(display_order(2), long("exclude-boards"),  multiple(true), required(false),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
     pub boards_excluded: Vec<Board>,
@@ -229,7 +188,8 @@ pub struct Opt {
     /// Media storage type
     ///
     /// Possible values: flatfiles, database, seaweedfs
-    // #[structopt(display_order(5),  long, possible_values(&[MediaStorage::FlatFiles.into(),MediaStorage::Database.into(),MediaStorage::SeaweedFS.into()]), default_value, env, hide_env_values = true, hide_possible_values(true))]
+    // #[structopt(display_order(5),  long, possible_values(&[MediaStorage::FlatFiles.into(),MediaStorage::Database.into(),MediaStorage::SeaweedFS.into()]), default_value, env, hide_env_values = true,
+    // hide_possible_values(true))]
     #[structopt(skip)]
     pub media_storage: MediaStorage,
 
@@ -268,27 +228,6 @@ pub struct Opt {
 
     #[structopt(skip)]
     pub proxies: Option<Vec<ProxySettings>>,
-    /*
-    /// Set speed
-    // we don't want to name it "speed", need to look smart
-    #[structopt(short = "v", long = "velocity", default_value = "42")]
-    speed: f64,
-
-    /// Input file
-    #[structopt(parse(from_os_str))]
-    input: PathBuf,
-
-    /// Output file, stdout if not present
-    #[structopt(parse(from_os_str))]
-    output: Option<PathBuf>,
-
-    /// Where to write the output: to `stdout` or `file`
-    #[structopt(short)]
-    out_type: String,
-
-    /// File name: only required when `out` is set to `file`
-    #[structopt(name = "FILE", required_if("out_type", "file"))]
-    file_name: Option<String>,*/
 }
 
 impl Default for Opt {
@@ -300,7 +239,7 @@ impl Default for Opt {
             start_with_archives: false,
             config:              "config.yml".into(),
             boards:              vec![],
-            boards_excluded:              vec![],
+            boards_excluded:     vec![],
             threads:             vec![],
             site:                "4chan".into(),
             limit:               151,
@@ -359,6 +298,7 @@ impl std::str::FromStr for MediaStorage {
         }
     }
 }
+
 impl From<MediaStorage> for &str {
     fn from(storage: MediaStorage) -> Self {
         match storage {
@@ -368,6 +308,7 @@ impl From<MediaStorage> for &str {
         }
     }
 }
+
 impl From<&str> for MediaStorage {
     fn from(storage: &str) -> Self {
         if storage == &MediaStorage::FlatFiles.to_string() {
@@ -391,7 +332,6 @@ impl std::fmt::Display for MediaStorage {
     }
 }
 
-
 #[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
 pub struct DatabaseOpt {
     /// Set database url
@@ -408,7 +348,7 @@ pub struct DatabaseOpt {
     pub name: String,
 
     /// Set database schema
-    #[structopt(display_order(13), long, default_value("public"), env = "ENA_DATABASE_SCHEMA", hide_env_values = true,  hide_default_value(true))]
+    #[structopt(display_order(13), long, default_value("public"), env = "ENA_DATABASE_SCHEMA", hide_env_values = true, hide_default_value(true))]
     pub schema: String,
 
     /// Set database host
@@ -416,7 +356,7 @@ pub struct DatabaseOpt {
     pub host: String,
 
     /// Set database port
-    #[structopt(display_order(15), long, default_value("5432"), env = "ENA_DATABASE_PORT", hide_env_values = true,  hide_default_value(true))]
+    #[structopt(display_order(15), long, default_value("5432"), env = "ENA_DATABASE_PORT", hide_env_values = true, hide_default_value(true))]
     pub port: u16,
 
     /// Set database user
@@ -424,7 +364,7 @@ pub struct DatabaseOpt {
     pub username: String,
 
     /// Set database password
-    #[structopt(display_order(17), long, default_value("zxc"), env = "ENA_DATABASE_PASSWORD", hide_env_values = true,  hide_default_value(true))]
+    #[structopt(display_order(17), long, default_value("zxc"), env = "ENA_DATABASE_PASSWORD", hide_env_values = true, hide_default_value(true))]
     pub password: String,
 
     /// Set database charset
@@ -435,10 +375,11 @@ pub struct DatabaseOpt {
     #[structopt(display_order(18), long, default_value("utf8"), env = "ENA_DATABASE_COLLATE", hide_env_values = true, hide_default_value(true))]
     pub collate: String,
 }
+
 impl Default for DatabaseOpt {
     fn default() -> Self {
         Self {
-            url:      None, //Some("postgresql://postgres:zxc@localhost:5432/ena".into()),
+            url:      None,
             engine:   "postgresql".into(),
             name:     "ena".into(),
             schema:   "public".into(),

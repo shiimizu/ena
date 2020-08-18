@@ -39,9 +39,11 @@
         "banned"        BOOL,
         "id"            TEXT UNIQUE,
         "md5"           BYTEA UNIQUE,
-        "md5t"          BYTEA UNIQUE GENERATED ALWAYS AS (decode(md5(content_thumb)::text, 'hex')) STORED,
-        "sha256"        BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content)) STORED,
-        "sha256t"       BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content_thumb)) STORED,
+        -- "md5t"          BYTEA UNIQUE GENERATED ALWAYS AS (decode(md5(content_thumb)::text, 'hex')) STORED,
+        -- "sha256"        BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content)) STORED,
+        -- "sha256t"       BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content_thumb)) STORED,
+        "sha256"        BYTEA UNIQUE,
+        "sha256t"       BYTEA UNIQUE,
         "content"       BYTEA,
         "content_thumb" BYTEA
     );
