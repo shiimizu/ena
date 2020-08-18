@@ -58,7 +58,7 @@
 - [x] remove now column
 
 # Scraper
-- [x] https://docs.rs/reqwest/0.10.7/reqwest/header/constant.CONNECTION.html
+- [x] [`CONNECTION` header](https://docs.rs/reqwest/0.10.7/reqwest/header/constant.CONNECTION.html)
 - [x] schema search path
 - [x] verify api_url and media_url with `URL` crate
 - [x] Remove extra: {"tail_size": 50}
