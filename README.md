@@ -1,123 +1,127 @@
-<h1 align="center"><!--<img src="./img/yotsuba-and-ena.png" alt="Yotsuba&Ena!" width="470" /><br>-->
-Ena</h1><p align="center">An imageboard archiver written in Rust</p><h4 align="center">
-<div align="center">
-
+# New
+<!--
 [![Latest Version][latest-badge]][latest-link]
-[![Documentation][doc-badge]][doc-url]
 [![License][license-badge]][license-url]
-[![Unsafe Forbidden][safety-badge]][safety-url]
+[![Lines Of Code][tokei-loc-badge]][repo-url]
 [![Build Status][build-badge]][build-url]
-[![Matrix Chat][matrix-chat-badge]][matrix-chat-link]
+[![Unsafe Forbidden][safety-badge]][safety-url]
+[![Documentation][doc-badge]][doc-url]
+[![rustc](https://img.shields.io/badge/rustc-1.41+-blue.svg)](https://blog.rust-lang.org/2020/03/12/Rust-1.42.html)
+<!--[![Matrix Chat][matrix-chat-badge]][matrix-chat-link]
 [![Discord Chat][discord-chat-badge]][discord-chat-link]
+-->
+
 
 [repo-url]: https://github.com/shiimizu/ena
-[latest-badge]: https://img.shields.io/github/v/release/shiimizu/ena?color=orange&style=flat-square
-[latest-link]: https://github.com/shiimizu/ena/releases/latest
-[license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue&style=flat-square
+[tokei-loc-badge]: https://tokei.rs/b1/github/shiimizu/ena?category=code
+[license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue
 [license-url]: LICENSE
-[doc-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square
-[doc-url]: https://shiimizu.github.io/ena.docs
-[build-badge]: https://img.shields.io/github/workflow/status/shiimizu/ena/Rust?logo=github&style=flat-square
+[latest-badge]: https://img.shields.io/github/v/release/shiimizu/ena?color=orange
+[latest-link]: https://github.com/shiimizu/ena/releases/latest
+[build-badge]: https://img.shields.io/github/workflow/status/shiimizu/ena/Rust?logo=github
 [build-url]: https://github.com/shiimizu/ena/actions?query=workflow%3ARust
-[safety-badge]: https://img.shields.io/badge/unsafe-forbidden-green.svg?style=flat-square
+[safety-badge]: https://img.shields.io/badge/unsafe-forbidden-green.svg
 [safety-url]: https://github.com/rust-secure-code/safety-dance/
+[doc-badge]: https://img.shields.io/badge/docs-latest-%235075A7.svg
+[doc-url]: https://shiimizu.github.io/ena.docs/doc/ena/pgsql/core/struct.Post.html
 [discord-chat-link]: https://discord.gg/phPHTEs
-[discord-chat-badge]: https://img.shields.io/discord/134020776251752448?logo=discord&style=flat-square
+[discord-chat-badge]: https://img.shields.io/badge/chat-on%20discord-%23788BD8?logo=discord
 [matrix-chat-link]: https://matrix.to/#/#bibanon-chat:matrix.org
-[matrix-chat-badge]: https://img.shields.io/matrix/bibanon-chat:matrix.org?logo=matrix&style=flat-square
-[scc-code-badge]: https://sloc.xyz/github/shiimizu/ena?category=code
-[scc-cocomo-badge]: https://sloc.xyz/github/shiimizu/ena?category=cocomo
-
-</div>
-
-</h4>
-
-<br>
-
-![Demo](./img/demo.gif)
+[matrix-chat-badge]: https://img.shields.io/matrix/bibanon-chat:matrix.org?logo=matrix&color=green
 
 
-Low resource and high performance archiver to save posts, images and all relevant data from an imageboard into a local database and local image store. Currently only supports 4chan.  
+# From where you left off. TODO:
+* set -x RUST_BACKTRACE 'full'
+* $env:RUST_BACKTRACE='full'
+* $env:RUST_BACKTRACE='1'
+* [for DBA and frontend](https://hakibenita.com/sql-tricks-application-dba)
+* `./target/release/asql -b a aco adv an asp b bant biz c cgl ck cm co d diy e f fa fit g gd gif h hc his hm hr i ic int jp k lgbt lit m mlp mu n news o out p po pol qa qst r r9k s s4s sci soc sp t tg toy trash trv tv u v vg vip vp vr w wg wsg wsr x y`
+* `cls; cat up-mysql.sql | mysql -u root --password="zxc" ena2`
+* `cargo depgraph --dedup-transitive-deps | dot -Tpng > graph2.png`
+* `cargo deps | dot -Tpng > graph.png`
+* `cargo doc --lib --no-deps -j 4`
+* `cargo doc --bin asql --no-deps -j 4`
+* `cls; c r -q -j4 -- --asagi --engine mysql --name ena2 --schema ena2 --port 3306 --username root --password zxc --charset utf8mb4 --collate utf8mb4_unicode_ci --watch-boards -b b`
+
+# General
+- [x] TimeScale
+- [x] Proxy
+
+# SQL
+- [x] get & set deleted in program when diffing
+- [x] when deleted/archived - update and calculate correct # of replies & images, use after update trigger, only if delted, increment? but then how does the upsert work so that the replies/images stays the same afterwards?.. in the UPSERT get COUNT of replies/images so that it will be excluded, -> only insert thread, don't update images/replies, use triggers for that? on insert, then you would have to do the same ON DELETED
+- [x] remove now column
+
+# Scraper
+- [x] https://docs.rs/reqwest/0.10.7/reqwest/header/constant.CONNECTION.html
+- [x] schema search path
+- [x] verify api_url and media_url with `URL` crate
+- [x] Remove extra: {"tail_size": 50}
+- [ ] ouput error, only if on last retry
+- [x] Semaphore & limit to threads due to sockets
+  - [x] don't concurrently get all boards? process a single board first then move on? better for memory
+- [x] CTRL+C
+- [ ] Config cleanup and implement
+- [x] Use tail json whenever possible: extra: {"tail_size": 50} --use-tail-json (to save bandwidth? possibly less accurate, since mods can change any post before the tail_size)
+- [x] use boards.json to validate boards, upsert to db as id 0
+- [x] last_modified
+  - [x] `boards.json` `threads.json` `archive.json`
+- [x] deleted: compare single threads based on the new one's initial reply num as a starting for the in-db (>=) [double check if OP stays or fades away for large threads?]
+- [x] only update threads.json & its last_modified at the end
+- [x] use a thread's last post `time` in-db as its `last_modified` for the GET request
+- [x] combined threads on startup, modified threads afterwards
+- [x] If-Mofified-Since: Use threads.json and archive.json's `date` to input for their last_modified, so that we can state save resume for program. use cache if we wanna go from where we left off, otherwise get combined
+- [x] for posts only update if modeified, ie if it was updated, otherwise null
+- [x] (--watch--board, --watch--thread) loop on network errors, grabbing boards should never end
+- [x] Add loop retry
+- [x] Don't insert Map object on key "extra" if it's empty
+- [x] Update do set least modified AFTER you upsert
+- [x] Update deleted only if null and 0
+- [x] update `is_board` function in `main.rs`
+- [x] in trigger after insert for each statement, update replies/images to be the count(*)
+- [x] Don't update replies/images in the UPSERT (only insert) (inserting won't really matter if an after insert trigger occurs each statement)
+- [x] Combined/modified threads - Tokio poistrges stream
+- [ ] Don't deleted threads on combined? (startup), only deleted threads on modified function? that way you know it was actually deleted, rather than deleting from cache+new(combined)? 
+- [x] mysql: upserted amount
+- [x] mysql: update deleteds
+- [x] mysql : update_deleteds: v_latest doesnt have all posts? what?
+- [x] URL cli option (makes things easier), patch as well
+- [x] CLI OPT boards needs to be patched with board_settings
+- [ ] interleave boards when strict?
+- [ ] in DatabaseOpt -> make engine an enum
+- [x] asagi_mode requiired when engine=="mysql" variant/ or not postgres 
+- [x] Patch the rest of Opt fields. See `Opt::default()`. So far we only did BoardSettings
+- [x] watch-threads
+- [x] excluded boards
+- [ ] SQL migrations up.sql
+- [ ] Custom parse for timescaledb interval (just validate, either num or interval )
+- [x] limit / strict / media-threads
+- [ ] watch-boards: needs to exit a board, not the whole loop
+- [ ] watch-thread on an archive should end
+- [ ] percent_encode the filename to get the correct url for /f/
+- [ ] Media
+- [x] Config, DB_URL, default-rust->yaml->env->cli
+- [ ] modules bin lib workspaces, Module system, Lib in diff crate so ppl can actually use without pulling executor
+- [ ] Kuroba threads + other sites
+- [ ] Docs, donation button.. yuck
+- [ ] Move wiki to in-code docc
+- [ ] Inspiration:
+    - async-std
+    - structopt
+
+Tests
+- [ ] [load test](https://github.com/tag1consulting/goose)
+- [ ] [http mock](https://github.com/LukeMathWalker/wiremock-rs)
 
 
-## Features
+Ena-Server?
 
-* **Memory efficient**<br>
- Using less than 5mb for a single board and less than 30mb for all 72 boards
- 
-* **Bandwidth efficient**<br>
- Minimal [API](https://github.com/4chan/4chan-API) requests by using `threads.json` and `archive.json` instead of continuously polling every thread for updates
- 
-* **Accurate**<br>
- Threads are diffed, patched, and merged by the database so posts are always correct and up-to-date
-    
-* **Collision resistant**<br>
- Media files and thumbnails are hashed with SHA256 and deduped by using it as the filename
-    
-* **Preserved comments**<br>
- Untouched in their original HTML format
-
-* **Asagi compatible**<br>
- Capable as a [drop-in replacement](https://github.com/shiimizu/ena/wiki/Asagi)
-
-
-## Runtime dependencies
-* [PostgreSQL](https://www.postgresql.org/download/) >= 11.0
-
-## Getting Started
-Download the [latest release][latest-link] or build from source.  
-
-Set your environment variable to `ENA_LOG=ena=info` for console output. 
-
-Edit the `ena_config.json` file and put in your database connection details, media directory, what boards you want to archive, and tweak any of the other settings that look interesting. Don't go below 0.12s or so for the ratelimit or you'll get banned. Follow the API rules and keep it at or above 1 unless you really need to (If you're not sure whether you need to, you probably don't need to). For more information, see the [configuration page](https://github.com/shiimizu/ena/wiki/Configuration).
-
-Make sure your PostgreSQL server is running.  
-
-You should now be able to run `ena` and have it start archiving, and report status to the standard output, showing requests as they happen, as well as a display of current queued tasks.  
-Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
-
-## Building
-Make sure you have [OpenSSL](https://www.openssl.org/source/) and [Rust](https://www.rust-lang.org/tools/install) installed. Then run:
-
-```
-cargo install --git https://github.com/shiimizu/ena
-```
-
-Or the traditional way: 
-```bash
-git clone https://github.com/shiimizu/ena.git
-cd ena
-cargo build --release
-# Grab the binary from: target/release/
-```
-For more information, see the [building guide](https://github.com/shiimizu/ena/wiki/Building). 
-
-## Usage
-```
-ena
-An ultra-low resource imageboard archiver
-
-USAGE:
-    ena
-    ena [OPTIONS] [-c CONFIGFILE]
-    ena [OPTIONS]
-    command | ena -c -
-
-OPTIONS:
-    -c, --config            Specify a config file or pass '-' for stdin
-    -h, --help              Prints help information
-    -V, --version           Prints version information
-```
-
-## Why do this?
-Much of my personal time and research went into 4chan for *educational purposes* and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. At the time there wasn't any avaliable practical solutions nor were they production ready, so I decided to help out.
-
-## Why Rust?
-I wanted something fast, durable, and ideally able to withstand long-term usage. Rust has memory safety guarantee, no GC, speed like C, and an ecosystem like Python's. Paying upfront in development time in return for less debugging and runtime errors is a small price to pay. Generally, if it compiles, you can be rest assured there won't be any low level hiccups as would be in other languages. For more reasons, see the [Why Rust? page](https://github.com/shiimizu/ena/wiki/Why-Rust%3F).
-
-## What's with the name?
-> Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?  
-> – *ekopsl*  
-
-Ena is the next in line and youngest of the Ayase sisters.
-
+# Media
+- [ ] Insert media in db (auto hash) or store on disk
+- [ ] check md5 before dl
+- [ ] --media-force-stop-on-ctrl-c
+- [ ] dynamic config? hot reload? 
+- [ ] check if file exists needs to be done efficiently so it won't wear out the drive. no exessive read seeaks?
+- [ ] list of dirs to check for media, first one is where it's attempted to be saved, then to others, if still err, make new dir and save there, if still err, drive probably has no space and output error
+- [ ] press ctrl-c again to cancel media fetching (requires to check for media in all combined threads regardless of if-modified, this is so you can ctrl c anytime + state save, check if need to dl, this happens all the time after getting threads.json, how efficient is this vs billions of rows?.. if you check it and it's already been found, dont check it again)
+- [ ] Quote all postgres identifiers

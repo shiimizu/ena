@@ -1,469 +1,453 @@
-//! Configuration.
-//!
-//! Used to parse the config file or read from environment variables.  
-//! Also supplied are various helper functions for a CLI program.
-use crate::{enums::YotsubaBoard, sql::Database};
-use anyhow::{Context, Result};
-use enum_iterator::IntoEnumIterator;
-use serde::{self, Deserialize, Serialize};
-use std::{
-    env::var,
-    iter::{Chain, Repeat, StepBy, Take}
-};
+// use anyhow::{anyhow, Result};
+use color_eyre::eyre::{eyre, Result};
+// use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+// clap::{Arg, ArgGroup},
+// use structopt::{clap::ArgGroup, StructOpt};
+use structopt::StructOpt;
+use url::Url;
 
-use once_cell::sync::OnceCell;
-pub static CONFIG_CONTENTS: OnceCell<String> = OnceCell::new();
-
-/// Display an ascii art with the crate version
-pub fn display() {
-    println!(
-        r#"
-    ⣿⡇⣿⣿⣿⠛⠁⣴⣿⡿⠿⠧⠹⠿⠘⣿⣿⣿⡇⢸⡻⣿⣿⣿⣿⣿⣿⣿
-    ⢹⡇⣿⣿⣿⠄⣞⣯⣷⣾⣿⣿⣧⡹⡆⡀⠉⢹⡌⠐⢿⣿⣿⣿⡞⣿⣿⣿
-    ⣾⡇⣿⣿⡇⣾⣿⣿⣿⣿⣿⣿⣿⣿⣄⢻⣦⡀⠁⢸⡌⠻⣿⣿⣿⡽⣿⣿       ____
-    ⡇⣿⠹⣿⡇⡟⠛⣉⠁⠉⠉⠻⡿⣿⣿⣿⣿⣿⣦⣄⡉⠂⠈⠙⢿⣿⣝⣿      /\  _`\
-    ⠤⢿⡄⠹⣧⣷⣸⡇⠄⠄⠲⢰⣌⣾⣿⣿⣿⣿⣿⣿⣶⣤⣤⡀⠄⠈⠻⢮      \ \ \L\_     ___      __
-    ⠄⢸⣧⠄⢘⢻⣿⡇⢀⣀⠄⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⡀⠄⢀       \ \  __\  /' _ `\  /'__`\
-    ⠄⠈⣿⡆⢸⣿⣿⣿⣬⣭⣴⣿⣿⣿⣿⣿⣿⣿⣯⠝⠛⠛⠙⢿⡿⠃⠄⢸        \ \ \___\/\ \/\ \/\ \L\.\_
-    ⠄⠄⢿⣿⡀⣿⣿⣿⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⡾⠁⢠⡇⢀         \ \____/\ \_\ \_\ \__/.\_\
-    ⠄⠄⢸⣿⡇⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣏⣫⣻⡟⢀⠄⣿⣷⣾          \/___/  \/_/\/_/\/__/\/_/   v{}
-    ⠄⠄⢸⣿⡇⠄⠈⠙⠿⣿⣿⣿⣮⣿⣿⣿⣿⣿⣿⣿⣿⡿⢠⠊⢀⡇⣿⣿
-    ⠒⠤⠄⣿⡇⢀⡲⠄⠄⠈⠙⠻⢿⣿⣿⠿⠿⠟⠛⠋⠁⣰⠇⠄⢸⣿⣿⣿
-    ⠄⠄⠄⣿⡇⢬⡻⡇⡄⠄⠄⠄⡰⢖⠔⠉⠄⠄⠄⠄⣼⠏⠄⠄⢸⣿⣿⣿        A lightweight 4chan archiver (¬ ‿ ¬ )
-    ⠄⠄⠄⣿⡇⠄⠙⢌⢷⣆⡀⡾⡣⠃⠄⠄⠄⠄⠄⣼⡟⠄⠄⠄⠄⢿⣿⣿
-    "#,
-        version()
-    )
+fn toggle_bool(i: u64) -> bool {
+    i == 0
 }
 
-/// Upper level configuration hold json fields and values
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(default)] // https://github.com/serde-rs/serde/pull/780
-pub struct Config {
-    pub settings:       Settings,
-    pub board_settings: BoardSettings,
-    pub boards:         Vec<BoardSettings>
+// default_value must be closely tied to Default::default() for sanity.
+// Since structopt doesn't use Default::default...
+#[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
+#[serde(default)]
+pub struct Board {
+    #[structopt(skip)]
+    pub id: u16,
+
+    #[structopt(skip)]
+    pub board: String,
+
+    // #[structopt(long, default_value, env, hide_env_values = true)]
+    #[structopt(display_order(5), long, default_value("3"), env, hide_env_values = true)]
+    pub retry_attempts: u8,
+
+    /// Delay (ms) between fetching each board
+    #[structopt(display_order(5), long, default_value("30000"), env, hide_env_values = true)]
+    pub interval_boards: u16,
+
+    /// Delay (ms) between fetching each thread
+    #[structopt(display_order(5), long, default_value("1000"), env, hide_env_values = true)]
+    pub interval_threads: u16,
+
+    /// Download live threads as well
+    // #[structopt(long, env, hide_env_values = true)]
+    #[structopt(display_order(5), long)]
+    pub with_threads: bool,
+
+    /// Download archived threads as well
+    // #[structopt(long, env, hide_env_values(true))]
+    #[structopt(display_order(5), long)]
+    pub with_archives: bool,
+
+    /// Prefer to use tail json if available
+    // #[structopt(long, env, hide_env_values = true)]
+    #[structopt(display_order(5), long)]
+    pub with_tail: bool,
+
+    /// Download full media as well
+    // #[structopt(long, env, hide_env_values = true)]
+    #[structopt(display_order(5), long)]
+    pub with_full_media: bool,
+
+    /// Download thumbnails as well
+    // #[structopt(long, env, hide_env_values = true)]
+    #[structopt(display_order(5), long)]
+    pub with_thumbnails: bool,
+
+    /// Enable archiving the boards
+    // #[structopt(long, env, hide_env_values = true)]
+    #[structopt(display_order(5), long)]
+    pub watch_boards: bool,
+
+    /// Enable archiving the live threads until it's deleted or archived
+    // #[structopt(long, env, hide_env_values = true)]
+    #[structopt(display_order(5), long)]
+    pub watch_threads: bool,
 }
 
-impl Default for Config {
+impl Default for Board {
     fn default() -> Self {
         Self {
-            settings:       Settings::default(),
-            board_settings: BoardSettings::default(),
-            boards:         vec![]
+            id:               0,
+            board:            String::new(),
+            retry_attempts:   3,
+            interval_boards:  30000,
+            interval_threads: 1000,
+            with_threads:     false,
+            with_archives:    false,
+            with_tail:        false,
+            with_full_media:  false,
+            with_thumbnails:  false,
+            watch_boards:     false,
+            watch_threads:    false,
         }
     }
 }
+// #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
+// #[serde(default)]
+// pub(crate) struct OptInner {
+//     pub board_settings: Board,
+// }
 
-#[allow(dead_code)]
-impl Config {
-    /// Return a pretty json by calling [`serde_json::to_string_pretty`]
-    pub fn pretty(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap()
-    }
+// impl Default for OptInner {
+//     fn default() -> Self {
+//         Self {
+//             board_settings: Board::default(),
+//         }
+//     }
+// }
 
-    /// Return the json as a string by calling [`serde_json::to_string`]
-    pub fn string(&self) -> String {
-        serde_json::to_string(self).unwrap()
-    }
-}
-
-/// Archiver settings
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(default)]
-pub struct Settings {
-    pub engine:      Database,
-    pub database:    String,
-    pub schema:      String,
-    pub host:        String,
-    pub port:        u32,
-    pub username:    String,
-    pub password:    String,
-    pub charset:     String,
-    pub path:        String,
-    pub db_url:      String,
-    pub user_agent:  String,
-    pub api_url:     String,
-    pub media_url:   String,
-    pub asagi_mode:  bool,
-    pub strict_mode: bool
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            engine:      var("ENA_DATABASE")
-                .ok()
-                .filter(|s| {
-                    Database::into_enum_iter()
-                        .any(|z| z.to_string().to_lowercase() == *s.to_lowercase())
-                })
-                .map(|s| s.into())
-                .unwrap_or(Database::PostgreSQL),
-            database:    var("ENA_DATABASE_NAME").unwrap_or("archive_ena".into()),
-            schema:      var("ENA_DATABASE_SCHEMA")
-                .ok()
-                .filter(|s| !String::is_empty(s))
-                .unwrap_or("public".into()),
-            host:        var("ENA_DATABASE_HOST").unwrap_or("localhost".into()),
-            port:        var("ENA_DATABASE_PORT")
-                .ok()
-                .map(|a| a.parse::<u32>().ok())
-                .flatten()
-                .unwrap_or(5432),
-            username:    var("ENA_DATABASE_USERNAME").unwrap_or("postgres".into()),
-            password:    var("ENA_DATABASE_PASSWORD").unwrap_or("pass".into()),
-            charset:     var("ENA_DATABASE_CHARSET").unwrap_or("utf8".into()),
-            path:        var("ENA_PATH")
-                .unwrap_or("./archive".into())
-                .trim_end_matches('/')
-                .trim_end_matches('\\')
-                .into(),
-            db_url:      var("ENA_DB_URL").unwrap_or("".into()),
-            user_agent:  format!(
-                "{}/{}",
-                var("CARGO_PKG_NAME").unwrap_or("ena".into()),
-                var("CARGO_PKG_VERSION").unwrap_or("0.0.0".into())
-            ),
-            api_url:     var("ENA_API_URL").unwrap_or("http://a.4cdn.org".into()),
-            media_url:   var("ENA_MEDIA_URL").unwrap_or("http://i.4cdn.org".into()),
-            asagi_mode:  var("ENA_ASAGI_MODE")
-                .ok()
-                .map(|a| a.parse::<bool>().ok())
-                .flatten()
-                .unwrap_or(false),
-            strict_mode: var("ENA_STRICT_MODE")
-                .ok()
-                .map(|a| a.parse::<bool>().ok())
-                .flatten()
-                .unwrap_or(true)
-        }
-    }
-}
-
-/// Settings for a board
-#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-#[serde(default)]
-pub struct BoardSettings {
-    pub board:               YotsubaBoard,
-    pub retry_attempts:      u16,
-    pub refresh_delay:       u16,
-    pub throttle_millisec:   u32,
-    pub download_archives:   bool,
-    pub download_media:      bool,
-    pub download_thumbnails: bool,
-    pub keep_media:          bool,
-    pub keep_thumbnails:     bool
-}
-
-/// This default method will call if there's any missing fields. That's why the board field is
-/// ommited in the config json. This is why Yotsuba::None will go through, its not being
-/// deserialized or parsed by serde_json, the default is merely being inserted, and no checks are
-/// done. See the overriden impl of `Deserialize` for `YotsubaBoard`.  
-/// It's overridden to ignore `YotsubaBoard::None`.
-impl Default for BoardSettings {
-    fn default() -> Self {
-        // Use a deserialized BoardSettings as base for all other boards
-        let new: BoardSettingsInner = serde_json::from_str::<ConfigInner>(
-            &CONFIG_CONTENTS.get().expect("Config is not initialized")
-        )
-        .unwrap_or(ConfigInner::default())
-        .board_settings;
-        // read_json::<ConfigInner>().board_settings;
-        BoardSettings {
-            board:               new.board,
-            retry_attempts:      new.retry_attempts,
-            refresh_delay:       new.refresh_delay,
-            throttle_millisec:   new.throttle_millisec,
-            download_archives:   new.download_archives,
-            download_media:      new.download_media,
-            download_thumbnails: new.download_thumbnails,
-            keep_media:          new.keep_media,
-            keep_thumbnails:     new.keep_thumbnails
-        }
-    }
-}
-
-/// Use a deserialized BoardSettings as a base for all other BoardSettings
-/// Another struct is used to prevent a recursive loop in deserialization
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(default)]
-pub struct ConfigInner {
-    settings:       Settings,
-    board_settings: BoardSettingsInner,
-    boards:         Vec<BoardSettingsInner>
-}
-
-impl Default for ConfigInner {
-    fn default() -> Self {
-        Self {
-            settings:       Settings::default(),
-            board_settings: BoardSettingsInner::default(),
-            boards:         vec![]
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(default)]
-struct BoardSettingsInner {
-    board:               YotsubaBoard,
-    retry_attempts:      u16,
-    refresh_delay:       u16,
-    throttle_millisec:   u32,
-    download_archives:   bool,
-    download_media:      bool,
-    download_thumbnails: bool,
-    keep_media:          bool,
-    keep_thumbnails:     bool
-}
-
-impl Default for BoardSettingsInner {
-    fn default() -> Self {
-        Self {
-            board:               YotsubaBoard::None,
-            retry_attempts:      3,
-            refresh_delay:       20,
-            throttle_millisec:   1000,
-            download_archives:   true,
-            download_media:      false,
-            download_thumbnails: false,
-            keep_media:          false,
-            keep_thumbnails:     false
-        }
-    }
-}
-
-/// Read a [`Config`] file
-#[allow(unused_assignments)]
-pub fn read_config(c: Config) -> Config {
-    // Normally we'd be done here
-    // read_json(config_path)
-
-    // This is all to accomodate for a DB URL
-    let mut config: Config = c; //read_json(config_path);
-    let mut settings = config.settings;
-    let mut result: Option<Config> = None;
-
-    // Parse db url and extract contents from it
-    let mut s = settings.clone().db_url;
-    s.clone().as_str().matches(|c: char| !c.is_alphanumeric()).for_each(|c| {
-        s = s.replace(c, " ");
-    });
-    let v: Vec<String> = s.split_ascii_whitespace().map(str::to_string).collect();
-
-    // we have db url, try to extract it to use its values to update the rest
-    // we dont have db url, use our values to update the db url
-    //
-    // Go here if there's a DB URL
-    if v.len() == 6 && s != "" {
-        // TRY to update our values from the DB URL
-        let mut iter = v.iter();
-        settings.engine = iter.next().unwrap_or(&settings.engine.to_string()).to_owned().into();
-        settings.username = iter.next().unwrap_or(&settings.username.to_string()).into();
-        settings.password = iter.next().unwrap_or(&settings.password).into();
-        settings.host = iter.next().unwrap_or(&settings.host).into();
-        settings.port = iter
-            .next()
-            .unwrap_or(&settings.port.to_string())
-            .parse::<u32>()
-            .unwrap_or(settings.port);
-        settings.database = iter.next().unwrap_or(&settings.database).into();
-        println!("INSIDE {}", settings.engine);
-        config.settings = settings;
-        result = Some(config);
+fn boards_cli_string(board: &str) -> Result<Board> {
+    let board = board.to_lowercase();
+    // if !board.is_empty() && (board.chars().all(|c| c.is_ascii_alphabetic()) || board == "3" || board
+    // == "r9k" || board == "s4s") {
+    if !board.is_empty() {
+        // This will get patched at post processing so it's ok to use default here
+        let mut b = Board::default();
+        b.board = board;
+        Ok(b)
     } else {
-        // Improper DB URL, use values from our own to construct it
-        // No DB URL found, update our DB URL with our own values
-        settings.db_url = format!(
-            "{engine}://{username}:{password}@{host}:{port}/{database}",
-            engine = &settings.engine.base().to_string().to_lowercase(),
-            username = &settings.username,
-            password = &settings.password,
-            host = &settings.host,
-            port = &settings.port,
-            database = &settings.database
-        );
-        config.settings = settings;
-        result = Some(config);
+        Err(eyre!("Invalid board format `{}`", board))
     }
+}
 
-    let mut json: serde_json::Value = serde_json::to_value(result.unwrap()).unwrap();
-
-    // Remove the `None` board in the example BoardSettings to prevent the deserializer from
-    // touching it.
-    let bs = json.get_mut("boardSettings").unwrap().as_object_mut().unwrap();
-    bs.remove("board").unwrap();
-
-    let mut computed_config: Config = serde_json::from_value(json).unwrap();
-    if computed_config.settings.asagi_mode
-        || computed_config.settings.engine.base() == Database::MySQL
-    {
-        computed_config.settings.schema = computed_config.settings.database.clone();
+fn threads_cli_string(thread: &str) -> Result<String> {
+    let split: Vec<&str> = thread.split('/').filter(|s| !s.is_empty()).collect();
+    if split.len() == 2 {
+        let no = split[1].parse::<u64>();
+        match no {
+            Ok(n) => Ok(thread.into()),
+            Err(e) => Err(eyre!("Invalid thread `{}` for `/{}/{}`", split[1], split[0], split[1])),
+        }
+    } else {
+        Err(eyre!("Invalid thread format `{}`", thread))
     }
-    computed_config
 }
 
-/// Return the current version of the crate
-///
-/// # Example
-///
-/// ```
-/// use ena::config;
-/// let version = config::version();
-/// ```
-pub fn version() -> String {
-    option_env!("CARGO_PKG_VERSION").unwrap_or("?.?.?").to_string()
+// fn threads_cli(threads: &str) -> Vec<&str> {
+//     let mut v: Vec<&str> = threads.split(",").filter(|s| s.chars().all(|c|
+// c.is_ascii_alphanumeric())).filter(|s| !s.is_empty()).collect();     v.dedup();
+//     v
+// }
+
+// fn boards_cli(threads: &str) -> Vec<&str> {
+//     let mut v: Vec<&str> = threads.split(",").filter(|s| s.chars().all(|c|
+// c.is_ascii_alphabetic())).filter(|s| !s.is_empty()).collect();     v.sort();
+//     v.dedup();
+//     v
+// }
+
+// fn with(arg: &str) -> Result<bool> {
+//     Ok(true)
+// }
+
+#[cfg(test)]
+mod tests {
+    #[ignore]
+    #[test]
+    fn cli_threads() {
+        // Comma delimited: /a/12345,/a/1487823,/b/134654,/c/13478,/d/134798
+        // Space delimited: /a/12345 /a/1487823 /b/134654 /c/13478 /d/134798
+        let threads = "a,1234,b,34534,24354,c,346654,3332,,,5,,,6,,6,];.],][//['],]-=00-9c,c,c";
+        // assert_eq!(crate::config::threads_cli_string(threads), vec!["a", "1234", "b", "34534",
+        // "24354", "c", "346654", "3332", "5", "6", "c"]);
+    }
+    #[ignore]
+    #[test]
+    fn cli_boards() {
+        let threads = "a,1234,b,a,34534,24354,c,346654,3332,,,5,,,6,,6,];.],][//['],]-=00-9c,c,c";
+        // assert_eq!(super::boards_cli_string(threads), vec!["a", "b", "c"]);
+    }
 }
 
-/// Return the value of the `ENA_RESUME` environment variable
-///
-/// # Example
-///
-/// ```
-/// use ena::config;
-/// let resume = config::ena_resume();
-/// ```
-pub fn ena_resume() -> bool {
-    var("ENA_RESUME").ok().map(|a| a.parse::<bool>().ok()).flatten().unwrap_or(false)
+#[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
+// #[structopt(about = "Experimental archiver")]
+#[structopt(about)]
+#[serde(default)]
+// CLI Options
+pub struct Opt {
+    // Activate debug mode
+    // #[structopt(short, long, hidden(true))]
+    // pub debug: bool,
+    /// Download sequentially rather than concurrently. This sets limit to 1.
+    // TODO interleave between boards
+    #[structopt(long, display_order(5))]
+    pub strict: bool,
+
+    /// Enable Asagi mode to use Ena as an Asagi drop-in
+    #[structopt(long("asagi"), display_order(5))]
+    pub asagi_mode: bool,
+
+    /// Download everything in the beginning with no limits and then throttle
+    #[structopt(long, display_order(5))]
+    pub quickstart: bool,
+
+    /// Download from external archives in the beginning
+    // #[structopt(long, display_order(5))]
+    #[structopt(skip)]
+    pub start_with_archives: bool,
+
+    /// Use config file or pass `-` to read from stdin
+    #[structopt(display_order(1), short, long, parse(from_os_str), default_value = "config.yml", env, hide_env_values = true)]
+    pub config: PathBuf,
+
+    /// Get boards [example: a,b,c]
+    #[structopt(display_order(2), short, long,  multiple(true), required_unless("config"),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
+    pub boards: Vec<Board>,
+    
+    /// Exclude boards (Only applies to boards from boardslist, not threadslist) [example: a,b,c]
+    #[structopt(display_order(2), long("exclude-boards"),  multiple(true), required(false),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
+    pub boards_excluded: Vec<Board>,
+
+    /// Get threads
+    ///
+    /// First specify the board, then all the threads belonging to that board.  
+    /// Comma delimited: /a/12345,/a/1487823,/b/134654,/c/13478,/d/134798   
+    /// Space delimited: /a/12345 /a/1487823 /b/134654 /c/13478 /d/134798  
+    ///   
+    #[structopt(verbatim_doc_comment, display_order(3), short, long, multiple(true), required_unless("config"), use_delimiter = true, parse(try_from_str = threads_cli_string),  env, hide_env_values = true )]
+    pub threads: Vec<String>,
+
+    /// Set site
+    #[structopt(hidden(true), display_order(4), short, long, default_value = "4chan", env)]
+    pub site: String,
+
+    /// Limit concurrency
+    #[structopt(display_order(5), long, default_value = "151", env, hide_env_values = true)]
+    pub limit: u32,
+
+    /// Media download location
+    #[structopt(display_order(5), short, long, parse(from_os_str), default_value = "assets/media", env, hide_env_values = true, hide_default_value(true))]
+    pub media_dir: PathBuf,
+
+    /// Media storage type
+    ///
+    /// Possible values: flatfiles, database, seaweedfs
+    // #[structopt(display_order(5),  long, possible_values(&[MediaStorage::FlatFiles.into(),MediaStorage::Database.into(),MediaStorage::SeaweedFS.into()]), default_value, env, hide_env_values = true, hide_possible_values(true))]
+    #[structopt(skip)]
+    pub media_storage: MediaStorage,
+
+    /// # of greenthreads to get media
+    #[structopt(display_order(5), short = "j", long, default_value = "151", env, hide_env_values = true)]
+    pub media_threads: u32,
+
+    /// Set user agent
+    #[structopt(
+        display_order(7),
+        short = "A",
+        long,
+        hide_default_value(true),
+        default_value = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0",
+        env,
+        hide_env_values = true
+    )]
+    pub user_agent: String,
+
+    /// Set api endpoint url
+    #[structopt(display_order(8), long, default_value("https://a.4cdn.org"), hide_default_value(true), parse(try_from_str = url::Url::parse), env = "API_URL", hide_env_values = true)]
+    pub api_url: Url,
+
+    /// Set media endpoint url
+    #[structopt(display_order(9), long,  default_value("https://i.4cdn.org"), hide_default_value(true), parse(try_from_str = url::Url::parse), env, hide_env_values = true)]
+    pub media_url: Url,
+
+    #[structopt(flatten)]
+    pub board_settings: Board,
+
+    #[structopt(flatten)]
+    pub database: DatabaseOpt,
+
+    #[structopt(skip)]
+    pub timescaledb: Option<TimescaleSettings>,
+
+    #[structopt(skip)]
+    pub proxies: Option<Vec<ProxySettings>>,
+    /*
+    /// Set speed
+    // we don't want to name it "speed", need to look smart
+    #[structopt(short = "v", long = "velocity", default_value = "42")]
+    speed: f64,
+
+    /// Input file
+    #[structopt(parse(from_os_str))]
+    input: PathBuf,
+
+    /// Output file, stdout if not present
+    #[structopt(parse(from_os_str))]
+    output: Option<PathBuf>,
+
+    /// Where to write the output: to `stdout` or `file`
+    #[structopt(short)]
+    out_type: String,
+
+    /// File name: only required when `out` is set to `file`
+    #[structopt(name = "FILE", required_if("out_type", "file"))]
+    file_name: Option<String>,*/
 }
 
-/// Display the build information
-///
-/// # Example
-///
-/// ```
-/// use ena::config;
-/// config::display_version();
-/// ```
-pub fn display_version() {
-    println!(
-        "{} {} (rev {})",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        env!("VERGEN_SHA_SHORT")
-    );
+impl Default for Opt {
+    fn default() -> Self {
+        Self {
+            strict:              false,
+            asagi_mode:          false,
+            quickstart:          false,
+            start_with_archives: false,
+            config:              "config.yml".into(),
+            boards:              vec![],
+            boards_excluded:              vec![],
+            threads:             vec![],
+            site:                "4chan".into(),
+            limit:               151,
+            media_dir:           "assets/media".into(),
+            media_storage:       MediaStorage::FlatFiles,
+            media_threads:       151,
+            user_agent:          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0".into(),
+            api_url:             "https://a.4cdn.org".parse().unwrap(),
+            media_url:           "https://i.4cdn.org".parse().unwrap(),
+            board_settings:      Board::default(),
+            database:            DatabaseOpt::default(),
+            timescaledb:         None,
+            proxies:             None,
+        }
+    }
+}
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone, Default)]
+#[serde(default)]
+pub struct TimescaleSettings {
+    pub column: String,
+    pub every:  String,
 }
 
-/// Display the help information
-///
-/// # Example
-///
-/// ```
-/// use ena::config;
-/// config::display_help();
-/// ```
-pub fn display_help() {
-    println!(
-        "{main} {version}\n{description}",
-        main = env!("CARGO_PKG_NAME"),
-        version = env!("CARGO_PKG_VERSION"),
-        description = env!("CARGO_PKG_DESCRIPTION")
-    );
-    println!("\nUSAGE:");
-    println!("    {}", env!("CARGO_PKG_NAME"));
-    println!("    {} [OPTIONS] [-c CONFIGFILE]", env!("CARGO_PKG_NAME"));
-    println!("    {} [OPTIONS]", env!("CARGO_PKG_NAME"));
-    println!("    command | {} -c -", env!("CARGO_PKG_NAME"));
-    println!("\nOPTIONS:");
-    println!("    -c, --config            Specify a config file or pass '-' for stdin");
-    println!("    -h, --help              Prints help information");
-    println!("    -V, --version           Prints version information");
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone, Default)]
+#[serde(default)]
+pub struct ProxySettings {
+    pub url:      String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
+pub enum MediaStorage {
+    FlatFiles,
+    Database,
+    SeaweedFS,
 }
 
-/// Create an iterator that mimics the thread refresh system  
-///
-/// It repeats indefintely so `take` is required to limit how many `step_by`.  
-/// If the stream has reached or passed its last value, it will keep repeating that last value.  
-/// If an initial `refreshDelay` was set to `20`, `5` is added to each and subsequent requests
-/// that return `NOT_MODIFIED`. If the next request is `OK`, the stream can be reset back to it's
-/// initial value by calling `clone()` on it.
-///
-/// # Arguments
-///
-/// * `initial` - Initial value in seconds
-/// * `step_by` - Add this much every time `next()` is called
-/// * `take`    - Limit this to how many additions to make from `step_by`
-///
-/// # Example
-///
-/// ```
-/// use ena::config;
-/// let orig = config::refresh_rate(20, 5, 10);
-/// let mut rate = orig.clone();
-/// rate.next(); // 20
-/// rate.next(); // 25
-/// rate.next(); // 30
-/// //
-/// /* continued calls to rate.next(); */
-/// rate.next(); // 75
-/// rate.next(); // 75 .. repeating
-///
-/// rate = orig.clone();
-/// rate.next(); // 20
-/// ```
-pub fn refresh_rate(
-    initial: u16, step_by: usize, take: usize
-) -> Chain<Take<StepBy<std::ops::RangeFrom<u16>>>, Repeat<u16>> {
-    let base = (initial..).step_by(step_by).take(take);
-    let repeat = std::iter::repeat(base.clone().last().unwrap());
-    let ratelimit = base.chain(repeat);
-    ratelimit
+impl Default for MediaStorage {
+    fn default() -> MediaStorage {
+        MediaStorage::FlatFiles
+    }
 }
 
-/// Safe read a json file
-pub fn read_json_try<T>(path: &str) -> Result<T, serde_json::Error>
-where T: serde::de::DeserializeOwned {
-    let file = std::fs::File::open(path).unwrap();
-    let reader = std::io::BufReader::new(file);
-    serde_json::from_reader(reader)
+impl std::str::FromStr for MediaStorage {
+    type Err = color_eyre::Report;
+
+    fn from_str(storage: &str) -> Result<Self, Self::Err> {
+        if storage == &MediaStorage::FlatFiles.to_string() {
+            Ok(MediaStorage::FlatFiles)
+        } else if storage == &MediaStorage::Database.to_string() {
+            Ok(MediaStorage::Database)
+        } else if storage == &MediaStorage::SeaweedFS.to_string() {
+            Ok(MediaStorage::SeaweedFS)
+        } else {
+            Err(eyre!("Unknown MediaStorage: {}", storage))
+        }
+    }
+}
+impl From<MediaStorage> for &str {
+    fn from(storage: MediaStorage) -> Self {
+        match storage {
+            MediaStorage::FlatFiles => "flatfiles",
+            MediaStorage::Database => "database",
+            MediaStorage::SeaweedFS => "seaweedfs",
+        }
+    }
+}
+impl From<&str> for MediaStorage {
+    fn from(storage: &str) -> Self {
+        if storage == &MediaStorage::FlatFiles.to_string() {
+            MediaStorage::FlatFiles
+        } else if storage == &MediaStorage::Database.to_string() {
+            MediaStorage::Database
+        } else if storage == &MediaStorage::SeaweedFS.to_string() {
+            MediaStorage::SeaweedFS
+        } else {
+            panic!(eyre!("Unkown MediaStorage: {}", storage))
+        }
+    }
+}
+impl std::fmt::Display for MediaStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MediaStorage::FlatFiles => write!(f, "flatfiles"),
+            MediaStorage::Database => write!(f, "database"),
+            MediaStorage::SeaweedFS => write!(f, "seaweedfs"),
+        }
+    }
 }
 
-/// Read a json file
-///
-/// # Arguments
-///
-/// * `path` - The path to the file
-///
-/// # Example
-///
-/// ```
-/// use ena::config::*;
-/// let config: Config = read_json(config_path);
-/// ```
-pub fn read_json<T>(path: &str) -> T
-where T: serde::de::DeserializeOwned {
-    let file = std::fs::File::open(path).unwrap();
-    let reader = std::io::BufReader::new(file);
-    let res = serde_json::from_reader(reader)
-        .context(format!("\nPlease check your settings."))
-        .expect("Reading configuration");
-    res
-}
 
-/// Create the default headers for [`reqwest::Client`]
-///
-/// This is used to create one with a user agent.
-/// # Arguments
-///
-/// * `user_agent` - A specified user agent
-///
-/// # Example
-///
-/// ```
-/// use ena::config::*;
-/// let headers =
-///     default_headers("Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0");
-/// ```
-pub fn default_headers(
-    user_agent: &str
-) -> Result<reqwest::header::HeaderMap, reqwest::header::InvalidHeaderValue> {
-    let mut hm = reqwest::header::HeaderMap::with_capacity(2);
-    hm.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_str(user_agent)?);
-    Ok(hm)
+#[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
+pub struct DatabaseOpt {
+    /// Set database url
+    #[structopt(display_order(10), long = "db-url", env = "ENA_DATABASE_URL", hide_env_values = true, hide_default_value(true))]
+    pub url: Option<String>,
+
+    /// Set database engine
+    #[structopt(display_order(11), long, default_value("postgresql"), env = "ENA_DATABASE_ENGINE", hide_env_values = true, hide_default_value(true))]
+    pub engine: String,
+
+    /// Set database name
+    #[structopt(display_order(12), long, default_value("ena"), env = "ENA_DATABASE_NAME", hide_env_values = true, hide_default_value(true))]
+    #[serde(rename = "database")]
+    pub name: String,
+
+    /// Set database schema
+    #[structopt(display_order(13), long, default_value("public"), env = "ENA_DATABASE_SCHEMA", hide_env_values = true,  hide_default_value(true))]
+    pub schema: String,
+
+    /// Set database host
+    #[structopt(display_order(14), long, default_value("localhost"), env = "ENA_DATABASE_HOST", hide_env_values = true, hide_default_value(true))]
+    pub host: String,
+
+    /// Set database port
+    #[structopt(display_order(15), long, default_value("5432"), env = "ENA_DATABASE_PORT", hide_env_values = true,  hide_default_value(true))]
+    pub port: u16,
+
+    /// Set database user
+    #[structopt(display_order(16), long, default_value("postgres"), env = "ENA_DATABASE_USERNAME", hide_env_values = true, hide_default_value(true))]
+    pub username: String,
+
+    /// Set database password
+    #[structopt(display_order(17), long, default_value("zxc"), env = "ENA_DATABASE_PASSWORD", hide_env_values = true,  hide_default_value(true))]
+    pub password: String,
+
+    /// Set database charset
+    #[structopt(display_order(18), long, default_value("utf8"), env = "ENA_DATABASE_CHARSET", hide_env_values = true, hide_default_value(true))]
+    pub charset: String,
+
+    /// Set database charset
+    #[structopt(display_order(18), long, default_value("utf8"), env = "ENA_DATABASE_COLLATE", hide_env_values = true, hide_default_value(true))]
+    pub collate: String,
+}
+impl Default for DatabaseOpt {
+    fn default() -> Self {
+        Self {
+            url:      None, //Some("postgresql://postgres:zxc@localhost:5432/ena".into()),
+            engine:   "postgresql".into(),
+            name:     "ena".into(),
+            schema:   "public".into(),
+            host:     "localhost".into(),
+            port:     5432,
+            username: "postgres".into(),
+            password: "zxc".into(),
+            charset:  "utf8".into(),
+            collate:  "utf8".into(),
+        }
+    }
 }

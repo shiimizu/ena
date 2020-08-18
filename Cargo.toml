@@ -1,58 +1,68 @@
 [package]
-name = "ena"
-version = "0.7.0"
-authors = ["shiimizu <shiimizu@protonmail.com>"]
-edition = "2018"
+name = "asql"
+version = "0.8.0-dev"
 description = "An ultra-low resource imageboard archiver"
+authors = ["shiimizu <shiimizu@protonmail.com>"]
 repository = "https://github.com/shiimizu/ena"
+edition = "2018"
 license = "MIT"
-readme = "readme.md"
+readme = "README.md"
 keywords = ["4chan", "archiver", "scraper", "crawler"]
 categories = ["command-line-utilities"]
-build = "src/build.rs"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[[bin]]
-name = "ena"
-path = "src/main.rs"
-
-[lib]
-name = "ena"
-path = "src/lib.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [profile.release]
-lto = true
-codegen-units = 1
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations.
+
+[profile.dev.package.backtrace]
+opt-level = 3
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
-chrono = "0.4"
-pretty_env_logger = "0.4"
-log = "0.4"
-ctrlc = { version = "3.1", features = ["termination"] }
-anyhow = "1.0"
-sha2 = "0.9"
-enum-iterator = "0.6"
-percent-encoding = "2.1"
-once_cell = "1.4"
 
 # Async
-async-trait = "0.1"
 futures = "0.3"
-futures-util = "0.3"
 futures-intrusive = "0.3"
-tokio = { version = "0.2", default-features = false, features = ["rt-threaded", "macros", "time", "io-driver", "sync"] }
-reqwest = { version = "0.10", default-features = false, features = ["rustls-tls"] }
+async-trait = "0.1"
+smol = { git = "https://github.com/stjepang/smol", features = ["tokio02"] }
+reqwest = { version = "0.10", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli", "socks"] }
+async-std = { version = "1.6", default-features = false, features = ["std"] } # Literally only for RwLock
+# Database
 tokio-postgres = { version = "0.5", features = ["with-serde_json-1"] }
-mysql_async = "0.23"
-mysql_common = "0.22"
+postgres-types = { version = "0.1", features = [ "derive"] }
+mysql_async = { git = "https://github.com/blackbeam/mysql_async" }
 
-[build-dependencies]
-vergen = "3"
+# Configuration serialization/deserialization
+structopt = { version = "0.3", default-features = false }
+serde-diff = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.8"
+
+# Tools
+url = { version = "2", features = ["serde"] }
+fomat-macros = "0.3"
+color-eyre  = { git = "https://github.com/yaahc/color-eyre" }
+strum = "0.19"
+strum_macros = "0.19"
+itertools = "0.9"
+
+# Systems related
+once_cell = "1.4"
+num_cpus = "1"
+ctrlc = { version = "3", features = ["termination"] }
+# time = "0.2"
+
+# Text processing
+html-escape = "0.2"
+ammonia = "3.1"
+regex = "1"
+format-sql-query = "0.4"
+
+# Media
+md-5 = "0.9"
+percent-encoding = "2"
 
 [dev-dependencies]
 pretty_assertions = "0.6"

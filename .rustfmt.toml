@@ -18,7 +18,7 @@ normalize_doc_attributes=true
 overflow_delimited_expr=true
 reorder_impl_items=true
 struct_field_align_threshold=20
-trailing_comma="Never"
+trailing_comma="Vertical"
 use_field_init_shorthand=true
 
 # The "Default" setting has a heuristic which splits lines too aggresively.
@@ -27,8 +27,8 @@ use_field_init_shorthand=true
 #   * https://github.com/rust-lang/rustfmt/issues/3119
 #   * https://github.com/rust-lang/rustfmt/issues/3120
 use_small_heuristics = "Max"
+max_width=200
 
-version="Two"
 where_single_line=true
 
 #report_fixme="Always"
