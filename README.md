@@ -1,5 +1,7 @@
-# New
 <!--
+
+# New
+****
 [![Latest Version][latest-badge]][latest-link]
 [![License][license-badge]][license-url]
 [![Lines Of Code][tokei-loc-badge]][repo-url]
@@ -7,9 +9,10 @@
 [![Unsafe Forbidden][safety-badge]][safety-url]
 [![Documentation][doc-badge]][doc-url]
 [![rustc](https://img.shields.io/badge/rustc-1.41+-blue.svg)](https://blog.rust-lang.org/2020/03/12/Rust-1.42.html)
+
 <!--[![Matrix Chat][matrix-chat-badge]][matrix-chat-link]
 [![Discord Chat][discord-chat-badge]][discord-chat-link]
--->
+
 
 
 [repo-url]: https://github.com/shiimizu/ena
@@ -42,6 +45,8 @@
 * `cargo doc --lib --no-deps -j 4`
 * `cargo doc --bin asql --no-deps -j 4`
 * `cls; c r -q -j4 -- --asagi --engine mysql --name ena2 --schema ena2 --port 3306 --username root --password zxc --charset utf8mb4 --collate utf8mb4_unicode_ci --watch-boards -b b`
+
+-->
 
 # General
 - [x] TimeScale
@@ -103,18 +108,15 @@
 - [x] Config, DB_URL, default-rust->yaml->env->cli
 - [ ] modules bin lib workspaces, Module system, Lib in diff crate so ppl can actually use without pulling executor
 - [ ] Kuroba threads + other sites
-- [ ] Docs, donation button.. yuck
-- [ ] Move wiki to in-code docc
-- [ ] Inspiration:
-    - async-std
-    - structopt
+- [ ] Move wiki to in-code doc
 
+<!--
 Tests
 - [ ] [load test](https://github.com/tag1consulting/goose)
 - [ ] [http mock](https://github.com/LukeMathWalker/wiremock-rs)
 
-
 Ena-Server?
+
 
 # Media
 - [ ] Insert media in db (auto hash) or store on disk
@@ -125,3 +127,5 @@ Ena-Server?
 - [ ] list of dirs to check for media, first one is where it's attempted to be saved, then to others, if still err, make new dir and save there, if still err, drive probably has no space and output error
 - [ ] press ctrl-c again to cancel media fetching (requires to check for media in all combined threads regardless of if-modified, this is so you can ctrl c anytime + state save, check if need to dl, this happens all the time after getting threads.json, how efficient is this vs billions of rows?.. if you check it and it's already been found, dont check it again)
 - [ ] Quote all postgres identifiers
+
+-->
