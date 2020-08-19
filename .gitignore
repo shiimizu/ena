@@ -20,8 +20,9 @@
 assets*
 
 # config
-!config.example.yml
 config*
+!config.example.yml
+# !config.yml
 
 # utils
 build*

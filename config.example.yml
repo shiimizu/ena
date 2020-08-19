@@ -1,0 +1,43 @@
+site:         4chan
+strict:       false
+asagi_mode:   false
+user_agent:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0"
+media_dir:    assets/media
+api_url:      https://a.4cdn.org
+media_url:    https://i.4cdn.org
+database:
+  engine:       postgresql
+  database:     ena
+  schema:       public
+  host:         localhost
+  port:         5432
+  username:     postgres
+  password:     zxc
+  charset:      utf8
+  collate:      utf8
+timescaledb:
+  column:     time        #    e.g. time or no
+  every:      123456      # or e.g. "INTERVAL '2 weeks'" if `time`. See INTERVAL examples @ https://postgresql.org/docs/current/functions-datetime.html
+proxies:
+  - url:      ""
+    username: ""
+    password: ""
+board_settings:
+  retry_attempts:           3
+  interval_boards:          30000  # delay (in milliseconds) between fetching each board
+  interval_threads:         1000   # delay (in milliseconds) between fetching each thread
+  with_threads:             true
+  with_archives:            false
+  with_tail:                false
+  with_full_media:          false
+  with_thumbnails:          false
+  watch_boards:             false
+  watch_threads:            false
+boards:
+- board:                    a
+  with_full_media:          true
+  with_thumbnails:          true
+- board:                    po
+  retry_attempts:           5
+  with_full_media:          false
+  with_thumbnails:          true
