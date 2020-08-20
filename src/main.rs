@@ -43,27 +43,6 @@ use yotsuba::update_post_with_extra;
 #[path = "sql/sql.rs"]
 pub mod sql;
 
-// mysql://root:zxc@localhost:3306/ena2?charset=utf8mb4
-// postgresql://postgres:zxc@localhost:5432/ena?client_encoding=utf8
-
-#[async_trait]
-pub trait Archiver {
-    async fn run(&self) -> Result<()>;
-    async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()>;
-    async fn download_boards_index(&self) -> Result<()>;
-    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<()>;
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)>;
-    async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
-}
-
-async fn sleep(dur: Duration) {
-    Timer::new(dur).await;
-}
-
-fn exists<P: AsRef<std::path::Path>>(path: P) -> bool {
-    std::fs::metadata(path).is_ok()
-}
-
 static CTRLC: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static INIT: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
 
@@ -85,76 +64,119 @@ where D: sql::QueryExecutor
     }
 }
 
-async fn create_client(origin: &str, opt: &Opt) -> Result<reqwest::Client> {
-    // let mut headers = reqwest::header::HeaderMap::new();
-    // headers.insert("Connection", "keep-alive".parse().unwrap());
-    // headers.insert("Origin", origin.parse().unwrap());
-    // let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0";
-    // reqwest::Client::builder().default_headers(headers).user_agent(ua).use_rustls_tls().no_proxy().
-    // build()
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("Connection", "keep-alive".parse()?);
-    headers.insert("Origin", origin.parse()?);
-    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0";
-    let mut proxies_list = vec![];
-    // let pr = opt.proxies;
-    if let Some(proxies) = &opt.proxies {
-        for proxy in proxies {
-            // Test each proxy with retries
-            let proxy_url = &proxy.url;
-            if proxy_url.is_empty() {
-                continue;
-            }
-            let username = proxy.username.as_ref();
-            let password = proxy.password.as_ref();
-            let mut _proxy = reqwest::Proxy::https(proxy_url.as_str())?;
-            if username.is_some() && password.is_some() {
-                let user = username.unwrap();
-                let pass = password.unwrap();
-                if !user.is_empty() {
-                    _proxy = _proxy.basic_auth(user.as_str(), pass.as_str());
-                }
-            }
-            proxies_list.push(_proxy.clone());
-            for retry in 0..=3u8 {
-                let mut cb = reqwest::Client::builder().default_headers(headers.clone()).user_agent(ua).use_rustls_tls().gzip(true).brotli(true);
-                let mut cb = cb.proxy(_proxy.clone()).build()?;
-                pintln!("Testing proxy: "(proxy_url));
-                match cb.head("https://a.4cdn.org/po/catalog.json").send().await {
-                    Err(e) => epintln!("Error HEAD request: "(e)),
-                    Ok(resp) => {
-                        let status = resp.status();
-                        if status == StatusCode::OK {
-                            break;
-                        } else {
-                            if retry == 3 {
-                                epintln!("Proxy: " (proxy_url) " ["(status)"]");
-                                proxies_list.pop();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if proxies_list.len() > 0 {
-            let mut cb = reqwest::Client::builder().default_headers(headers.clone()).user_agent(ua).use_rustls_tls().gzip(true).brotli(true);
-            for proxy in proxies_list {
-                cb = cb.proxy(proxy);
-            }
-            let client = cb.build().map_err(|e| eyre!(e));
-            client
-        } else {
-            let client = reqwest::Client::builder().default_headers(headers.clone()).user_agent(ua).use_rustls_tls().gzip(true).brotli(true).no_proxy().build().map_err(|e| eyre!(e));
-            client
-        }
-    } else {
-        // same as above
-        let client = reqwest::Client::builder().default_headers(headers.clone()).user_agent(ua).use_rustls_tls().gzip(true).brotli(true).no_proxy().build().map_err(|e| eyre!(e));
-        client
+fn get_ctrlc() -> bool {
+    CTRLC.load(Ordering::SeqCst) >= 1
+}
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum ThreadType {
+    Threads,
+    Archive,
+}
+
+impl ThreadType {
+    fn is_threads(&self) -> bool {
+        matches!(self, ThreadType::Threads)
+    }
+
+    fn is_archive(&self) -> bool {
+        matches!(self, ThreadType::Archive)
+    }
+
+    fn as_str<'a>(&self) -> &'a str {
+        self.into()
     }
 }
 
-async fn test_main() -> Result<()> {
+impl From<&ThreadType> for &str {
+    fn from(t: &ThreadType) -> Self {
+        match t {
+            ThreadType::Threads => "threads",
+            ThreadType::Archive => "archive",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fomat_macros::wite!(f, (self.as_str()))
+    }
+}
+
+#[derive(PartialEq)]
+pub enum MediaType {
+    Full,
+    Thumbnail,
+}
+
+impl MediaType {
+    fn ext<'a>(&self) -> &'a str {
+        match self {
+            MediaType::Full => "",
+            MediaType::Thumbnail => "s.jpg",
+        }
+    }
+}
+
+pub type MediaDetails = (u64, u64, Option<String>, Option<Vec<u8>>, u64, String, String, Option<Vec<u8>>, Option<Vec<u8>>);
+// pub type MediaDetailsAsagi<'a> = (&'a str, u64, &'a str, &'a str);
+
+// From `hex-slice` crate
+pub struct HexSlice<'a, T: 'a>(&'a [T]);
+use core::fmt;
+// use core::fmt::Write;
+impl<'a, T: fmt::LowerHex> fmt::LowerHex for HexSlice<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let val = self.0;
+        for b in val {
+            fmt::LowerHex::fmt(b, f)?
+        }
+        Ok(())
+        // fmt_inner_hex(self.0, f, fmt::LowerHex::fmt)
+    }
+}
+
+fn fmt_inner_hex<T, F: Fn(&T, &mut fmt::Formatter) -> fmt::Result>(slice: &[T], f: &mut fmt::Formatter, fmt_fn: F) -> fmt::Result {
+    for val in slice.iter() {
+        fmt_fn(val, f)?;
+    }
+    Ok(())
+}
+
+async fn sleep(dur: Duration) {
+    Timer::new(dur).await;
+}
+
+fn exists<P: AsRef<std::path::Path>>(path: P) -> bool {
+    std::fs::metadata(path).is_ok()
+}
+
+fn main() -> Result<()> {
+    if std::env::var("RUST_BACKTRACE").is_err() {
+        std::env::set_var("RUST_BACKTRACE", "full");
+    }
+    color_eyre::install()?;
+    let num_threads = num_cpus::get().max(1);
+
+    // Run the thread-local and work-stealing executor on a thread pool.
+    for _ in 0..num_threads {
+        // A pending future is one that simply yields forever.
+        thread::spawn(|| smol::run(future::pending::<()>()));
+    }
+
+    let (sender, receiver) = oneshot::channel::<()>();
+    smol::block_on(async {
+        pintln!("Press CTRL+C to exit");
+        ctrlc::set_handler(move || {
+            CTRLC.fetch_add(1, Ordering::SeqCst);
+        })
+        .expect("Error setting Ctrl-C handler");
+        async_main().await.unwrap();
+        pintln!("Done!");
+        Ok(())
+    })
+}
+
+async fn async_main() -> Result<()> {
     let opt = config::get_opt()?;
 
     if opt.debug {
@@ -186,8 +208,14 @@ async fn test_main() -> Result<()> {
     }
 }
 
-fn get_ctrlc() -> bool {
-    CTRLC.load(Ordering::SeqCst) >= 1
+#[async_trait]
+pub trait Archiver {
+    async fn run(&self) -> Result<()>;
+    async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()>;
+    async fn download_boards_index(&self) -> Result<()>;
+    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<()>;
+    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)>;
+    async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
 }
 
 #[async_trait]
@@ -1293,153 +1321,4 @@ where D: sql::QueryExecutor + Sync + Send
         }
         Ok(())
     }
-}
-
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum ThreadType {
-    Threads,
-    Archive,
-}
-
-impl ThreadType {
-    fn is_threads(&self) -> bool {
-        matches!(self, ThreadType::Threads)
-    }
-
-    fn is_archive(&self) -> bool {
-        matches!(self, ThreadType::Archive)
-    }
-
-    fn as_str<'a>(&self) -> &'a str {
-        self.into()
-    }
-}
-
-impl From<&ThreadType> for &str {
-    fn from(t: &ThreadType) -> Self {
-        match t {
-            ThreadType::Threads => "threads",
-            ThreadType::Archive => "archive",
-        }
-    }
-}
-
-impl std::fmt::Display for ThreadType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fomat_macros::wite!(f, (self.as_str()))
-    }
-}
-
-#[derive(PartialEq)]
-pub enum MediaType {
-    Full,
-    Thumbnail,
-}
-
-impl MediaType {
-    fn ext<'a>(&self) -> &'a str {
-        match self {
-            MediaType::Full => "",
-            MediaType::Thumbnail => "s.jpg",
-        }
-    }
-}
-
-pub type MediaDetails = (u64, u64, Option<String>, Option<Vec<u8>>, u64, String, String, Option<Vec<u8>>, Option<Vec<u8>>);
-// pub type MediaDetailsAsagi<'a> = (&'a str, u64, &'a str, &'a str);
-
-// From `hex-slice` crate
-pub struct HexSlice<'a, T: 'a>(&'a [T]);
-use core::fmt;
-// use core::fmt::Write;
-impl<'a, T: fmt::LowerHex> fmt::LowerHex for HexSlice<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let val = self.0;
-        for b in val {
-            fmt::LowerHex::fmt(b, f)?
-        }
-        Ok(())
-        // fmt_inner_hex(self.0, f, fmt::LowerHex::fmt)
-    }
-}
-
-fn fmt_inner_hex<T, F: Fn(&T, &mut fmt::Formatter) -> fmt::Result>(slice: &[T], f: &mut fmt::Formatter, fmt_fn: F) -> fmt::Result {
-    for val in slice.iter() {
-        fmt_fn(val, f)?;
-    }
-    Ok(())
-}
-/*
-async fn async_main(mut receiver: oneshot::Receiver<()>, config: Opt) -> Result<()> {
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("Connection", "keep-alive".parse().unwrap());
-    headers.insert("Origin", "http://boards.4chan.org".parse().unwrap());
-    let ua = &config.user_agent;
-    let client = reqwest::Client::builder().default_headers(headers).user_agent(ua).use_rustls_tls().build()?;
-
-    // dl(&client, "https://i.4cdn.org/a/1593207178861s.jpg".into()).await.unwrap();
-    // let posts_json = get_json("https://a.4cdn.org/a/thread/204968711.json").await.unwrap();
-    // return Ok(());
-
-    let mut fut = FuturesUnordered::new();
-    let threads_json = get_json(&client, &fomat!((&config.api_url) "/a/threads.json")).await.unwrap();
-    let pages = threads_json.as_array().unwrap();
-    let media_threads = config.media_threads.max(5); // Choose the max between user and 5
-    pintln!("Media async threads: "(media_threads));
-    let mut p: u8 = 0;
-    for page in pages {
-        p += 1;
-        pintln!("Page #"(p));
-        let threads = page.get("threads").unwrap().as_array().unwrap();
-        let mut t: u8 = 0;
-        for thread in threads {
-            t += 1;
-            pintln!("Thread #"(t));
-            fut.push(process_thread(thread.to_owned(), &client, &config));
-            if matches!(&receiver.try_recv(), Ok(Some(()))) {
-                return Ok(());
-            }
-            // break;
-        }
-        // Finish off any images missing in the thread
-        while let Some(_) = fut.next().await {
-            if matches!(&receiver.try_recv(), Ok(Some(()))) {
-                return Ok(());
-            }
-        }
-
-        if matches!(&receiver.try_recv(), Ok(Some(()))) {
-            return Ok(());
-        }
-        // break;
-    }
-
-    Ok(())
-}
-*/
-
-fn main() -> Result<()> {
-    if std::env::var("RUST_BACKTRACE").is_err() {
-        std::env::set_var("RUST_BACKTRACE", "full");
-    }
-    color_eyre::install()?;
-    let num_threads = num_cpus::get().max(1);
-
-    // Run the thread-local and work-stealing executor on a thread pool.
-    for _ in 0..num_threads {
-        // A pending future is one that simply yields forever.
-        thread::spawn(|| smol::run(future::pending::<()>()));
-    }
-
-    let (sender, receiver) = oneshot::channel::<()>();
-    smol::block_on(async {
-        pintln!("Press CTRL+C to exit");
-        ctrlc::set_handler(move || {
-            CTRLC.fetch_add(1, Ordering::SeqCst);
-        })
-        .expect("Error setting Ctrl-C handler");
-        test_main().await.unwrap();
-        pintln!("Done!");
-        Ok(())
-    })
 }
