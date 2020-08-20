@@ -53,10 +53,10 @@ ena 0.8.0-dev
 An ultra-low resource imageboard archiver
 
 USAGE:
-    ena [FLAGS] [OPTIONS] --boards <boards>... --threads <threads>...
+    ena.exe [FLAGS] [OPTIONS] --boards <boards>... --threads <threads>...
 
 FLAGS:
-        --asagi              Enable Asagi mode to use Ena as an Asagi drop-in
+        --asagi              Use Ena as an Asagi drop-in
         --quickstart         Download everything in the beginning with no limits and then throttle
         --strict             Download sequentially rather than concurrently. This sets limit to 1
         --watch-boards       Enable archiving the boards
@@ -74,7 +74,7 @@ OPTIONS:
             Use config file or pass `-` to read from stdin [env: CONFIG]  [default: config.yml]
 
     -b, --boards <boards>...                     Get boards [example: a,b,c] [env: BOARDS]
-        --exclude-boards <boards-excluded>...
+    -e, --exclude-boards <boards-excluded>...
             Exclude boards (Only applies to boards from boardslist, not threadslist) [example: a,b,c] [env:
             BOARDS_EXCLUDED]
     -t, --threads <threads>...                   Get threads [env: THREADS]
@@ -85,8 +85,8 @@ OPTIONS:
             Delay (ms) between fetching each thread [env: INTERVAL_THREADS]  [default: 1000]
 
         --limit <limit>                          Limit concurrency [env: LIMIT]  [default: 151]
+        --limit-media <limit-media>              # of greenthreads to get media [env: LIMIT_MEDIA]  [default: 151]
     -m, --media-dir <media-dir>                  Media download location [env: MEDIA_DIR]
-    -j, --media-threads <media-threads>          # of greenthreads to get media [env: MEDIA_THREADS]  [default: 151]
         --retry-attempts <retry-attempts>         [env: RETRY_ATTEMPTS]  [default: 3]
     -A, --user-agent <user-agent>                Set user agent [env: USER_AGENT]
         --api-url <api-url>                      Set api endpoint url [env: API_URL]
@@ -158,9 +158,9 @@ OPTIONS:
 - [ ] Custom parse for timescaledb interval (just validate, either num or interval )
 - [x] limit / strict / media-threads
 - [ ] watch-boards: needs to exit a board, not the whole loop
-- [ ] watch-thread on an archive should end
-- [ ] percent_encode the filename to get the correct url for /f/
-- [ ] Media
+- [x] watch-thread on an archive should end
+- [x] percent_encode the filename to get the correct url for /f/
+- [x] Media
 - [x] Config, DB_URL, default-rust->yaml->env->cli
 - [ ] modules bin lib workspaces, Module system, Lib in diff crate so ppl can actually use without pulling executor
 - [ ] Kuroba threads + other sites

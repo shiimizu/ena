@@ -151,9 +151,14 @@ fn exists<P: AsRef<std::path::Path>>(path: P) -> bool {
 }
 
 fn main() -> Result<()> {
-    if std::env::var("RUST_BACKTRACE").is_err() {
-        std::env::set_var("RUST_BACKTRACE", "full");
+
+    // Backtraces are only useful in debug builds
+    if cfg!(debug_assertions) {
+        if std::env::var("RUST_BACKTRACE").is_err() {
+            std::env::set_var("RUST_BACKTRACE", "full");
+        }
     }
+    
     color_eyre::install()?;
     let num_threads = num_cpus::get().max(1);
 
@@ -165,7 +170,6 @@ fn main() -> Result<()> {
 
     let (sender, receiver) = oneshot::channel::<()>();
     smol::block_on(async {
-        pintln!("Press CTRL+C to exit");
         ctrlc::set_handler(move || {
             CTRLC.fetch_add(1, Ordering::SeqCst);
         })
@@ -184,6 +188,8 @@ async fn async_main() -> Result<()> {
         return Ok(());
     }
 
+    pintln!("Press CTRL+C to exit");
+    
     if !opt.asagi_mode {
         let (client, connection) = tokio_postgres::connect(opt.database.url.as_ref().unwrap(), tokio_postgres::NoTls).await.unwrap();
         Task::spawn(async move {
@@ -1228,7 +1234,9 @@ where D: sql::QueryExecutor + Sync + Send
                                         );
                                         if exists(&_path) {
                                             epintln!("download_media: `" 
-                                            (&_path)
+                                            {"{:02x}",HexSlice(md5.as_ref().unwrap().as_slice()) }
+                                            " | "
+                                            (&hash)
                                             "` exists! Downloaded for nothing.. Perhaps you didn't upload your hashes to the database beforehand?");
 
                                             // Try to upsert to database
@@ -1255,6 +1263,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                     break;
                                                 }
                                                 if get_ctrlc() {
+                                                    let _ = std::fs::remove_file(&tmp_path);
                                                     break;
                                                 }
                                                 sleep(Duration::from_millis(500)).await;
@@ -1293,6 +1302,9 @@ where D: sql::QueryExecutor + Sync + Send
                                                                             (no)
                                                                             "["(e)"]");
                                                                 success = false;
+                                                            } else {
+                                                                success = true;
+                                                                break;
                                                             }
                                                             if get_ctrlc() {
                                                                 break;
