@@ -4,7 +4,7 @@ use crate::{
     config::{Board, Opt},
     yotsuba,
 };
-use async_std::sync::RwLock;
+use async_rwlock::RwLock;
 use async_trait::async_trait;
 use color_eyre::eyre::{eyre, Result};
 use fomat_macros::{epintln, fomat, pintln};

@@ -1,8 +1,19 @@
 use color_eyre::eyre::{eyre, Result};
+use fomat_macros::fomat;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{
+    fs::create_dir_all,
+    io::Read,
+    path::PathBuf,
+    sync::atomic::{AtomicU32, Ordering},
+};
 use structopt::StructOpt;
 use url::Url;
+
+// Semaphores to limit concurrency
+pub(crate) static SEMAPHORE_AMOUNT: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
+pub(crate) static MEDIA_SEMAPHORE_AMOUNT: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
 
 // default_value must be closely tied to Default::default() for sanity.
 // Since structopt doesn't use Default::default...
@@ -131,15 +142,16 @@ mod tests {
 #[serde(default)]
 // CLI Options
 pub struct Opt {
-    // Activate debug mode
-    // #[structopt(short, long, hidden(true))]
-    // pub debug: bool,
+    /// Activate debug mode
+    #[structopt(short, long, hidden(true))]
+    pub debug: bool,
+
     /// Download sequentially rather than concurrently. This sets limit to 1.
     // TODO interleave between boards
     #[structopt(long, display_order(5))]
     pub strict: bool,
 
-    /// Enable Asagi mode to use Ena as an Asagi drop-in
+    /// Use Ena as an Asagi drop-in
     #[structopt(long("asagi"), display_order(5))]
     pub asagi_mode: bool,
 
@@ -161,7 +173,7 @@ pub struct Opt {
     pub boards: Vec<Board>,
 
     /// Exclude boards (Only applies to boards from boardslist, not threadslist) [example: a,b,c]
-    #[structopt(display_order(2), long("exclude-boards"),  multiple(true), required(false),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
+    #[structopt(display_order(2), short("e"), long("exclude-boards"),  multiple(true), required(false),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
     pub boards_excluded: Vec<Board>,
 
     /// Get threads
@@ -194,8 +206,8 @@ pub struct Opt {
     pub media_storage: MediaStorage,
 
     /// # of greenthreads to get media
-    #[structopt(display_order(5), short = "j", long, default_value = "151", env, hide_env_values = true)]
-    pub media_threads: u32,
+    #[structopt(display_order(5), long, default_value = "151", env, hide_env_values = true)]
+    pub limit_media: u32,
 
     /// Set user agent
     #[structopt(
@@ -233,6 +245,7 @@ pub struct Opt {
 impl Default for Opt {
     fn default() -> Self {
         Self {
+            debug:               false,
             strict:              false,
             asagi_mode:          false,
             quickstart:          false,
@@ -245,7 +258,7 @@ impl Default for Opt {
             limit:               151,
             media_dir:           "assets/media".into(),
             media_storage:       MediaStorage::FlatFiles,
-            media_threads:       151,
+            limit_media:         151,
             user_agent:          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0".into(),
             api_url:             "https://a.4cdn.org".parse().unwrap(),
             media_url:           "https://i.4cdn.org".parse().unwrap(),
@@ -391,4 +404,196 @@ impl Default for DatabaseOpt {
             collate:  "utf8".into(),
         }
     }
+}
+
+#[rustfmt::skip]
+pub fn get_opt() -> Result<Opt> {
+    let mut opt = Opt::from_args();
+    let default = Board::default(); // This has to call Self::default(), not &default_opt.board_settings (to prevent incorrect values)
+    for b in opt.boards.iter_mut() {
+        // Patch CLI opt boards to use its board_settings
+        if b.retry_attempts     == default.retry_attempts   { b.retry_attempts      = opt.board_settings.retry_attempts; }
+        if b.interval_boards    == default.interval_boards  { b.interval_boards     = opt.board_settings.interval_boards; } 
+        if b.interval_threads   == default.interval_threads { b.interval_threads    = opt.board_settings.interval_threads; }
+        if b.with_threads       == default.with_threads     { b.with_threads        = opt.board_settings.with_threads; }
+        if b.with_archives      == default.with_archives    { b.with_archives       = opt.board_settings.with_archives; }
+        if b.with_tail          == default.with_tail        { b.with_tail           = opt.board_settings.with_tail; }
+        if b.with_full_media    == default.with_full_media  { b.with_full_media     = opt.board_settings.with_full_media; }
+        if b.with_thumbnails    == default.with_thumbnails  { b.with_thumbnails     = opt.board_settings.with_thumbnails; }
+        if b.watch_boards       == default.watch_boards     { b.watch_boards        = opt.board_settings.watch_boards; }
+        if b.watch_threads      == default.watch_threads    { b.watch_threads       = opt.board_settings.watch_threads; }
+    }
+    let new_boards: Vec<Board> = opt.boards.iter().filter(|b| !opt.boards_excluded.iter().any(|be| b.board == be.board) ).map(|b|b.clone())
+                        .collect();
+    opt.boards = new_boards;
+    // https://stackoverflow.com/a/55150936
+    let mut opt = {
+        if let Some(config_file) = &opt.config.to_str() {
+            if config_file.is_empty() {
+                opt
+            } else {
+                let content = if config_file == &"-" {
+                    let mut content = String::new();
+                    std::io::stdin().lock().read_to_string(&mut content)?;
+                    content
+                } else {
+                    std::fs::read_to_string(config_file).unwrap_or_default()
+                };
+                let mut o = if !content.is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|eyre!(e)) } else { Ok(Opt::default()) };
+                match o {
+                    Err(e) => {
+                        return Err(e);
+                    },
+                    Ok(ref mut q) => {
+                        let default_opt = Opt::default();
+                        let default = Board::default(); // This has to call Self::default(), not &default_opt.board_settings (to prevent incorrect values)
+                        let default_database = DatabaseOpt::default();
+                        if opt.board_settings.retry_attempts    != default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
+                        if opt.board_settings.interval_boards   != default.interval_boards  { q.board_settings.interval_boards = opt.board_settings.interval_boards; }
+                        if opt.board_settings.interval_threads  != default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
+                        if opt.board_settings.with_threads      != default.with_threads     { q.board_settings.with_threads = opt.board_settings.with_threads; }
+                        if opt.board_settings.with_archives     != default.with_archives    { q.board_settings.with_archives = opt.board_settings.with_archives; }
+                        if opt.board_settings.with_tail         != default.with_tail        { q.board_settings.with_tail = opt.board_settings.with_tail; }
+                        if opt.board_settings.with_full_media   != default.with_full_media  { q.board_settings.with_full_media = opt.board_settings.with_full_media; }
+                        if opt.board_settings.with_thumbnails   != default.with_thumbnails  { q.board_settings.with_thumbnails = opt.board_settings.with_thumbnails; }
+                        if opt.board_settings.watch_boards      != default.watch_boards     { q.board_settings.watch_boards = opt.board_settings.watch_boards; }
+                        if opt.board_settings.watch_threads     != default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; }
+                        
+                        
+                        let boards_excluded_combined: Vec<Board>  = q.boards_excluded.iter().chain(opt.boards_excluded.iter()).map(|b| b.clone()).collect();
+                        let threads_combined: Vec<String> = q.threads.iter().chain(opt.threads.iter()).map(|s| s.clone()).collect();
+                        let boards_combined: Vec<Board> = q.boards.iter().chain(opt.boards.iter()).map(|b| b.clone())
+                        .filter(|b| !boards_excluded_combined.iter().any(|be| b.board == be.board) )
+                        .collect();
+                        q.boards_excluded = boards_excluded_combined;
+                        q.boards = boards_combined;
+                        q.threads = threads_combined;
+                        for  b in q.boards.iter_mut() {
+                            // Patch config.yaml to use its board_settings
+                            if b.retry_attempts     == default.retry_attempts   { b.retry_attempts = q.board_settings.retry_attempts; }
+                            if b.interval_boards    == default.interval_boards  { b.interval_boards = q.board_settings.interval_boards; } 
+                            if b.interval_threads   == default.interval_threads { b.interval_threads = q.board_settings.interval_threads; }
+                            if b.with_threads       == default.with_threads     { b.with_threads = q.board_settings.with_threads; }
+                            if b.with_archives      == default.with_archives    { b.with_archives =  q.board_settings.with_archives; }
+                            if b.with_tail          == default.with_tail        { b.with_tail = q.board_settings.with_tail; }
+                            if b.with_full_media    == default.with_full_media  { b.with_full_media = q.board_settings.with_full_media; }
+                            if b.with_thumbnails    == default.with_thumbnails  { b.with_thumbnails = q.board_settings.with_thumbnails; }
+                            if b.watch_boards       == default.watch_boards     { b.watch_boards = q.board_settings.watch_boards; }
+                            if b.watch_threads      == default.watch_threads    { b.watch_threads = q.board_settings.watch_threads; }
+                        }
+
+                        // Finally patch the yaml's board_settings with CLI opts
+                        if q.debug                  == default_opt.debug               { q.debug = opt.debug;                                    }
+                        if q.strict                 == default_opt.strict               { q.strict = opt.strict;                                    }
+                        if q.asagi_mode             == default_opt.asagi_mode           { q.asagi_mode = opt.asagi_mode;                            }
+                        if q.quickstart             == default_opt.quickstart           { q.quickstart = opt.quickstart;                            }
+                        if q.start_with_archives    == default_opt.start_with_archives  { q.start_with_archives = opt.start_with_archives;          }
+                        if q.config                 == default_opt.config               { q.config = opt.config;                                    }
+                        if q.site                   == default_opt.site                 { q.site =  opt.site;                                       }
+                        if q.limit                  == default_opt.limit                { q.limit = opt.limit;                                      }
+                        if q.media_dir              == default_opt.media_dir            { q.media_dir = opt.media_dir;                              }
+                        if q.media_storage          == default_opt.media_storage        { q.media_storage = opt.media_storage;                      }
+                        if q.limit_media          == default_opt.limit_media        { q.limit_media = opt.limit_media;                      }
+                        if q.user_agent             == default_opt.user_agent           { q.user_agent = opt.user_agent;                            }
+                        if q.api_url                == default_opt.api_url              { q.api_url = opt.api_url;                                  }
+                        if q.media_url              == default_opt.media_url            { q.media_url = opt.media_url;                              }
+                        
+                        // Database
+                        // TODO use database url?
+                        if q.database.url           == default_database.url             { q.database.url        = opt.database.url.clone();         }
+                        if q.database.engine        == default_database.engine          { q.database.engine     = opt.database.engine.clone();      }
+                        if q.database.name          == default_database.name            { q.database.name       = opt.database.name.clone();        }
+                        if q.database.schema        == default_database.schema          { q.database.schema     = opt.database.schema.clone();      }
+                        if q.database.port          == default_database.port            { q.database.port       = opt.database.port;                }
+                        if q.database.username      == default_database.username        { q.database.username   = opt.database.username.clone();    }
+                        if q.database.password      == default_database.password        { q.database.password   = opt.database.password.clone();    }
+                        if q.database.charset       == default_database.charset         { q.database.charset    = opt.database.charset.clone();     }
+                        if q.database.collate       == default_database.collate         { q.database.collate    = opt.database.collate;             }
+                        // Or you can do it this way: 
+                        // if opt.database.url           != default_database.url             { q.database.url        = opt.database.url.clone();         }
+                        // if opt.database.engine        != default_database.engine          { q.database.engine     = opt.database.engine.clone();      }
+                        // if opt.database.name          != default_database.name            { q.database.name       = opt.database.name.clone();        }
+                        // if opt.database.schema        != default_database.schema          { q.database.schema     = opt.database.schema.clone();      }
+                        // if opt.database.port          != default_database.port            { q.database.port       = opt.database.port;                }
+                        // if opt.database.username      != default_database.username        { q.database.username   = opt.database.username.clone();    }
+                        // if opt.database.password      != default_database.password        { q.database.password   = opt.database.password.clone();    }
+                        // if opt.database.charset       != default_database.charset         { q.database.charset    = opt.database.charset.clone();     }
+                        // if opt.database.collate       != default_database.collate         { q.database.collate    = opt.database.collate;             }
+                        
+
+                        if q.board_settings.retry_attempts      == default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
+                        if q.board_settings.interval_boards     == default.interval_boards  { q.board_settings.interval_boards  = opt.board_settings.interval_boards; };
+                        if q.board_settings.interval_threads    == default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
+                        if q.board_settings.with_threads        == default.with_threads     { q.board_settings.with_threads = opt.board_settings.with_threads; }
+                        if q.board_settings.with_archives       == default.with_archives    { q.board_settings.with_archives = opt.board_settings.with_archives; }
+                        if q.board_settings.with_tail           == default.with_tail        { q.board_settings.with_tail = opt.board_settings.with_tail; }
+                        if q.board_settings.with_full_media     == default.with_full_media  { q.board_settings.with_full_media = opt.board_settings.with_full_media; }
+                        if q.board_settings.with_thumbnails     == default.with_thumbnails  { q.board_settings.with_thumbnails  = opt.board_settings.with_thumbnails; }
+                        if q.board_settings.watch_boards        == default.watch_boards     { q.board_settings.watch_boards = opt.board_settings.watch_boards; }
+                        if q.board_settings.watch_threads       == default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; } 
+
+                        q.clone()
+                    }
+                   
+                }
+            }
+        } else {
+            opt
+        }
+    };
+    
+    
+    // TODO db_url is up-to-date, also update the individual fields (extract from db_url) 
+    if opt.database.url.is_none() {
+        let db_url = format!(
+            "{engine}://{user}:{password}@{host}:{port}/{database}",
+            // ?charset={charset}
+            engine = if &opt.database.engine.as_str().to_lowercase() != "postgresql" { "mysql" } else { &opt.database.engine },
+            user = &opt.database.username,
+            password = &opt.database.password,
+            host = &opt.database.host,
+            port = &opt.database.port,
+            database = &opt.database.name,
+            // charset = &opt.database.charset
+        );
+        opt.database.url = Some(db_url);
+    }
+    
+    if opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("mysql") {
+        return Err(eyre!("Asagi mode must be used with a MySQL database. Did you mean to disable --asagi ?"));
+    }
+    
+    if !opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("postgresql") {
+        return Err(eyre!("Ena must be used with a PostgreSQL database. Did you mean to enable --asagi ?"));
+    }
+    
+    // Patch concurrency limit
+    SEMAPHORE_AMOUNT.fetch_add(if opt.strict { 1 } else { opt.limit }, Ordering::SeqCst);
+    MEDIA_SEMAPHORE_AMOUNT.fetch_add(opt.limit_media, Ordering::SeqCst);
+    
+    // &opt.threads.dedup();
+
+    // Afterwards dedup boards
+    use itertools::Itertools;
+    opt.boards = (&opt.boards).into_iter().unique_by(|board| board.board.as_str()).map(|b| b.clone()).collect();
+
+    
+    // Trim media dir
+    opt.media_dir = opt.media_dir.to_str().map(|v| v.trim_matches('/').trim_matches('\\').into()).unwrap_or(opt.media_dir);
+    
+    // Media Directories
+    if !&opt.media_dir.is_dir() {
+        create_dir_all(&opt.media_dir)?;
+    }
+    
+    if !opt.asagi_mode {
+        let tmp = fomat!( (&opt.media_dir.display())"/tmp" );
+        if !std::path::Path::new(&tmp).is_dir() {
+            create_dir_all(&tmp)?;
+        }
+    } else {
+        opt.database.schema = opt.database.name.clone();
+    }
+
+    Ok(opt)
 }

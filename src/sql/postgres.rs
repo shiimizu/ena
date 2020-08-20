@@ -2,7 +2,7 @@
 // use futures::stream::StreamExt;
 use super::{Query, QueryExecutor};
 use crate::config::{Board, Opt};
-use async_std::sync::RwLock;
+use async_rwlock::RwLock;
 use async_trait::async_trait;
 use color_eyre::eyre::{eyre, Result};
 use futures::{future::Either, stream::Iter};

@@ -155,22 +155,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-std"
-version = "1.6.3"
+name = "async-rwlock"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c8da367da62b8ff2313c406c9ac091c1b31d67a165becdd2de380d846260f7"
+checksum = "9f157cc75cd2d15441e7e4b7080bc922b585800770db02349203d3012a86cd5f"
 dependencies = [
  "async-mutex",
- "crossbeam-utils",
- "futures-channel",
- "futures-core",
- "futures-io",
- "memchr",
- "once_cell",
- "pin-project-lite",
- "pin-utils",
- "slab",
- "wasm-bindgen-futures",
+ "event-listener",
 ]
 
 [[package]]
@@ -649,7 +640,7 @@ name = "ena"
 version = "0.8.0-dev"
 dependencies = [
  "ammonia",
- "async-std",
+ "async-rwlock",
  "async-trait",
  "base64",
  "color-eyre",

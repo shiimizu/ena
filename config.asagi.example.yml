@@ -1,5 +1,5 @@
 site:           4chan
-asagi_mode:     false
+asagi_mode:     true
 quickstart:     false
 strict:         true    # if true, sets limit to 1
 media_dir:      assets/media
@@ -9,15 +9,15 @@ api_url:        https://a.4cdn.org
 media_url:      https://i.4cdn.org
 user_agent:     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0"
 database:
-  url:          "postgresql://postgres:zxc@localhost:5432/ena" # Or just specify the db url. This takes precedence and updates the fields below.
-  engine:       postgresql
-  database:     ena
-  schema:       public
+  url:          "mysql://root:zxc@localhost:3306/asagi" # Or just specify the db url. This takes precedence and updates the fields below.
+  engine:       innodb
+  database:     asagi
   host:         localhost
-  port:         5432
-  username:     postgres
+  port:         3306
+  username:     root
   password:     zxc
-  charset:      utf8
+  charset:      utf8mb4
+  collate:      utf8mb4_unicode_ci
 timescaledb:
   column:       time        #    e.g. time or no
   every:        123456      # or e.g. "INTERVAL '2 weeks'" if `time`. See INTERVAL examples @ https://postgresql.org/docs/current/functions-datetime.html
