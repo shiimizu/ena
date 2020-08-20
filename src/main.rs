@@ -39,6 +39,7 @@ pub mod yotsuba;
 use config::*;
 use net::*;
 use yotsuba::update_post_with_extra;
+mod refresh;
 
 #[path = "sql/sql.rs"]
 pub mod sql;
@@ -323,11 +324,12 @@ where D: sql::QueryExecutor + Sync + Send
             }
             let mut startup = true;
             let hz = Duration::from_millis(250);
-            let mut interval = Duration::from_millis(30_000);
+            // let mut interval = Duration::from_millis(30_000);
             // cycle
-            loop {
-                let now = Instant::now();
+                
+                // Download the boards atleast once
                 for _board in _boards.iter_mut() {
+                    let now = Instant::now();
                     if startup {
                         let valid_board: bool = self.db_client.board_is_valid(_board.board.as_str()).await;
                         if !valid_board {
@@ -344,7 +346,6 @@ where D: sql::QueryExecutor + Sync + Send
                     // let mut _board = _board.clone();
                     _board.id = board_id;
 
-                    // When thread is None it's from list of boards
                     if _board.with_threads && !_board.with_archives {
                         self.download_board(&_board, ThreadType::Threads, startup).await.unwrap();
                     } else if !_board.with_threads && _board.with_archives {
@@ -354,27 +355,57 @@ where D: sql::QueryExecutor + Sync + Send
                         threads.unwrap();
                         archive.unwrap();
                     }
-                    if !_board.watch_boards || get_ctrlc() {
+                    if get_ctrlc() {
                         return Ok(());
                     }
-                    interval = Duration::from_millis(_board.interval_boards.into());
+                    if !_board.watch_boards || !_board.with_threads {
+                        continue;
+                    }
+                    let interval = Duration::from_millis(_board.interval_boards.into());
+                    // FIXME: elpased() silent panic
+                    while now.elapsed() < interval {
+                        if get_ctrlc() {
+                            break;
+                        }
+                        sleep(hz).await;
+                    }
+                    if get_ctrlc() {
+                        break;
+                    }
                 }
                 if startup {
                     startup = false;
                 }
-                // FIXME: elpased() silent panic
-                // Need to know if modified to be able to use ratelimt struct
-                // Duration::from_millis(ratelimit.next().unwrap_or(30) * 1000)
-                while now.elapsed() < interval {
+                // let m = refresh::refresh_rate(_board.interval_boards.into(), 5*1000, 10);
+                // Cycle
+                let mut cycle = _boards.iter().filter(|b| b.watch_boards && (b.with_threads || b.with_archives) ).cycle();
+                while let Some(_board) =  cycle.next() {
+                    let now = Instant::now();
+                    if _board.with_threads && !_board.with_archives {
+                        self.download_board(&_board, ThreadType::Threads, startup).await.unwrap();
+                    } else if !_board.with_threads && _board.with_archives {
+                        self.download_board(&_board, ThreadType::Archive, startup).await.unwrap();
+                    } else if _board.with_threads && _board.with_archives {
+                        let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
+                        threads.unwrap();
+                        archive.unwrap();
+                    }
+                    if get_ctrlc() {
+                        return Ok(());
+                    }
+                    let interval = Duration::from_millis(_board.interval_boards.into());
+                    // FIXME: elpased() silent panic
+                    while now.elapsed() < interval {
+                        if get_ctrlc() {
+                            break;
+                        }
+                        sleep(hz).await;
+                    }
                     if get_ctrlc() {
                         break;
                     }
-                    sleep(hz).await;
                 }
-                if get_ctrlc() {
-                    break;
-                }
-            }
+                
         } else if let Some((board_info, thread)) = thread_entry {
             if thread == 0 {
                 return Ok(());
@@ -592,7 +623,7 @@ where D: sql::QueryExecutor + Sync + Send
 
     async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)> {
         let sem = SEMAPHORE.acquire(1).await;
-        let mut with_tail = board_info.with_tail;
+        let mut with_tail = if thread_type.is_threads() { board_info.with_tail } else { false };
         let hz = Duration::from_millis(250);
         let mut interval = Duration::from_millis(board_info.interval_threads.into());
         let mut thread_type = thread_type;
@@ -1233,11 +1264,22 @@ where D: sql::QueryExecutor + Sync + Send
                                             if media_type == MediaType::Full { (&ext) } else { ".jpg" }
                                         );
                                         if exists(&_path) {
-                                            epintln!("download_media: `" 
-                                            {"{:02x}",HexSlice(md5.as_ref().unwrap().as_slice()) }
-                                            " | "
-                                            (&hash)
-                                            "` exists! Downloaded for nothing.. Perhaps you didn't upload your hashes to the database beforehand?");
+                                        
+                                            // FIXME Becuase this `download_media` method is run concurrently 
+                                            // If in the beginning there's no hashes, this error will always be reported
+                                            // because hashes are upserted at the end of this method, but they're all being ran
+                                            // at the same time, so there won't be any hashes to work with in the beginning.
+                                            // As the database get's populated with more hashes, this error will fade away.
+                                            // Another solutions is to run this method sequentially but then we lose the async http get
+                                            // for lots of media..
+                                            // Another solution is to use md5 on the filesystem since we're checking with md5 anyways.
+                                            // 
+                                            // Ignore error report for now.
+                                            // epintln!("download_media: `" 
+                                            // {"{:02x}",HexSlice(md5.as_ref().unwrap().as_slice()) }
+                                            // " | "
+                                            // (&_path)
+                                            // "` exists! Downloaded for nothing.. Perhaps you didn't upload your hashes to the database beforehand?");
 
                                             // Try to upsert to database
                                             let mut success = true;

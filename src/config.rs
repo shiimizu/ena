@@ -39,12 +39,12 @@ pub struct Board {
     #[structopt(display_order(5), long, default_value("1000"), env, hide_env_values = true)]
     pub interval_threads: u16,
 
-    /// Download live threads as well
+    /// Grab threads from threads.json
     // #[structopt(long, env, hide_env_values = true)]
     #[structopt(display_order(5), long)]
     pub with_threads: bool,
 
-    /// Download archived threads as well
+    /// Grab threads from archive.json
     // #[structopt(long, env, hide_env_values(true))]
     #[structopt(display_order(5), long)]
     pub with_archives: bool,
@@ -69,7 +69,7 @@ pub struct Board {
     #[structopt(display_order(5), long)]
     pub watch_boards: bool,
 
-    /// Enable archiving the live threads until it's deleted or archived
+    /// Enable archiving the live threads until deleted or archived (only applies to threadslist)
     // #[structopt(long, env, hide_env_values = true)]
     #[structopt(display_order(5), long)]
     pub watch_threads: bool,

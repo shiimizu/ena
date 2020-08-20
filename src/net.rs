@@ -61,8 +61,8 @@ pub async fn create_client(origin: &str, opt: &Opt) -> Result<reqwest::Client> {
         };
 
     if let Some(proxies) = &opt.proxies {
+        // Test each proxy with retries
         for proxy in proxies {
-            // Test each proxy with retries
             let proxy_url = &proxy.url;
             if proxy_url.is_empty() {
                 continue;
