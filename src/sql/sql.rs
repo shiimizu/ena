@@ -8,9 +8,11 @@ use crate::config::{Board, Opt};
 use async_trait::async_trait;
 use futures::{future::Either, stream::Iter};
 // use std::{collections::HashSet, fmt::Debug};
+use crate::ThreadType;
 use color_eyre::eyre::{eyre, Result};
 use std::fmt::Debug;
 use strum_macros::EnumIter;
+
 pub mod postgres;
 
 #[path = "mysql/mysql.rs"]
@@ -80,7 +82,7 @@ pub trait QueryExecutor {
     async fn board_upsert(&self, board: &str) -> Result<u64>;
     async fn board_table_exists(&self, board: &str, opt: &Opt) -> Option<String>;
     async fn board_get(&self, board: &str) -> Result<u16>;
-    async fn board_get_last_modified(&self, thread_type: &str, board_id: u16) -> Option<String>;
+    async fn board_get_last_modified(&self, thread_type: ThreadType, board_id: u16) -> Option<String>;
     async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
     async fn board_upsert_archive(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
 
@@ -91,7 +93,7 @@ pub trait QueryExecutor {
     async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64>;
     async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
     async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
-    async fn threads_get_combined(&self, thread_type: &str, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
+    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
     async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> bool;

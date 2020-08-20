@@ -2,7 +2,7 @@
 use super::{Query, QueryExecutor};
 use crate::{
     config::{Board, Opt},
-    yotsuba,
+    yotsuba, ThreadType,
 };
 use async_rwlock::RwLock;
 use async_trait::async_trait;
@@ -164,12 +164,12 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         res.map(|opt| opt.unwrap().get("id").unwrap())
     }
 
-    async fn board_get_last_modified(&self, thread_type: &str, board_id: u16) -> Option<String> {
+    async fn board_get_last_modified(&self, thread_type: ThreadType, board_id: u16) -> Option<String> {
         let mut conn = self.write().await;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardGetLastModified).unwrap();
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (thread_type, board_id)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (thread_type.as_str(), board_id)).await;
         res.ok().flatten().flatten()
     }
 
@@ -399,16 +399,16 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         }
     }
 
-    async fn threads_get_combined(&self, thread_type: &str, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
         let mut conn = self.write().await;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadsGetCombined).unwrap();
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (thread_type, board_id)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (thread_type.as_str(), board_id)).await;
         let res = res.ok().flatten().flatten();
         if let Some(res) = res {
             // If an entry exists in the database we can apply a diff
-            if thread_type == "threads" {
+            if thread_type.is_threads() {
                 let mut prev: Vec<Page> = serde_json::from_str(&res).unwrap();
                 let mut new: Vec<Page> = serde_json::from_value(json.clone()).unwrap();
                 let a: HashSet<_> = prev.into_iter().flat_map(|page| page.threads).collect();

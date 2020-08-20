@@ -1,7 +1,10 @@
 // use fomat_macros::fomat;
 // use futures::stream::StreamExt;
 use super::{Query, QueryExecutor};
-use crate::config::{Board, Opt};
+use crate::{
+    config::{Board, Opt},
+    ThreadType,
+};
 use async_rwlock::RwLock;
 use async_trait::async_trait;
 use color_eyre::eyre::{eyre, Result};
@@ -55,10 +58,10 @@ impl QueryExecutor for tokio_postgres::Client {
         res.map(|row| row.get("id")).map(|res: Option<i16>| res.map(|v| v as u16).unwrap())
     }
 
-    async fn board_get_last_modified(&self, thread_type: &str, board_id: u16) -> Option<String> {
+    async fn board_get_last_modified(&self, thread_type: ThreadType, board_id: u16) -> Option<String> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::BoardGetLastModified).unwrap();
-        self.query_one(statement, &[&thread_type, &(board_id as i16)]).await.ok().map(|row| row.get("last_modified")).flatten()
+        self.query_one(statement, &[&thread_type.as_str(), &(board_id as i16)]).await.ok().map(|row| row.get("last_modified")).flatten()
     }
 
     async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
@@ -133,11 +136,11 @@ impl QueryExecutor for tokio_postgres::Client {
         Either::Left(res)
     }
 
-    async fn threads_get_combined(&self, thread_type: &str, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadsGetCombined).unwrap();
         let b = &(board_id as i16);
-        let s = &thread_type;
+        let s = &thread_type.as_str();
         let params = vec![s as &(dyn ToSql + Sync), b as &(dyn ToSql + Sync), json as &(dyn ToSql + Sync)];
         let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
         Either::Left(res)

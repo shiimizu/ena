@@ -59,8 +59,8 @@ pub trait Archiver {
     async fn run(&self) -> Result<()>;
     async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()>;
     async fn download_boards_index(&self) -> Result<()>;
-    async fn download_board(&self, board_info: &Board, thread_type: &str, startup: bool) -> Result<()>;
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: &str) -> Result<()>;
+    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<()>;
+    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<ThreadType>;
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
 }
 /*
@@ -233,8 +233,8 @@ async fn process_thread(thread: serde_json::Value, client: &reqwest::Client, con
                         // TODO: Hashes don't match on disk! When downloading full media
                         // epintln!("Page #"(p)" Thread #"(t)" Hashes don't match on disk!: "[po]);
                         epintln!("Hashes don't match on disk!: "[po]);
-                        eprintln!("{:x?}", &md5_bytes[..]);
-                        eprintln!("{:x?}", &result[..]);
+                        erintln!({"{:x?}", &md5_bytes[..]});
+                        erintln!({"{:x?}", &result[..]});
                         fut.push(dl(&client, url, po, &config));
                     }
                 }
@@ -363,8 +363,7 @@ async fn test_main() -> Result<()> {
     let opt = config::get_opt()?;
 
     if opt.debug {
-        println!("{}", serde_json::to_string_pretty(&opt).unwrap());
-        // println!("{:#?}", opt);
+        pintln!((serde_json::to_string_pretty(&opt).unwrap()));
         return Ok(());
     }
 
@@ -372,7 +371,7 @@ async fn test_main() -> Result<()> {
         let (client, connection) = tokio_postgres::connect(opt.database.url.as_ref().unwrap(), tokio_postgres::NoTls).await.unwrap();
         Task::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
+                epintln!("connection error: "(e));
             }
         })
         .detach();
@@ -392,8 +391,8 @@ async fn test_main() -> Result<()> {
     }
 }
 
-fn get_ctrlc() -> u8 {
-    CTRLC.load(Ordering::SeqCst)
+fn get_ctrlc() -> bool {
+    CTRLC.load(Ordering::SeqCst) >= 1
 }
 
 #[async_trait]
@@ -481,7 +480,7 @@ where D: sql::QueryExecutor + Sync + Send
                     break;
                 }
                 Err(e) => {
-                    eprintln!("download_boards_index: {}", e);
+                    epintln!("download_boards_index: "(e));
                 }
             }
             sleep(Duration::from_secs(1)).await;
@@ -520,15 +519,15 @@ where D: sql::QueryExecutor + Sync + Send
 
                     // When thread is None it's from list of boards
                     if _board.with_threads && !_board.with_archives {
-                        self.download_board(&_board, "threads", startup).await.unwrap();
+                        self.download_board(&_board, ThreadType::Threads, startup).await.unwrap();
                     } else if !_board.with_threads && _board.with_archives {
-                        self.download_board(&_board, "archive", startup).await.unwrap();
+                        self.download_board(&_board, ThreadType::Archive, startup).await.unwrap();
                     } else if _board.with_threads && _board.with_archives {
-                        let (threads, archive) = futures::join!(self.download_board(&_board, "threads", startup), self.download_board(&_board, "archive", startup));
+                        let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
                         threads.unwrap();
                         archive.unwrap();
                     }
-                    if !_board.watch_boards || get_ctrlc() >= 1 {
+                    if !_board.watch_boards || get_ctrlc() {
                         return Ok(());
                     }
                     interval = Duration::from_millis(_board.interval_boards.into());
@@ -540,12 +539,12 @@ where D: sql::QueryExecutor + Sync + Send
                 // Need to know if modified to be able to use ratelimt struct
                 // Duration::from_millis(ratelimit.next().unwrap_or(30) * 1000)
                 while now.elapsed() < interval {
-                    if get_ctrlc() >= 1 {
+                    if get_ctrlc() {
                         break;
                     }
                     sleep(hz).await;
                 }
-                if get_ctrlc() >= 1 {
+                if get_ctrlc() {
                     break;
                 }
             }
@@ -585,19 +584,18 @@ where D: sql::QueryExecutor + Sync + Send
                 // with_threads or with_archives don't apply here, since going here implies you want the
                 // thread/archive
                 // FIXME on delted/archived, need to leave the loop
-                self.download_thread(&_board, thread, "threads").await.unwrap();
-                println!("Done fetching _board.watch_threads: {}", _board.watch_threads);
-                if !_board.watch_threads || get_ctrlc() >= 1 {
+                self.download_thread(&_board, thread, ThreadType::Threads).await.unwrap();
+                if !_board.watch_threads || get_ctrlc() {
                     break;
                 }
                 // FIXME: elpased() silent panic
                 while now.elapsed() < interval {
-                    if get_ctrlc() >= 1 {
+                    if get_ctrlc() {
                         break;
                     }
                     sleep(hz).await;
                 }
-                if get_ctrlc() >= 1 {
+                if get_ctrlc() {
                     break;
                 }
             }
@@ -607,7 +605,7 @@ where D: sql::QueryExecutor + Sync + Send
         Ok(())
     }
 
-    async fn download_board(&self, board_info: &Board, thread_type: &str, startup: bool) -> Result<()> {
+    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<()> {
         let fun_name = "download_board";
         if startup && self.opt.asagi_mode {
             // The group of statments for just `Boards` was done in the beginning, so this can be called
@@ -618,7 +616,7 @@ where D: sql::QueryExecutor + Sync + Send
             self.db_client.init_statements(board_info.id, &board_info.board).await;
         }
         // Board has to take all permits
-        if get_ctrlc() >= 1 {
+        if get_ctrlc() {
             return Ok(());
         }
         if !startup {
@@ -626,11 +624,11 @@ where D: sql::QueryExecutor + Sync + Send
         }
         let last_modified = self.db_client.board_get_last_modified(thread_type, board_info.id).await;
         let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
-        if get_ctrlc() >= 1 {
+        if get_ctrlc() {
             return Ok(());
         }
         for retry in 0..=board_info.retry_attempts {
-            if get_ctrlc() >= 1 {
+            if get_ctrlc() {
                 break;
             }
             if retry != 0 {
@@ -656,10 +654,10 @@ where D: sql::QueryExecutor + Sync + Send
                             let either = if startup {
                                 self.db_client.threads_get_combined(thread_type, board_info.id, &body_json).await
                             } else {
-                                if thread_type == "threads" {
+                                if thread_type.is_threads() {
                                     self.db_client.threads_get_modified(board_info.id, &body_json).await
                                 } else {
-                                    self.db_client.threads_get_combined("archive", board_info.id, &body_json).await
+                                    self.db_client.threads_get_combined(ThreadType::Archive, board_info.id, &body_json).await
                                 }
                             };
                             // TODO mysql or postgres
@@ -714,14 +712,14 @@ where D: sql::QueryExecutor + Sync + Send
                                 },
                             }
 
-                            if get_ctrlc() >= 1 {
+                            if get_ctrlc() {
                                 break;
                             }
 
                             // Update threads/archive cache at the end
-                            if thread_type == "threads" {
+                            if thread_type.is_threads() {
                                 self.db_client.board_upsert_threads(board_info.id, &board_info.board, &body_json, &lm).await.unwrap();
-                            } else if thread_type == "archive" {
+                            } else if thread_type.is_archive() {
                                 self.db_client.board_upsert_archive(board_info.id, &board_info.board, &body_json, &lm).await.unwrap();
                             }
                             break; // exit the retry loop
@@ -767,17 +765,19 @@ where D: sql::QueryExecutor + Sync + Send
         Ok(())
     }
 
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: &str) -> Result<()> {
+    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<ThreadType> {
         let sem = SEMAPHORE.acquire(1).await;
-        // One giant loop so we can re-execute this function (if we find out tail-json is nonexistent)
-        // without resorting to recursion which generates unintended behaviours with the semaphore.
-        // We break at the end so it's OK.
         let mut with_tail = board_info.with_tail;
         let hz = Duration::from_millis(250);
         let mut interval = Duration::from_millis(board_info.interval_threads.into());
+        let mut thread_type = thread_type;
+
+        // One giant loop so we can re-execute this function (if we find out tail-json is nonexistent)
+        // without resorting to recursion which generates unintended behaviours with the semaphore.
+        // We break at the end so it's OK.
         'outer: loop {
-            if get_ctrlc() >= 1 {
-                return Ok(());
+            if get_ctrlc() {
+                return Ok(thread_type);
             }
             // TODO: OR media not complete (missing media)
             let last_modified = self.db_client.thread_get_last_modified(board_info.id, thread).await;
@@ -792,17 +792,28 @@ where D: sql::QueryExecutor + Sync + Send
                 }
                 match resp {
                     Ok((status, lm, body)) => {
+                        if body.len() > 0 {
+                            let j = serde_json::from_slice::<serde_json::Value>(body.as_slice());
+                            if let Ok(thread_json) = j {
+                                let op = thread_json.get("posts").and_then(|v| v.get(0));
+                                let archived = op.and_then(|v| v.get("archived")).and_then(|v| v.as_u64()).map_or_else(|| false, |v| v == 1);
+                                let archived_on = op.and_then(|v| v.get("archived")).and_then(|v| v.as_u64());
+                                if archived || archived_on.is_some() {
+                                    thread_type = ThreadType::Archive;
+                                }
+                            }
+                        }
                         match status {
                             StatusCode::OK => {
                                 // Going here (StatusCode::OK) means thread was modified
                                 // DELAY
                                 while now.elapsed() < interval {
-                                    if get_ctrlc() >= 1 {
+                                    if get_ctrlc() {
                                         break;
                                     }
                                     sleep(hz).await;
                                 }
-                                if get_ctrlc() >= 1 {
+                                if get_ctrlc() {
                                     break;
                                 }
 
@@ -829,24 +840,16 @@ where D: sql::QueryExecutor + Sync + Send
 
                                             // If no Row returned, download thread normally
                                             if !query {
-                                                // let mut _board_info = board_info.clone();
-                                                // _board_info.with_tail = false;
                                                 with_tail = false;
-                                                // println!("no rows reutned. woth tail. drop(sem)");
                                                 continue 'outer;
-                                                // return self.download_thread(&_board_info, thread,
-                                                // thread_type).await;
                                             }
 
-                                            // Pop tail_id, tail_size
-                                            // Insert extra
-                                            // thread_json["posts"].as_array_mut().unwrap().remove(0);
                                             // Don't pop OP post (which has no time). It will be filtered upon inside `thread_upsert`.
                                             update_post_with_extra(&mut thread_json);
                                         }
 
-                                        if get_ctrlc() >= 1 {
-                                            return Ok(());
+                                        if get_ctrlc() {
+                                            return Ok(thread_type);
                                         }
 
                                         // TODO: Download media only if we don't already have it
@@ -879,7 +882,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                 if let Some(mut rows) = rows {
                                                     // TODO get row, not u64
                                                     while let Some(no) = rows.next().await {
-                                                        println!("download_thread: ({}) /{}/{}#{}\t[DELETED]", thread_type, &board_info.board, thread, no)
+                                                        pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)"#"(no)"\t[DELETED]");
                                                     }
                                                 }
                                             }
@@ -891,7 +894,9 @@ where D: sql::QueryExecutor + Sync + Send
                                                         let resto: Option<i64> = row.get("resto");
                                                         if let Some(no) = no {
                                                             if let Some(resto) = resto {
-                                                                println!("download_thread: ({}) /{}/{}#{}\t[DELETED]", thread_type, &board_info.board, if resto == 0 { no } else { resto }, no)
+                                                                pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"
+                                                                if resto == 0 { (no) } else { (resto) }
+                                                                "#"(no)"\t[DELETED]");
                                                             }
                                                         }
                                                     }
@@ -947,7 +952,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                             res.unwrap();
                                                         }
                                                     }
-                                                    if get_ctrlc() >= 1 {
+                                                    if get_ctrlc() {
                                                         break;
                                                     }
                                                     if board_info.with_full_media {
@@ -1013,8 +1018,8 @@ where D: sql::QueryExecutor + Sync + Send
                                                                     }
                                                                 }
 
-                                                                if get_ctrlc() >= 1 {
-                                                                    return Ok(());
+                                                                if get_ctrlc() {
+                                                                    return Ok(thread_type);
                                                                 }
 
                                                                 // Downlaod full media
@@ -1045,20 +1050,16 @@ where D: sql::QueryExecutor + Sync + Send
                                         break; // exit the retry loop
                                     }
                                     Err(e) => {
-                                        eprintln!("download_thread: ({}) /{}/{}{} {} {:?}", thread_type, board_info.board, thread, if with_tail { "-tail" } else { "" }, e, &last_modified);
+                                        epintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
+                                        if with_tail { "-tail " } else { " " }
+                                        "["(e)"] " [&last_modified]);
                                     }
                                 }
                             }
-
                             StatusCode::NOT_FOUND => {
                                 if with_tail {
-                                    // let mut _board_info = board_info.clone();
                                     with_tail = false;
                                     continue 'outer;
-                                    // println!("StatusCode::NOT_FOUND drop(sem)");
-                                    // drop(sem);
-                                    // return self.download_thread(&_board_info, thread,
-                                    // thread_type).await;
                                 }
                                 let either = self.db_client.thread_update_deleted(board_info.id, thread).await;
                                 let tail = if with_tail { "-tail" } else { "" };
@@ -1066,13 +1067,8 @@ where D: sql::QueryExecutor + Sync + Send
                                     Either::Right(rows) =>
                                         if let Some(mut rows) = rows {
                                             while let Some(no) = rows.next().await {
-                                                println!(
-                                                    "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [DELETED]",
-                                                    thread_type = thread_type,
-                                                    board = &board_info.board,
-                                                    thread = no,
-                                                    tail = tail,
-                                                    status = status
+                                                pintln!(
+                                                    "download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]"
                                                 );
                                             }
                                         },
@@ -1085,48 +1081,26 @@ where D: sql::QueryExecutor + Sync + Send
                                                     Ok(row) => {
                                                         let no: Option<i64> = row.get("no");
                                                         if let Some(no) = no {
-                                                            println!(
-                                                                "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [DELETED]",
-                                                                thread_type = thread_type,
-                                                                board = &board_info.board,
-                                                                thread = no,
-                                                                tail = tail,
-                                                                status = status
+                                                            pintln!(
+                                                                "download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]"
                                                             );
                                                         } else {
-                                                            eprintln!(
-                                                                "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [`no` is empty]",
-                                                                thread_type = thread_type,
-                                                                board = &board_info.board,
-                                                                thread = thread,
-                                                                tail = tail,
-                                                                status = status
+                                                            epintln!(
+                                                                "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)(tail)"\t["(status)"] [`no` is empty]"
                                                             );
                                                         }
                                                     }
                                                     Err(e) => {
-                                                        eprintln!(
-                                                            "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted] [{err}]",
-                                                            thread_type = thread_type,
-                                                            board = &board_info.board,
-                                                            thread = thread,
-                                                            tail = tail,
-                                                            status = &status,
-                                                            err = e
+                                                        epintln!(
+                                                            "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]"
                                                         );
                                                     }
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!(
-                                                "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted][{err}]",
-                                                thread_type = thread_type,
-                                                board = &board_info.board,
-                                                thread = thread,
-                                                tail = tail,
-                                                status = &status,
-                                                err = e
+                                            epintln!(
+                                                "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]" "["(e)"]"
                                             );
                                         }
                                     },
@@ -1139,22 +1113,30 @@ where D: sql::QueryExecutor + Sync + Send
                                 break;
                             }
                             _ => {
-                                eprintln!("download_thread: /{}/{}{} [{}]", board_info.board, thread, if with_tail { "-tail" } else { "" }, status);
+                                epintln!(
+                                    "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
+                                    if with_tail { "-tail" } else { "" }
+                                    "\t["(status)"]"
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("download_thread: /{}/{}{}\n{}", board_info.board, thread, if with_tail { "-tail" } else { "" }, e);
+                        epintln!(
+                            "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
+                            if with_tail { "-tail" } else { "" }
+                            "\t["(e)"]"
+                        );
                     }
                 }
             }
             break;
         }
-        Ok(())
+        Ok(thread_type)
     }
 
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()> {
-        if get_ctrlc() >= 1 {
+        if get_ctrlc() {
             return Ok(());
         }
 
@@ -1282,11 +1264,11 @@ where D: sql::QueryExecutor + Sync + Send
 
         // Download the file
         if let Some(_url) = url {
-            if get_ctrlc() >= 1 {
+            if get_ctrlc() {
                 return Ok(());
             }
             let sem = MEDIA_SEMAPHORE.acquire(1).await;
-            if get_ctrlc() >= 1 {
+            if get_ctrlc() {
                 return Ok(());
             }
             for retry in 0..=board_info.retry_attempts {
@@ -1311,7 +1293,7 @@ where D: sql::QueryExecutor + Sync + Send
                                 //     "#" (no)
                                 //     );
                                 // Going here means that we don't have the file
-                                if get_ctrlc() >= 1 {
+                                if get_ctrlc() {
                                     break;
                                 }
                                 if self.opt.asagi_mode {
@@ -1328,7 +1310,7 @@ where D: sql::QueryExecutor + Sync + Send
                                         let mut stream = resp.bytes_stream();
                                         let mut hasher = Md5::new();
                                         while let Some(item) = stream.next().await {
-                                            if get_ctrlc() >= 1 {
+                                            if get_ctrlc() {
                                                 writer.flush().await.unwrap();
                                                 writer.close().await.unwrap();
                                                 let _ = std::fs::remove_file(&file_path);
@@ -1379,7 +1361,7 @@ where D: sql::QueryExecutor + Sync + Send
                                     let mut hasher = Md5::new();
                                     let mut hasher_sha256 = sha2::Sha256::new();
                                     while let Some(item) = stream.next().await {
-                                        if get_ctrlc() >= 1 {
+                                        if get_ctrlc() {
                                             writer.flush().await.unwrap();
                                             writer.close().await.unwrap();
                                             let _ = std::fs::remove_file(&tmp_path);
@@ -1454,7 +1436,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                     success = true;
                                                     break;
                                                 }
-                                                if get_ctrlc() >= 1 {
+                                                if get_ctrlc() {
                                                     break;
                                                 }
                                                 sleep(Duration::from_millis(500)).await;
@@ -1494,7 +1476,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                                             "["(e)"]");
                                                                 success = false;
                                                             }
-                                                            if get_ctrlc() >= 1 {
+                                                            if get_ctrlc() {
                                                                 break;
                                                             }
                                                             sleep(Duration::from_millis(500)).await;
@@ -1520,6 +1502,41 @@ where D: sql::QueryExecutor + Sync + Send
             epintln!("download_media: No URL was found! This shouldn't happen!")
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum ThreadType {
+    Threads,
+    Archive,
+}
+
+impl ThreadType {
+    fn is_threads(&self) -> bool {
+        matches!(self, ThreadType::Threads)
+    }
+
+    fn is_archive(&self) -> bool {
+        matches!(self, ThreadType::Archive)
+    }
+
+    fn as_str<'a>(&self) -> &'a str {
+        self.into()
+    }
+}
+
+impl From<&ThreadType> for &str {
+    fn from(t: &ThreadType) -> Self {
+        match t {
+            ThreadType::Threads => "threads",
+            ThreadType::Archive => "archive",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fomat_macros::wite!(f, (self.as_str()))
     }
 }
 
@@ -1626,7 +1643,7 @@ fn main() -> Result<()> {
 
     let (sender, receiver) = oneshot::channel::<()>();
     smol::block_on(async {
-        println!("Press CTRL+C to exit");
+        pintln!("Press CTRL+C to exit");
         ctrlc::set_handler(move || {
             CTRLC.fetch_add(1, Ordering::SeqCst);
         })
