@@ -2,9 +2,9 @@ site:           4chan
 asagi_mode:     true
 quickstart:     false
 strict:         true    # if true, sets limit to 1
-media_dir:      assets/media
 limit:          151
 limit_media:    151
+media_dir:      assets/media
 api_url:        https://a.4cdn.org
 media_url:      https://i.4cdn.org
 user_agent:     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0"

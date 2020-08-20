@@ -70,24 +70,16 @@ FLAGS:
     -V, --version            Prints version information
 
 OPTIONS:
-    -c, --config <config>
-            Use config file or pass `-` to read from stdin [env: CONFIG]  [default: config.yml]
-
+    -c, --config <config>                        Config file or `-` for stdin [env: CONFIG]  [default: config.yml]
     -b, --boards <boards>...                     Get boards [example: a,b,c] [env: BOARDS]
-    -e, --exclude-boards <boards-excluded>...
-            Exclude boards (Only applies to boards from boardslist, not threadslist) [example: a,b,c] [env:
-            BOARDS_EXCLUDED]
+    -e, --exclude-boards <boards-excluded>...    Exclude boards [example: a,b,c] [env: BOARDS_EXCLUDED]
     -t, --threads <threads>...                   Get threads [env: THREADS]
-        --interval-boards <interval-boards>
-            Delay (ms) between fetching each board [env: INTERVAL_BOARDS]  [default: 30000]
-
-        --interval-threads <interval-threads>
-            Delay (ms) between fetching each thread [env: INTERVAL_THREADS]  [default: 1000]
-
-        --limit <limit>                          Limit concurrency [env: LIMIT]  [default: 151]
-        --limit-media <limit-media>              # of greenthreads to get media [env: LIMIT_MEDIA]  [default: 151]
+        --interval-boards <interval-boards>      Delay (ms) between each board [env: INTERVAL_BOARDS]  [default: 30000]
+        --interval-threads <interval-threads>    Delay (ms) between each thread [env: INTERVAL_THREADS]  [default: 1000]
+        --limit <limit>                          Limit concurrency getting threads [env: LIMIT]  [default: 151]
+        --limit-media <limit-media>              Limit concurrency getting media [env: LIMIT_MEDIA]  [default: 151]
     -m, --media-dir <media-dir>                  Media download location [env: MEDIA_DIR]
-        --retry-attempts <retry-attempts>         [env: RETRY_ATTEMPTS]  [default: 3]
+        --retry-attempts <retry-attempts>        Retry number of HTTP GET requests [env: RETRY_ATTEMPTS]  [default: 3]
     -A, --user-agent <user-agent>                Set user agent [env: USER_AGENT]
         --api-url <api-url>                      Set api endpoint url [env: API_URL]
         --media-url <media-url>                  Set media endpoint url [env: MEDIA_URL]

@@ -27,14 +27,15 @@ pub struct Board {
     pub board: String,
 
     // #[structopt(long, default_value, env, hide_env_values = true)]
+    /// Retry number of HTTP GET requests
     #[structopt(display_order(5), long, default_value("3"), env, hide_env_values = true)]
     pub retry_attempts: u8,
 
-    /// Delay (ms) between fetching each board
+    /// Delay (ms) between each board
     #[structopt(display_order(5), long, default_value("30000"), env, hide_env_values = true)]
     pub interval_boards: u16,
 
-    /// Delay (ms) between fetching each thread
+    /// Delay (ms) between each thread
     #[structopt(display_order(5), long, default_value("1000"), env, hide_env_values = true)]
     pub interval_threads: u16,
 
@@ -147,7 +148,6 @@ pub struct Opt {
     pub debug: bool,
 
     /// Download sequentially rather than concurrently. This sets limit to 1.
-    // TODO interleave between boards
     #[structopt(long, display_order(5))]
     pub strict: bool,
 
@@ -164,7 +164,7 @@ pub struct Opt {
     #[structopt(skip)]
     pub start_with_archives: bool,
 
-    /// Use config file or pass `-` to read from stdin
+    /// Config file or `-` for stdin
     #[structopt(display_order(1), short, long, parse(from_os_str), default_value = "config.yml", env, hide_env_values = true)]
     pub config: PathBuf,
 
@@ -172,7 +172,9 @@ pub struct Opt {
     #[structopt(display_order(2), short, long,  multiple(true), required_unless("config"),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
     pub boards: Vec<Board>,
 
-    /// Exclude boards (Only applies to boards from boardslist, not threadslist) [example: a,b,c]
+    /// Exclude boards [example: a,b,c]  
+    /// 
+    /// (Only applies to boards from boardslist, not threadslist)
     #[structopt(display_order(2), short("e"), long("exclude-boards"),  multiple(true), required(false),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
     pub boards_excluded: Vec<Board>,
 
@@ -189,7 +191,7 @@ pub struct Opt {
     #[structopt(hidden(true), display_order(4), short, long, default_value = "4chan", env)]
     pub site: String,
 
-    /// Limit concurrency
+    /// Limit concurrency getting threads
     #[structopt(display_order(5), long, default_value = "151", env, hide_env_values = true)]
     pub limit: u32,
 
@@ -205,7 +207,7 @@ pub struct Opt {
     #[structopt(skip)]
     pub media_storage: MediaStorage,
 
-    /// # of greenthreads to get media
+    /// Limit concurrency getting media
     #[structopt(display_order(5), long, default_value = "151", env, hide_env_values = true)]
     pub limit_media: u32,
 
