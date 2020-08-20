@@ -681,13 +681,14 @@ where D: sql::QueryExecutor + Sync + Send
 
     async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()> {
         if let Some(_boards) = boards {
+            if _boards.len() == 0 {
+                return Ok(());
+            }
             let mut startup = true;
+            let hz = Duration::from_millis(250);
+            let mut interval = Duration::from_millis(30_000);
             // cycle
             loop {
-                let hz = Duration::from_millis(250);
-                let mut interval = Duration::from_millis(30_000); // this is temporary, it's updated at the end of the for loop
-                                                                  // let mut ratelimit_orig = sql::refresh_rate(30, 5, 10);
-                                                                  // let mut ratelimit = ratelimit_orig.clone();
                 let now = Instant::now();
                 for _board in _boards.iter() {
                     if startup {
@@ -739,8 +740,6 @@ where D: sql::QueryExecutor + Sync + Send
                 }
             }
         } else if let Some((board_info, thread)) = thread_entry {
-            // TODO loop here if watch-threads
-
             if thread == 0 {
                 return Ok(());
             }
@@ -760,20 +759,28 @@ where D: sql::QueryExecutor + Sync + Send
             let mut _board = board_info.clone();
             _board.id = board_id;
 
+            if self.opt.asagi_mode {
+                // The group of statments for just `Boards` was done in the beginning, so this can be called
+                // This will create all the board tables, triggers, etc if the board doesn't exist
+                self.db_client.board_table_exists(&_board.board, &self.opt).await;
+
+                // Init the actual statements for this specific board
+                self.db_client.init_statements(_board.id, &_board.board).await;
+            }
+
+            let hz = Duration::from_millis(250);
+            let interval = Duration::from_millis(_board.interval_threads.into());
             loop {
                 let now = Instant::now();
-                let hz = Duration::from_millis(250);
-                let interval = Duration::from_millis(_board.interval_boards.into());
                 // with_threads or with_archives don't apply here, since going here implies you want the
                 // thread/archive
                 // FIXME on delted/archived, need to leave the loop
                 self.download_thread(&_board, thread, "threads").await.unwrap();
+                println!("Done fetching _board.watch_threads: {}", _board.watch_threads);
                 if !_board.watch_threads || get_ctrlc() >= 1 {
-                    return Ok(());
+                    break;
                 }
                 // FIXME: elpased() silent panic
-                // Need to know if modified to be able to use ratelimt struct
-                // Duration::from_millis(ratelimit.next().unwrap_or(30) * 1000)
                 while now.elapsed() < interval {
                     if get_ctrlc() >= 1 {
                         break;
@@ -1393,12 +1400,13 @@ where D: sql::QueryExecutor + Sync + Send
                 epintln!("download_media: Error getting media! This shouldn't have happened!");
             }
         } else {
-            let _checksum = if media_type == MediaType::Full { sha256 } else { 
-            
+            let _checksum = if media_type == MediaType::Full {
+                sha256
+            } else {
                 // Thumbnails aren't unique and can have duplicates
                 // So check the database if we already have it or not
                 if let Either::Left(s) = self.db_client.post_get_media(board_info, "", sha256t.as_ref().map(|v| v.as_slice())).await {
-                    s.ok().flatten().map(|row| row.get::<&str, Option<Vec<u8>>>("sha256t") ).flatten()
+                    s.ok().flatten().map(|row| row.get::<&str, Option<Vec<u8>>>("sha256t")).flatten()
                 } else {
                     // This else case will probably never run
                     // Since the Either will always run
@@ -1427,21 +1435,17 @@ where D: sql::QueryExecutor + Sync + Send
                         // then upsert the hash, since we have it on the filesystem.
                         if media_type == MediaType::Thumbnail {
                             for retry in 0..=3u8 {
-                            let res = self.db_client.post_upsert_media(md5.as_ref().unwrap().as_slice(),
-                                None,
-                                _checksum.as_ref().map(|v|v.as_slice())
-                            ).await;
-                            match res {
-                                Err(e) => {
-                                    epintln!("download_media: post_upsert_media (thumb): [" (e) "]");
-                                },
-                                Ok(_) => {
-                                    break;
-                                },
-                            }
+                                let res = self.db_client.post_upsert_media(md5.as_ref().unwrap().as_slice(), None, _checksum.as_ref().map(|v| v.as_slice())).await;
+                                match res {
+                                    Err(e) => {
+                                        epintln!("download_media: post_upsert_media (thumb): [" (e) "]");
+                                    }
+                                    Ok(_) => {
+                                        break;
+                                    }
+                                }
                                 sleep(Duration::from_millis(500)).await;
                             }
-                            
                         }
                         return Ok(());
                     } else {

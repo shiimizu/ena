@@ -213,11 +213,12 @@ impl AsRef<Post> for Post {
 impl Post {
     /// Convert a Post to a tuple of values able to use in an SQL query
     ///
-    /// Without `doc_id`, `poster_ip`, `media_id`, `deleted`, `email`, and `delpass`.  
+    /// Without `doc_id`, `poster_ip`, `media_id`.  
     /// 4chan sometimes has a `\` character in their `md5`.
     pub fn to_sql(&self) -> String {
         fomat!(
             "("
+            (self.poster_ip) ","
             (self.num) ","
             (self.subnum) ","
             (self.thread_num) ","
@@ -234,11 +235,14 @@ impl Post {
             if let Some(media_hash) = self.media_hash.as_ref() { (QuotedData(media_hash)) } else { "NULL" } ","
             if let Some(media_orig) = self.media_orig.as_ref() { (QuotedData(media_orig)) } else { "NULL" } ","
             (self.spoiler) ","
+            "0,"
             (QuotedData(self.capcode.as_str())) ","
+            "NULL,"
             if let Some(name) = self.name.as_ref() { (QuotedData(name)) } else { "NULL" } ","
             if let Some(trip) = self.trip.as_ref() { (QuotedData(trip)) } else { "NULL" } ","
             if let Some(title) = self.title.as_ref() { (QuotedData(title)) } else { "NULL" } ","
             if let Some(comment) = self.comment.as_ref() { (QuotedData(comment)) } else { "NULL" } ","
+            "NULL,"
             (self.sticky) ","
             (self.locked) ","
             if let Some(poster_hash) = self.poster_hash.as_ref() { (QuotedData(poster_hash)) } else { "NULL" } ","

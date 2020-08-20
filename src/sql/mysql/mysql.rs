@@ -237,9 +237,9 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         let mut q = fomat!(
         r#"
         INSERT INTO `"# (&board_info.board) r#"`
-        (num, subnum, thread_num, op, `timestamp`, timestamp_expired, preview_orig, preview_w, preview_h,
-        media_filename, media_w, media_h, media_size, media_hash, media_orig, spoiler,
-        capcode, `name`, trip, title, comment, sticky, locked, poster_hash, poster_country, exif)
+        (poster_ip, num, subnum, thread_num, op, `timestamp`, timestamp_expired, preview_orig, preview_w, preview_h,
+        media_filename, media_w, media_h, media_size, media_hash, media_orig, spoiler, deleted,
+        capcode, email, `name`, trip, title, comment, delpass, sticky, locked, poster_hash, poster_country, exif)
         VALUES
             "#
         for (i, post) in posts_iter {
@@ -249,6 +249,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         }
         r#"
         ON DUPLICATE KEY UPDATE
+        `poster_ip`=VALUES(`poster_ip`),
         `op`=VALUES(`op`),
         `timestamp`=VALUES(`timestamp`),
         `timestamp_expired`=VALUES(`timestamp_expired`),
@@ -262,11 +263,14 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         media_hash=VALUES(media_hash),
         media_orig=VALUES(media_orig),
         spoiler=VALUES(spoiler),
+        deleted=VALUES(deleted),
         capcode=VALUES(capcode),
+        email=VALUES(email),
         `name`=VALUES(`name`),
         trip=VALUES(trip),
         title=VALUES(title),
         comment=VALUES(comment),
+        delpass=VALUES(delpass),
         sticky = (VALUES(sticky) OR sticky ),
         locked = (VALUES(locked) OR locked ),
         poster_hash=VALUES(poster_hash),
@@ -486,6 +490,10 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     }
 
     async fn init_statements(&self, board_id: u16, board: &str) {
+        if STATEMENTS.read().await.contains_key(&board_id) {
+            return;
+        }
+
         let mut conn = self.write().await;
         let mut map = HashMap::new();
         let actual = if board_id == 1 { super::Query::iter().filter(|q: &Query| q.to_string().starts_with("Board")).collect::<Vec<Query>>() } else { super::Query::iter().collect::<Vec<Query>>() };
@@ -632,6 +640,7 @@ pub mod queries {
         )
     }
 
+    // Unused
     pub fn thread_upsert<'a>(board: &str) -> String {
         // omit email, delpass
         format!(
