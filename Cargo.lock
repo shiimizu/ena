@@ -597,41 +597,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "darling"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d706e75d87e35569db781a9b5e2416cff1236a47ed380831f959382ccd5f858"
-dependencies = [
- "darling_core",
- "darling_macro",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0c960ae2da4de88a91b2d920c2a7233b400bc33cb28453a2987822d8392519b"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim",
- "syn",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b5a2f4ac4969822c62224815d069952656cadc7084fdca9751e6d959189b72"
-dependencies = [
- "darling_core",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "difference"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -686,6 +651,7 @@ dependencies = [
  "ammonia",
  "async-std",
  "async-trait",
+ "base64",
  "color-eyre",
  "ctrlc",
  "fomat-macros",
@@ -697,6 +663,7 @@ dependencies = [
  "itertools 0.9.0",
  "md-5",
  "mysql_async",
+ "mysql_common",
  "num_cpus",
  "once_cell",
  "percent-encoding",
@@ -705,9 +672,9 @@ dependencies = [
  "regex",
  "reqwest",
  "serde",
- "serde-diff",
  "serde_json",
  "serde_yaml",
+ "sha2 0.9.1",
  "smol",
  "structopt",
  "strum",
@@ -1182,12 +1149,6 @@ dependencies = [
  "tokio-rustls",
  "webpki",
 ]
-
-[[package]]
-name = "ident_case"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "idna"
@@ -2304,29 +2265,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-diff"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70f01769bdef621a7683a5c711b3689a251d9d7fa945a79c014de18db030612b"
-dependencies = [
- "serde",
- "serde-diff-derive",
- "serde_derive",
-]
-
-[[package]]
-name = "serde-diff-derive"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c12ef3f174488ab7167f0d00eee61e90b248db8d6f4cd45750e1f49508fc47d8"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "serde_derive"
 version = "1.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2563,12 +2501,6 @@ dependencies = [
  "unicode-bidi",
  "unicode-normalization",
 ]
-
-[[package]]
-name = "strsim"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6446ced80d6c486436db5c078dde11a9f73d42b57fb273121e160b84f63d894c"
 
 [[package]]
 name = "structopt"

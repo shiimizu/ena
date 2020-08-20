@@ -18,11 +18,7 @@ use futures::future;
 
 use async_trait::async_trait;
 use ctrlc;
-use futures::{
-    channel::oneshot,
-    future::Either,
-    stream::FuturesUnordered,
-};
+use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
 use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -35,7 +31,7 @@ use smol::{unblock, Task, Timer};
 use std::{
     collections::HashMap,
     fmt::Debug,
-    fs::File,
+    fs::{create_dir_all, File},
     io::Read,
     sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
     thread,
@@ -66,7 +62,7 @@ pub trait Archiver {
     async fn download_boards_index(&self) -> Result<()>;
     async fn download_board(&self, board_info: &Board, thread_type: &str, startup: bool) -> Result<()>;
     async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: &str) -> Result<()>;
-    async fn download_media(&self, board_info: &Board, md5:Vec<u8>, tim: u64, ext:String, filename_media: Option<String>, checksum: Option<Vec<u8>>) -> Result<()>;
+    async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
 }
 /*
 #[derive(Deserialize, Debug)]
@@ -399,10 +395,10 @@ fn get_opt() -> Result<Opt> {
                     // TODO: Handle above error
                     content
                 } else {
-                    std::fs::read_to_string(config_file)?
+                    std::fs::read_to_string(config_file).unwrap_or_default()
                     // TODO: Handle above error
                 };
-                let mut o = serde_yaml::from_str::<Opt>(&content);
+                let mut o = if !content.is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|eyre!(e)) } else { Ok(Opt::default()) };
                 match o {
                     Ok(ref mut q) => {
                         let default_opt = Opt::default();
@@ -503,6 +499,8 @@ fn get_opt() -> Result<Opt> {
             opt
         }
     };
+    
+    
     // TODO db_url is up-to-date, also update the individual fields (extract from db_url) 
     if opt.database.url.is_none() {
         let db_url = format!(
@@ -526,6 +524,8 @@ fn get_opt() -> Result<Opt> {
     if !opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("postgresql") {
         return Err(eyre!("Ena must be used with a PostgreSQL database. Did you mean to enable --asagi ?"));
     }
+    
+    // Patch concurrency limit
     SEMAPHORE_AMOUNT.fetch_add(if opt.strict { 1 } else { opt.limit }, Ordering::SeqCst);
     MEDIA_SEMAPHORE_AMOUNT.fetch_add(opt.media_threads, Ordering::SeqCst);
     
@@ -535,8 +535,18 @@ fn get_opt() -> Result<Opt> {
     use itertools::Itertools;
     opt.boards = (&opt.boards).into_iter().unique_by(|board| board.board.as_str()).map(|b| b.clone()).collect();
 
+    // Media Directories
+    
+    // Trim media dir
+    opt.media_dir = opt.media_dir.to_str().map(|v| v.trim_matches('/').trim_matches('\\').into()).unwrap_or(opt.media_dir);
+    
     if !&opt.media_dir.is_dir() {
-        std::fs::create_dir_all(&opt.media_dir)?;
+        create_dir_all(&opt.media_dir)?;
+    }
+    
+    let tmp = fomat!( (&opt.media_dir.display())"/tmp" );
+    if !std::path::Path::new(&tmp).is_dir() {
+        create_dir_all(&tmp)?;
     }
 
     Ok(opt)
@@ -545,8 +555,8 @@ fn get_opt() -> Result<Opt> {
 async fn test_main() -> Result<()> {
     let opt = get_opt()?;
 
-    println!("{:#?}", opt);
-    return Ok(());
+    // println!("{:#?}", opt);
+    // return Ok(());
 
     if !opt.asagi_mode {
         let (client, connection) = tokio_postgres::connect(opt.database.url.as_ref().unwrap(), tokio_postgres::NoTls).await.unwrap();
@@ -944,422 +954,758 @@ where D: sql::QueryExecutor + Sync + Send
 
     async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: &str) -> Result<()> {
         let sem = SEMAPHORE.acquire(1).await;
-        if get_ctrlc() >= 1 {
-            return Ok(());
-        }
-        // TODO: OR media not complete (missing media)
-        let last_modified = self.db_client.thread_get_last_modified(board_info.id, thread).await;
-        let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join("thread/")?.join(&format!(
-            "{thread}{tail}.json",
-            thread = thread,
-            tail = if board_info.with_tail { "-tail" } else { "" }
-        ))?;
-        for retry in 0..=board_info.retry_attempts {
-            let resp = self.client.gett(url.as_str(), &last_modified).await;
-            if retry != 0 {
-                sleep(Duration::from_secs(1)).await;
+        // One giant loop so we can re-execute this function (if we find out tail-json is nonexistent)
+        // without resorting to recursion which generates unintended behaviours with the semaphore.
+        // We break at the end so it's OK.
+        let mut with_tail = board_info.with_tail;
+        let hz = Duration::from_millis(250);
+        let mut interval = Duration::from_millis(board_info.interval_threads.into());
+        'outer: loop {
+            if get_ctrlc() >= 1 {
+                return Ok(());
             }
-            match resp {
-                Ok((status, lm, body)) => {
-                    match status {
-                        StatusCode::OK => {
-                            // Going here (StatusCode::OK) means thread was modified
-                            // DELAY
-                            sleep(Duration::from_millis(board_info.interval_threads.into())).await;
+            // TODO: OR media not complete (missing media)
+            let last_modified = self.db_client.thread_get_last_modified(board_info.id, thread).await;
+            let url =
+                self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join("thread/")?.join(&format!("{thread}{tail}.json", thread = thread, tail = if with_tail { "-tail" } else { "" }))?;
 
-                            // ignore if err, it means it's empty or incomplete
-                            match serde_json::from_slice::<serde_json::Value>(&body) {
-                                Ok(mut thread_json) => {
-                                    if !board_info.with_tail {
-                                        update_post_with_extra(&mut thread_json);
+            for retry in 0..=board_info.retry_attempts {
+                let now = Instant::now();
+                let resp = self.client.gett(url.as_str(), &last_modified).await;
+                if retry != 0 {
+                    sleep(Duration::from_secs(1)).await;
+                }
+                match resp {
+                    Ok((status, lm, body)) => {
+                        match status {
+                            StatusCode::OK => {
+                                // Going here (StatusCode::OK) means thread was modified
+                                // DELAY
+                                while now.elapsed() < interval {
+                                    if get_ctrlc() >= 1 {
+                                        break;
                                     }
-                                    // let posts = thread_json.get("posts").unwrap().as_array().unwrap();
-                                    let op_post = thread_json.get("posts").unwrap().as_array().unwrap().iter().nth(0).unwrap();
+                                    sleep(hz).await;
+                                }
+                                if get_ctrlc() >= 1 {
+                                    break;
+                                }
 
-                                    let no: u64 = op_post["no"].as_u64().unwrap();
-                                    let resto: u64 = op_post["resto"].as_u64().unwrap_or(0);
+                                // ignore if err, it means it's empty or incomplete
+                                match serde_json::from_slice::<serde_json::Value>(&body) {
+                                    Ok(mut thread_json) => {
+                                        if !with_tail {
+                                            update_post_with_extra(&mut thread_json);
+                                        }
+                                        // let posts = thread_json.get("posts").unwrap().as_array().unwrap();
+                                        let op_post = thread_json.get("posts").unwrap().as_array().unwrap().iter().nth(0).unwrap();
 
-                                    if board_info.with_tail {
-                                        // Check if we can use the tail.json
-                                        // Check if we have the tail_id in the db
-                                        let tail_id = op_post["tail_id"].as_u64().unwrap();
-                                        let query = (&self)
+                                        let no: u64 = op_post["no"].as_u64().unwrap();
+                                        let resto: u64 = op_post["resto"].as_u64().unwrap_or(0);
+
+                                        if with_tail {
+                                            // Check if we can use the tail.json
+                                            // Check if we have the tail_id in the db
+                                            let tail_id = op_post["tail_id"].as_u64().unwrap();
+                                            let query = (&self)
                                             .db_client.post_get_single(board_info.id, thread, tail_id)
                                             //.query_one("SELECT * from posts where board=$1 and resto=$2 and no=$3 LIMIT 1;", &[&(board_info.id as i16), &(thread as i64), &(tail_id as i64)])
                                             .await;
 
-                                        // If no Row returned, download thread normally
-                                        if !query {
-                                            let mut _board_info = board_info.clone();
-                                            _board_info.with_tail = false;
-                                            drop(sem);
-                                            return self.download_thread(&_board_info, thread, thread_type).await;
-                                        }
-
-                                        // Pop tail_id, tail_size
-                                        // Insert extra
-                                        // thread_json["posts"].as_array_mut().unwrap().remove(0);
-                                        // Don't pop OP post (which has no time). It will be filtered upon inside `thread_upsert`.
-                                        update_post_with_extra(&mut thread_json);
-                                    }
-
-                                    if get_ctrlc() >= 1 {
-                                        return Ok(());
-                                    }
-
-                                    // TODO: Download media only if we don't already have it
-
-                                    // Upsert Thread
-                                    let len = self.db_client.thread_upsert(board_info, &thread_json).await;
-
-                                    // Display
-                                    // "download_thread: ({thread_type}) /{board}/{thread}{tail}{retry_status} {new_lm} | {prev_lm} |
-                                    // {len}"
-                                    pintln!("download_thread: (" (thread_type) ") /" (&board_info.board) "/" (thread)
-                                        if board_info.with_tail { "-tail" } else { "" }
-                                        if retry > 0 { " Retry #"(retry)" [RESOLVED]" } else { "" }
-                                        " "
-                                        (&lm)
-                                        " | "
-                                        if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
-                                        " | "
-                                        if (&last_modified).is_some() {
-                                            "UPSERTED" if len == 0 { "" } else { ": "(len) }
-                                        } else {
-                                            "NEW" if len == 0 { "" } else { ": "(len) }
-                                        }
-                                    );
-
-                                    // Update thread's deleteds
-                                    let either = self.db_client.thread_update_deleteds(board_info, thread, &thread_json).await;
-                                    match either {
-                                        Either::Right(rows) => {
-                                            if let Some(mut rows) = rows {
-                                                // TODO get row, not u64
-                                                while let Some(no) = rows.next().await {
-                                                    println!("download_thread: ({}) /{}/{}#{}\t[DELETED]", thread_type, &board_info.board, thread, no)
-                                                }
+                                            // If no Row returned, download thread normally
+                                            if !query {
+                                                // let mut _board_info = board_info.clone();
+                                                // _board_info.with_tail = false;
+                                                with_tail = false;
+                                                // println!("no rows reutned. woth tail. drop(sem)");
+                                                continue 'outer;
+                                                // return self.download_thread(&_board_info, thread,
+                                                // thread_type).await;
                                             }
+
+                                            // Pop tail_id, tail_size
+                                            // Insert extra
+                                            // thread_json["posts"].as_array_mut().unwrap().remove(0);
+                                            // Don't pop OP post (which has no time). It will be filtered upon inside `thread_upsert`.
+                                            update_post_with_extra(&mut thread_json);
                                         }
-                                        Either::Left(rows) =>
-                                            if let Ok(rows) = rows {
-                                                futures::pin_mut!(rows);
-                                                while let Some(Ok(row)) = rows.next().await {
-                                                    let no: Option<i64> = row.get("no");
-                                                    let resto: Option<i64> = row.get("resto");
-                                                    if let Some(no) = no {
-                                                        if let Some(resto) = resto {
-                                                            println!("download_thread: ({}) /{}/{}#{}\t[DELETED]", thread_type, &board_info.board, if resto == 0 { no } else { resto }, no)
-                                                        }
+
+                                        if get_ctrlc() >= 1 {
+                                            return Ok(());
+                                        }
+
+                                        // TODO: Download media only if we don't already have it
+
+                                        // Upsert Thread
+                                        let len = self.db_client.thread_upsert(board_info, &thread_json).await;
+
+                                        // Display
+                                        // "download_thread: ({thread_type}) /{board}/{thread}{tail}{retry_status} {new_lm} | {prev_lm} |
+                                        // {len}"
+                                        pintln!("download_thread: (" (thread_type) ") /" (&board_info.board) "/" (thread)
+                                            if with_tail { "-tail" } else { "" }
+                                            if retry > 0 { " Retry #"(retry)" [RESOLVED]" } else { "" }
+                                            " "
+                                            (&lm)
+                                            " | "
+                                            if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
+                                            " | "
+                                            if (&last_modified).is_some() {
+                                                "UPSERTED" if len == 0 { "" } else { ": "(len) }
+                                            } else {
+                                                "NEW" if len == 0 { "" } else { ": "(len) }
+                                            }
+                                        );
+
+                                        // Update thread's deleteds
+                                        let either = self.db_client.thread_update_deleteds(board_info, thread, &thread_json).await;
+                                        match either {
+                                            Either::Right(rows) => {
+                                                if let Some(mut rows) = rows {
+                                                    // TODO get row, not u64
+                                                    while let Some(no) = rows.next().await {
+                                                        println!("download_thread: ({}) /{}/{}#{}\t[DELETED]", thread_type, &board_info.board, thread, no)
                                                     }
                                                 }
-                                            },
-                                    }
-
-                                    if board_info.with_full_media || board_info.with_thumbnails {
-                                        // Get Thread
-                                        let either = self.db_client.thread_get(board_info, thread).await;
-                                        match either {
-                                            Either::Right(res) => match res {
-                                                Err(e) => epintln!("download_threaD: /"(&board_info.board)"/"(thread)"\t" (e)),
-                                                Ok(rows) => {
-                                                    {
-                                                        let mut fut_thumbs = rows.iter().map(|row| 
-                                                        {
-                                                            // Get the filename. Account for /f/
-                                                            let tim = row.get::<Option<String>, &str>("media_orig").flatten().unwrap_or_default().split(".").nth(0).unwrap().parse::<u64>().unwrap();
-                                                            let filename_media = if board_info.board == "f" {
-                                                                Some(percent_encoding::utf8_percent_encode(&row.get::<Option<String>, &str>("media_filename").flatten().unwrap_or_default(), percent_encoding::NON_ALPHANUMERIC).to_string())
-                                                            } else {
-                                                                None
-                                                            };
-                                                            self.download_media(board_info, vec![],tim,"s.jpg".into(), filename_media, None)
+                                            }
+                                            Either::Left(rows) =>
+                                                if let Ok(rows) = rows {
+                                                    futures::pin_mut!(rows);
+                                                    while let Some(Ok(row)) = rows.next().await {
+                                                        let no: Option<i64> = row.get("no");
+                                                        let resto: Option<i64> = row.get("resto");
+                                                        if let Some(no) = no {
+                                                            if let Some(resto) = resto {
+                                                                println!("download_thread: ({}) /{}/{}#{}\t[DELETED]", thread_type, &board_info.board, if resto == 0 { no } else { resto }, no)
+                                                            }
                                                         }
-                                                        ).collect::<FuturesUnordered<_>>();
-                                                        while let Some(res) = fut_thumbs.next().await {
+                                                    }
+                                                },
+                                        }
+
+                                        // Get Media
+                                        if board_info.with_full_media || board_info.with_thumbnails {
+                                            if self.opt.asagi_mode {
+                                                // Get list of media. Filter out `filedeleted`. Filter out non-media.
+                                                let media_list: Vec<(u64, u64, &str, u64, &str, &str)> = (&thread_json["posts"])
+                                                    .as_array()
+                                                    .unwrap()
+                                                    .iter()
+                                                    .filter(|&post_json| {
+                                                        !post_json.get("filedeleted").map(|j| j.as_u64()).flatten().map_or(false, |filedeleted| filedeleted == 1) && post_json.get("md5").is_some()
+                                                    })
+                                                    .map(|v| {
+                                                        (
+                                                            v.get("resto").unwrap().as_u64().unwrap_or_default(),
+                                                            v.get("no").unwrap().as_u64().unwrap_or_default(),
+                                                            v.get("md5").unwrap().as_str().unwrap_or_default(),
+                                                            v.get("tim").unwrap().as_u64().unwrap_or_default(),
+                                                            v.get("ext").unwrap().as_str().unwrap_or_default(),
+                                                            v.get("filename").unwrap().as_str().unwrap_or_default(),
+                                                        )
+                                                    })
+                                                    .collect();
+
+                                                let media_list_len = media_list.len();
+
+                                                // Asagi
+                                                // This query is much better than a JOIN
+                                                // let sq = fomat!(
+                                                //     "SELECT * FROM " (&board_info.board) "_images WHERE media_hash IN ("
+                                                //     for (i, (md5, filename)) in media_list.iter().enumerate() {
+                                                //         "\n"(format_sql_query::QuotedData(&md5.replace("\\", "")))
+                                                //         if i < media_list_len-1 { "," } else { "" }
+                                                //     }
+                                                //     ");"
+                                                // );
+
+                                                if media_list.len() > 0 {
+                                                    if board_info.with_thumbnails && board_info.board != "f" {
+                                                        let mut fut = media_list
+                                                            .iter()
+                                                            .map(|&details| {
+                                                                let (resto, no, md5, tim, ext, filename) = details;
+                                                                self.download_media(board_info, (resto, no, Some(md5.into()), None, tim, ext.into(), filename.into(), None, None), MediaType::Thumbnail)
+                                                            })
+                                                            .collect::<FuturesUnordered<_>>();
+                                                        while let Some(res) = fut.next().await {
                                                             res.unwrap();
                                                         }
                                                     }
-                                                    let mut fut = rows.iter().map(|row| 
-                                                    {
-                                                        // Get the filename. Account for /f/
-                                                        let ext = row.get::<Option<String>, &str>("media_filename").flatten().unwrap_or_default().split(".").last().unwrap().to_string();
-                                                        let tim = row.get::<Option<String>, &str>("media_orig").flatten().unwrap_or_default().split(".").nth(0).unwrap().parse::<u64>().unwrap();
-                                                        let filename_media = if board_info.board == "f" {
-                                                            Some(percent_encoding::utf8_percent_encode(&row.get::<Option<String>, &str>("media_filename").flatten().unwrap_or_default(), percent_encoding::NON_ALPHANUMERIC).to_string())
-                                                        } else {
-                                                            None
-                                                        };
-                                                        // let md5 = md5.as_str().unwrap();
-                                                        // let md5_bytes = base64::decode(md5.as_bytes())?;
-                                                        self.download_media(board_info, vec![], tim,ext, filename_media, None)
+                                                    if get_ctrlc() >= 1 {
+                                                        break;
                                                     }
-                                                    ).collect::<FuturesUnordered<_>>();
-                                                    while let Some(res) = fut.next().await {
-                                                        res.unwrap();
+                                                    if board_info.with_full_media {
+                                                        let mut fut = media_list
+                                                            .iter()
+                                                            .map(|&details| {
+                                                                let (resto, no, md5, tim, ext, filename) = details;
+                                                                self.download_media(board_info, (resto, no, Some(md5.into()), None, tim, ext.into(), filename.into(), None, None), MediaType::Full)
+                                                            })
+                                                            .collect::<FuturesUnordered<_>>();
+                                                        while let Some(res) = fut.next().await {
+                                                            res.unwrap();
+                                                        }
                                                     }
                                                 }
-                                            },
-                                            Either::Left(res) => match res {
-                                                Err(e) => epintln!("download_threaD: /"(&board_info.board)"/"(thread)"\t" (e)),
-                                                Ok(rows) => {
-                                                    futures::pin_mut!(rows);
-                                                    let post = yotsuba::Post::default();
-                                                    let mut fut = FuturesUnordered::new();
-                                                    let mut fut_thumbs = FuturesUnordered::new();
-                                                    while let Some(Ok(row)) = rows.next().await {
-                                                        let filename_media = if board_info.board == "f" {
-                                                            Some(percent_encoding::utf8_percent_encode(row.get::<&str, Option<&str>>("filename").unwrap_or_default(), percent_encoding::NON_ALPHANUMERIC).to_string())
-                                                        }
-                                                        else {
-                                                            None
-                                                        };
-                                                        let md5 :Vec<u8> = row.get("md5");
-                                                        let tim = row.get::<&str, i64>("tim") as u64;
-                                                        if board_info.with_thumbnails {
-                                                            let checksum : Option<Vec<u8>> = row.get("sha256t");
-                                                            fut_thumbs.push(self.download_media(board_info, md5.clone(), tim, "s.jpg".into(), filename_media.clone(), checksum));
-                                                        }
-                                                        if board_info.with_full_media {
-                                                            let checksum : Option<Vec<u8>> = row.get("sha256");
+                                            } else {
+                                                // Postgres Side
+                                                let start = if let Some(post_json) = thread_json["posts"].get(1) {
+                                                    post_json["no"].as_u64().unwrap_or_default()
+                                                } else {
+                                                    thread_json["posts"][0]["no"].as_u64().unwrap_or_default()
+                                                };
+                                                loop {
+                                                    let either = self.db_client.thread_get_media(board_info, thread, start).await;
+                                                    // let mut fut = FuturesUnordered::new();
+                                                    // let mut v = vec![];
+                                                    if let Either::Left(res) = either {
+                                                        match res {
+                                                            Err(e) => epintln!("download_media: "(e)),
+                                                            Ok(rows) => {
+                                                                futures::pin_mut!(rows);
+                                                                let mm =
+                                                        // let mm : Vec<Result<(Vec<u8>, u64, String, String, Option<Vec<u8>, Option<Vec<u8>>>),_>> =
+                                                        rows.map(|res|
+                                                        res.map(|row| {
+                                                            let resto = row.get::<&str, i64>("resto") as u64;
+                                                            let no = row.get::<&str, i64>("no") as u64;
+                                                            let md5 = row.get::<&str, Option<Vec<u8>>>("md5");
+                                                            let tim = row.get::<&str, Option<i64>>("tim").map(|v| v as u64).unwrap_or_default();
                                                             let ext = row.get::<&str, Option<String>>("ext").unwrap_or_default();
-                                                            fut.push(self.download_media(board_info, md5,tim,  ext, filename_media, checksum));
-                                                        } 
+                                                            let filename = row.get::<&str, Option<String>>("filename").unwrap_or_default();
+                                                            let sha256 = row.get::<&str, Option<Vec<u8>>>("sha256");
+                                                            let sha256t = row.get::<&str, Option<Vec<u8>>>("sha256t");
+                                                            (resto, no, None, md5, tim, ext, filename, sha256, sha256t)
+                                                        }
+                                                        ))
+                                                        .map(|v|v.unwrap())
+                                                        .collect::<Vec<_>>().await;
+                                                                // FIXME: Should not unwrap while streaming from a database!!
+
+                                                                // Downlaod Thumbnails
+                                                                if board_info.with_thumbnails && board_info.board != "f" {
+                                                                    let mut fut_thumbs = mm
+                                                                        .clone()
+                                                                        .into_iter()
+                                                                        .map(| v|
+                                                            //  v.map(| details| {
+                                                            //     self.download_media(board_info, details,  true)
+                                                            //  })
+                                                            self.download_media(board_info, v,  MediaType::Thumbnail))
+                                                                        .collect::<FuturesUnordered<_>>();
+                                                                    while let Some(res) = fut_thumbs.next().await {
+                                                                        res.unwrap()
+                                                                    }
+                                                                }
+
+                                                                if get_ctrlc() >= 1 {
+                                                                    return Ok(());
+                                                                }
+
+                                                                // Downlaod full media
+                                                                if board_info.with_full_media {
+                                                                    let mut fut = mm
+                                                                        .into_iter()
+                                                                        .map(| v|
+                                                            // v.map(| details| {
+                                                            //    self.download_media(board_info, details,  true)
+                                                            // })
+                                                           self.download_media(board_info, v,  MediaType::Full))
+                                                                        .collect::<FuturesUnordered<_>>();
+                                                                    while let Some(res) = fut.next().await {
+                                                                        res.unwrap()
+                                                                    }
+                                                                }
+                                                                break; // exit the db loop
+                                                            }
+                                                        }
                                                     }
-                                                    while let Some(res) = fut_thumbs.next().await {
-                                                        res.unwrap();
-                                                    }
-                                                    while let Some(res) = fut.next().await {
-                                                        res.unwrap();
-                                                    }
+                                                    sleep(Duration::from_secs(1)).await;
                                                 }
-                                            },
+                                            }
                                         }
-                                        // let mut fut = posts.iter().filter(|post|
-                                        // post.get("md5").map(|md5|
-                                        // md5.as_str()).flatten().is_some()).map(|post|
-                                        // self.download_media(board_info,
-                                        // post)).collect::<FuturesUnordered<_>>();
-                                        // while let Some(res)
-                                        // = fut.next().await {
-                                        // res.unwrap(); }
 
-                                        if get_ctrlc() >= 1 {
-                                            break;
-                                        }
+                                        // Update thread's last_modified
+                                        self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
+                                        break; // exit the retry loop
                                     }
+                                    Err(e) => {
+                                        eprintln!("download_thread: ({}) /{}/{}{} {} {:?}", thread_type, board_info.board, thread, if with_tail { "-tail" } else { "" }, e, &last_modified);
+                                    }
+                                }
+                            }
 
-                                    // Update thread's last_modified
-                                    self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
-                                    break; // exit the retry loop
+                            StatusCode::NOT_FOUND => {
+                                if with_tail {
+                                    // let mut _board_info = board_info.clone();
+                                    with_tail = false;
+                                    continue 'outer;
+                                    // println!("StatusCode::NOT_FOUND drop(sem)");
+                                    // drop(sem);
+                                    // return self.download_thread(&_board_info, thread,
+                                    // thread_type).await;
                                 }
-                                Err(e) => {
-                                    eprintln!("download_thread: ({}) /{}/{}{} {} {:?}", thread_type, board_info.board, thread, if board_info.with_tail { "-tail" } else { "" }, e, &last_modified);
-                                }
-                            }
-                        }
-                        
-                        StatusCode::NOT_FOUND => {
-                            if board_info.with_tail {
-                                let mut _board_info = board_info.clone();
-                                _board_info.with_tail = false;
-                                drop(sem);
-                                return self.download_thread(&_board_info, thread, thread_type).await;
-                            }
-                            let either = self.db_client.thread_update_deleted(board_info.id, thread).await;
-                            let tail = if board_info.with_tail { "-tail" } else { "" };
-                            match either {
-                                Either::Right(rows) =>
-                                    if let Some(mut rows) = rows {
-                                        while let Some(no) = rows.next().await {
-                                            println!(
-                                                "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [DELETED]",
-                                                thread_type = thread_type,
-                                                board = &board_info.board,
-                                                thread = no,
-                                                tail = tail,
-                                                status = status
-                                            );
-                                        }
-                                    },
-                                Either::Left(rows) => match rows {
-                                    Ok(rows) => {
-                                        futures::pin_mut!(rows);
-                                        while let Some(row) = rows.next().await {
-                                            match row {
-                                                Ok(row) => {
-                                                    let no: Option<i64> = row.get("no");
-                                                    if let Some(no) = no {
-                                                        println!(
-                                                            "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [DELETED]",
-                                                            thread_type = thread_type,
-                                                            board = &board_info.board,
-                                                            thread = no,
-                                                            tail = tail,
-                                                            status = status
-                                                        );
-                                                    } else {
+                                let either = self.db_client.thread_update_deleted(board_info.id, thread).await;
+                                let tail = if with_tail { "-tail" } else { "" };
+                                match either {
+                                    Either::Right(rows) =>
+                                        if let Some(mut rows) = rows {
+                                            while let Some(no) = rows.next().await {
+                                                println!(
+                                                    "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [DELETED]",
+                                                    thread_type = thread_type,
+                                                    board = &board_info.board,
+                                                    thread = no,
+                                                    tail = tail,
+                                                    status = status
+                                                );
+                                            }
+                                        },
+
+                                    Either::Left(rows) => match rows {
+                                        Ok(rows) => {
+                                            futures::pin_mut!(rows);
+                                            while let Some(row) = rows.next().await {
+                                                match row {
+                                                    Ok(row) => {
+                                                        let no: Option<i64> = row.get("no");
+                                                        if let Some(no) = no {
+                                                            println!(
+                                                                "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [DELETED]",
+                                                                thread_type = thread_type,
+                                                                board = &board_info.board,
+                                                                thread = no,
+                                                                tail = tail,
+                                                                status = status
+                                                            );
+                                                        } else {
+                                                            eprintln!(
+                                                                "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [`no` is empty]",
+                                                                thread_type = thread_type,
+                                                                board = &board_info.board,
+                                                                thread = thread,
+                                                                tail = tail,
+                                                                status = status
+                                                            );
+                                                        }
+                                                    }
+                                                    Err(e) => {
                                                         eprintln!(
-                                                            "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [`no` is empty]",
+                                                            "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted] [{err}]",
                                                             thread_type = thread_type,
                                                             board = &board_info.board,
                                                             thread = thread,
                                                             tail = tail,
-                                                            status = status
+                                                            status = &status,
+                                                            err = e
                                                         );
                                                     }
                                                 }
-                                                Err(e) => {
-                                                    eprintln!(
-                                                        "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted] [{err}]",
-                                                        thread_type = thread_type,
-                                                        board = &board_info.board,
-                                                        thread = thread,
-                                                        tail = tail,
-                                                        status = &status,
-                                                        err = e
-                                                    );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted][{err}]",
+                                                thread_type = thread_type,
+                                                board = &board_info.board,
+                                                thread = thread,
+                                                tail = tail,
+                                                status = &status,
+                                                err = e
+                                            );
+                                        }
+                                    },
+                                }
+
+                                break;
+                            }
+                            StatusCode::NOT_MODIFIED => {
+                                // Don't output
+                                break;
+                            }
+                            _ => {
+                                eprintln!("download_thread: /{}/{}{} [{}]", board_info.board, thread, if with_tail { "-tail" } else { "" }, status);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("download_thread: /{}/{}{}\n{}", board_info.board, thread, if with_tail { "-tail" } else { "" }, e);
+                    }
+                }
+            }
+            break;
+        }
+        Ok(())
+    }
+
+    async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()> {
+        if get_ctrlc() >= 1 {
+            return Ok(());
+        }
+
+        // This is from 4chan post / postgres post
+        let (resto, no, md5_base64, md5, tim, ext, filename, sha256, sha256t) = details;
+
+        let mut dir = None;
+        let mut path = None;
+        let mut url = None;
+
+        // Check if exists
+        if self.opt.asagi_mode {
+            if let Either::Right(Some(row)) = self.db_client.post_get_media(board_info, md5_base64.as_ref().unwrap(), None).await {
+                let banned = row.get::<Option<u8>, &str>("banned").flatten().map_or_else(|| false, |v| v == 1);
+                if banned {
+                    pintln!("download_media: Skipping banned media: /" (&board_info.board)"/"
+                    if resto == 0 { (no) } else { (resto) }
+                    "#" (no)
+                    )
+                }
+
+                let media = row.get::<Option<String>, &str>("media").flatten().unwrap();
+                let preview_op = row.get::<Option<String>, &str>("preview_op").flatten();
+                let preview_reply = row.get::<Option<String>, &str>("preview_reply").flatten();
+                let preview = preview_op.map_or_else(|| preview_reply, |v| Some(v)).unwrap();
+
+                let tim_filename = if media_type == MediaType::Full { media } else { preview };
+
+                // Directory Structure:
+                // 1540970147550
+                // {media_dir}/{board}/{image|thumb}/1540/97
+                let _dir = fomat!(
+                    (self.opt.media_dir.display()) "/" (&board_info.board) "/"
+                    if media_type == MediaType::Full { "image" } else { "thumb" } "/"
+                    (tim_filename[..4]) "/" (tim_filename[4..6])
+                );
+                let _path = fomat!(
+                    (_dir) "/" (&tim_filename)
+                );
+
+                let actual_filename = if board_info.board == "f" { fomat!((percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC))(ext)) } else { tim_filename };
+                if exists(&_path) {
+                    return Ok(());
+                }
+                path = Some(_path);
+                dir = Some(_dir);
+                let _url = format!("{api_domain}/{board}/{filename}", api_domain = &self.opt.media_url, board = &board_info.board, filename = &actual_filename);
+                url = Some(_url);
+            } else {
+                epintln!("download_media: Error getting media! This shouldn't have happened!");
+            }
+        } else {
+            let _checksum = if media_type == MediaType::Full { sha256 } else { 
+            
+                // Thumbnails aren't unique and can have duplicates
+                // So check the database if we already have it or not
+                if let Either::Left(s) = self.db_client.post_get_media(board_info, "", sha256t.as_ref().map(|v| v.as_slice())).await {
+                    s.ok().flatten().map(|row| row.get::<&str, Option<Vec<u8>>>("sha256t") ).flatten()
+                } else {
+                    // This else case will probably never run
+                    // Since the Either will always run
+                    sha256t
+                }
+            };
+
+            // Directory Structure:
+            // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
+            // {media_dir}/{full|thumbnails}/1/0a
+            if let Some(checksum) = &_checksum {
+                let hash = format!("{:02x}", HexSlice(checksum.as_slice()));
+                let len = hash.len();
+                if len == 64 {
+                    let _path = fomat!
+                    (
+                        (self.opt.media_dir.display()) "/"
+                        if media_type == MediaType::Full { "full" } else { "thumbnails" } "/"
+                        (&hash[len - 1..]) "/" (&hash[len -3..len-1]) "/"
+                        (&hash)
+                        if media_type == MediaType::Full { (&ext) } else { ".jpg" }
+                    );
+                    if exists(&_path) {
+                        // Upsert the thumbnail at the given md5 since full medias
+                        // can have duplicate thumbnails, if this particular md5 doesn't have it
+                        // then upsert the hash, since we have it on the filesystem.
+                        if media_type == MediaType::Thumbnail {
+                            for retry in 0..=3u8 {
+                            let res = self.db_client.post_upsert_media(md5.as_ref().unwrap().as_slice(),
+                                None,
+                                _checksum.as_ref().map(|v|v.as_slice())
+                            ).await;
+                            match res {
+                                Err(e) => {
+                                    epintln!("download_media: post_upsert_media (thumb): [" (e) "]");
+                                },
+                                Ok(_) => {
+                                    break;
+                                },
+                            }
+                                sleep(Duration::from_millis(500)).await;
+                            }
+                            
+                        }
+                        return Ok(());
+                    } else {
+                        epintln!(
+                        "download_media: Exists in db but not in filesystem!: `" (&_path) "`"
+                        );
+                    }
+                } else {
+                    epintln!("download_media: Error! Hash found to be " (len) " chars long when it's supposed to be 64" );
+                }
+                // path = Some(_path);
+            }
+
+            let tim_filename = fomat!((tim) if media_type == MediaType::Full { (ext) } else { "s.jpg" } );
+
+            let actual_filename = {
+                if board_info.board == "f" {
+                    fomat!((percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC))(ext))
+                } else {
+                    tim_filename
+                }
+            };
+
+            let _url = format!("{api_domain}/{board}/{filename}", api_domain = &self.opt.media_url, board = &board_info.board, filename = &actual_filename);
+            url = Some(_url);
+        }
+
+        if let Some(_url) = url {
+            let sem = MEDIA_SEMAPHORE.acquire(1).await;
+            for retry in 0..=board_info.retry_attempts {
+                if retry != 0 {
+                    sleep(Duration::from_secs(1)).await;
+                }
+                match self.client.get(_url.as_str()).send().await {
+                    Err(e) => epintln!("download_media: " "/"(&board_info.board)"/"
+                        if resto == 0 { (no) } else { (resto) }
+                        "#"
+                        (no)
+                        "["(e)"]"),
+                    Ok(resp) => {
+                        match resp.status() {
+                            StatusCode::OK => {
+                                // pintln!("download_media: /" (&board_info.board)"/"
+                                //     if resto == 0 { (no) } else { (resto) }
+                                //     "#" (no)
+                                //     );
+                                // Going here means that we don't have the file
+                                if self.opt.asagi_mode {
+                                    // Make dirs
+                                    if let Some(_dir) = &dir {
+                                        let res = smol::Unblock::new(create_dir_all(_dir.as_str())).into_inner().await;
+                                        if let Err(e) = res {
+                                            epintln!("download_media: [" (e) "]");
+                                        }
+                                    }
+                                    if let Some(file_path) = &path {
+                                        let mut file = smol::Unblock::new(File::create(&file_path).unwrap());
+                                        let mut writer = io::BufWriter::new(&mut file);
+                                        let mut stream = resp.bytes_stream();
+                                        let mut hasher = Md5::new();
+                                        while let Some(item) = stream.next().await {
+                                            let _item = &item.unwrap();
+                                            if media_type == MediaType::Full {
+                                                hasher.update(_item);
+                                            }
+                                            writer.write_all(_item).await.unwrap();
+                                        }
+                                        writer.flush().await.unwrap();
+                                        writer.close().await.unwrap();
+                                        // Only check md5 for full media
+                                        if media_type == MediaType::Full {
+                                            let result = hasher.finalize();
+                                            let md5_bytes = base64::decode(md5_base64.as_ref().unwrap().as_bytes()).unwrap();
+                                            if md5_bytes.as_slice() != result.as_slice() {
+                                                epintln!("download_media: Hashes don't match! /" (&board_info.board) "/"
+                                                if resto == 0 { (no) } else { (resto) }
+                                                "#" (no)
+                                                if retry > 0 { " [Retry #" (retry) "]" } else { "" }
+                                                );
+                                                continue;
+                                            }
+                                        }
+                                        break;
+                                    } else {
+                                        epintln!("download_media: file path is empty! This isn't supposed to happen!");
+                                    }
+                                } else {
+                                    let now = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).map(|v| v.as_nanos()).unwrap_or(tim.into());
+
+                                    // Unique tmp filename so it won't clash when saving
+                                    let tmp_path = fomat!((&self.opt.media_dir.display()) "/tmp/"
+                                    (&board_info.board)"-"
+                                    (resto) "-"
+                                    (no) "-"
+                                    {"{:02x}", HexSlice(md5.as_ref().unwrap().as_slice()) }  "-"
+                                    (now)
+                                    if media_type == MediaType::Full { (ext) } else { "s.jpg" }
+                                    );
+
+                                    // Download File and calculate hashes
+                                    let mut file = smol::Unblock::new(File::create(&tmp_path).unwrap());
+                                    let mut writer = io::BufWriter::new(&mut file);
+                                    let mut stream = resp.bytes_stream();
+                                    let mut hasher = Md5::new();
+                                    let mut hasher_sha256 = sha2::Sha256::new();
+                                    while let Some(item) = stream.next().await {
+                                        let _item = &item.unwrap();
+                                        if media_type == MediaType::Full {
+                                            hasher.update(_item);
+                                        }
+                                        hasher_sha256.update(_item);
+                                        writer.write_all(_item).await.unwrap();
+                                    }
+                                    writer.flush().await.unwrap();
+                                    writer.close().await.unwrap();
+                                    let result_sha256 = hasher_sha256.finalize();
+                                    let hash = format!("{:02x}", result_sha256);
+                                    let len = hash.len();
+
+                                    // Only check md5 for full media
+                                    if media_type == MediaType::Full {
+                                        let result = hasher.finalize();
+                                        if md5.as_ref().unwrap().as_slice() != result.as_slice() {
+                                            epintln!("download_media: Hashes don't match! /" (&board_info.board) "/"
+                                            if resto == 0 { (no) } else { (resto) }
+                                            "#" (no)
+                                            {" `{:02x}`",HexSlice(md5.as_ref().unwrap().as_slice()) } {" != `{:02x}`", &result}
+                                            if retry > 0 { " [Retry #" (retry) "]" } else { "" }
+                                            );
+                                            let _ = std::fs::remove_file(&tmp_path);
+                                            continue;
+                                        }
+                                    }
+
+                                    if len == 64 {
+                                        let _dir = fomat!
+                                        (
+                                            (self.opt.media_dir.display()) "/"
+                                            if media_type == MediaType::Full { "full" } else { "thumbnails" } "/"
+                                            (&hash[len - 1..]) "/" (&hash[len -3..len-1])
+                                        );
+                                        let _path = fomat!
+                                        (
+                                            (_dir) "/"
+                                            (&hash)
+                                            if media_type == MediaType::Full { (&ext) } else { ".jpg" }
+                                        );
+                                        if exists(&_path) {
+                                            epintln!("download_media: `" 
+                                            (&_path)
+                                            "` exists! Downloaded for nothing.. Perhaps you didn't upload your hashes to the database beforehand?");
+
+                                            // Try to upsert to database
+                                            let mut success = true;
+                                            for _ in 0..=3u8 {
+                                                let res = self
+                                                    .db_client
+                                                    .post_upsert_media(
+                                                        md5.as_ref().unwrap().as_slice(),
+                                                        if media_type == MediaType::Full { Some(result_sha256.as_slice()) } else { None },
+                                                        if media_type == MediaType::Thumbnail { Some(result_sha256.as_slice()) } else { None },
+                                                    )
+                                                    .await;
+                                                if let Err(e) = res {
+                                                    epintln!(
+                                                        "download_media: post_upsert_media: " "/"(&board_info.board)"/"
+                                                        if resto == 0 { (no) } else { (resto) }
+                                                        "#"
+                                                        (no)
+                                                        " ["(e)"]");
+                                                    success = false;
+                                                } else {
+                                                    success = true;
+                                                    break;
+                                                }
+                                                if get_ctrlc() >= 1 {
+                                                    break;
+                                                }
+                                                sleep(Duration::from_secs(1)).await;
+                                            }
+                                            let _ = std::fs::remove_file(&tmp_path);
+                                            if success {
+                                                break;
+                                            }
+                                            // return Ok(());
+                                        }
+                                        // Make dirs
+                                        let dirs_result = smol::Unblock::new(create_dir_all(_dir.as_str())).into_inner().await;
+                                        match dirs_result {
+                                            Err(e) => epintln!("download_media: Error creating dirs `" (&_dir) "` [" (e) "]"),
+                                            Ok(_) => {
+                                                // Move to final path
+                                                let rename_result = smol::Unblock::new(std::fs::rename(&tmp_path, &_path)).into_inner().await;
+                                                match rename_result {
+                                                    Err(e) => epintln!("download_media: Error moving `" (&tmp_path) "` to `" (&_path) "` [" (e) "]"),
+                                                    Ok(_) => {
+                                                        // Try to upsert to database
+                                                        let mut success = true;
+                                                        for _ in 0..=5u8 {
+                                                            let res = self
+                                                                .db_client
+                                                                .post_upsert_media(
+                                                                    md5.as_ref().unwrap().as_slice(),
+                                                                    if media_type == MediaType::Full { Some(result_sha256.as_slice()) } else { None },
+                                                                    if media_type == MediaType::Thumbnail { Some(result_sha256.as_slice()) } else { None },
+                                                                )
+                                                                .await;
+                                                            if let Err(e) = res {
+                                                                epintln!("download_media: " "/"(&board_info.board)"/"
+                                                                            if resto == 0 { (no) } else { (resto) }
+                                                                            "#"
+                                                                            (no)
+                                                                            "["(e)"]");
+                                                                success = false;
+                                                            }
+                                                            if get_ctrlc() >= 1 {
+                                                                break;
+                                                            }
+                                                            sleep(Duration::from_secs(1)).await;
+                                                        }
+                                                        if success {
+                                                            break;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
+                                    } else {
+                                        epintln!("download_media: Error! Hash found to be " (len) " chars long when it's supposed to be 64" );
                                     }
-                                    Err(e) => {
-                                        eprintln!(
-                                            "download_thread: ({thread_type}) /{board}/{thread}{tail}\t[{status}] [thread_update_deleted][{err}]",
-                                            thread_type = thread_type,
-                                            board = &board_info.board,
-                                            thread = thread,
-                                            tail = tail,
-                                            status = &status,
-                                            err = e
-                                        );
-                                    }
-                                },
+                                }
                             }
-
-                            break;
-                        }
-                        StatusCode::NOT_MODIFIED => {
-                            // Don't output
-                            break;
-                        }
-                        _ => {
-                            eprintln!("download_thread: /{}/{}{} [{}]", board_info.board, thread, if board_info.with_tail { "-tail" } else { "" }, status);
+                            StatusCode::NOT_FOUND => {
+                                break;
+                            }
+                            status => epintln!("download_media: "(status)),
                         }
                     }
                 }
-                Err(e) => {
-                    eprintln!("download_thread: /{}/{}{}\n{}", board_info.board, thread, if board_info.with_tail { "-tail" } else { "" }, e);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn download_media(&self, board_info: &Board, md5: Vec<u8>, tim: u64, ext:String, filename_media: Option<String>, checksum: Option<Vec<u8>>) -> Result<()> {
-        
-        // let s = fomat!("" {});
-        // let a = checksum.as_ref().map(|v| format!("{:x}",HexSlice(v.as_slice())) );
-        // let s = format!("{:x}", HexSlice(checksum.as_ref().unwrap().as_slice()));
-        // let len = s.len();
-        // let ss = &s[len - 1..];
-        // let sss = &s[len - 3..len - 1];
-        
-        // Directory Structure:
-        // Asagi Example:
-        // 1540970147550
-        // media/{board}/{image|thumb}/1540/97
-        // 
-        // Ena Example:
-        // 8e936b088be8d30dd09241a1aca658ff3d54d4098abd1f248e5dfbb003eed0a1
-        // media/1/0a
-        let filename_time = fomat!((tim));
-        let file_path = fomat!(
-            if self.opt.asagi_mode {
-                (self.opt.media_dir.display())"/"(filename_time.as_str()[..4])"/"(filename_time.as_str()[4..6])"/"(&filename_time)
-            } else {
-                if let Some(hash) = checksum.as_ref().map(|v| format!("{:x}", HexSlice(v.as_slice())) ) {
-                    (self.opt.media_dir.display())"/"(&hash[hash.len() - 1..])"/"(&hash[hash.len() -3..hash.len()-1])"/"(&hash)(filename_time.split('.').nth(1).unwrap())
-                } else { "" }
-            }
-        );
-        
-        let exists = if !file_path.is_empty() {
-            // TODO check md5 of file here
-            // This would only call in the beginning and is OK
-            if exists(&file_path) {
-                let vec = md5_of_file(file_path.clone()).await.unwrap();
-                md5.as_slice() == vec.as_slice() 
-            } else {
-                false
             }
         } else {
-            false
-        };
-        
-        if exists {
-            return Ok(());
+            epintln!("download_media: No URL was found! This shouldn't happen!")
         }
-        
-        let url = fomat!(
-            (&self.opt.media_url)
-            "/"
-            (&board_info.board)
-            "/"
-            if board_info.board == "f" {
-                (filename_media.as_ref().unwrap()) if self.opt.asagi_mode { "" } else { (ext) }
-            } else {
-                (tim)(ext)
-            }
-        );
-        let sem = MEDIA_SEMAPHORE.acquire(1).await;
-        for retry in 0..=board_info.retry_attempts {
-        let res = self.client.get(url.as_str()).send().await;
-        match res {
-            Err(e) => {
-                epintln!("download_media: " (e));        
-            },
-            Ok(resp) => {
-                match resp.status() {
-                    StatusCode::OK => {
-                        
-                        let mut file =  smol::Unblock::new(File::create(&file_path).unwrap());
-                        let mut writer  = io::BufWriter::new(&mut file);
-                        let mut stream = resp.bytes_stream();
-                        while let Some(item) = stream.next().await {
-                            writer.write_all(&item?).await.unwrap();
-                        }
-                        writer.flush().await.unwrap();
-                        writer.close().await.unwrap();
-        
-                        // save to file
-                        // verify checksum md5
-                        // calc sha256 on postgres
-                        // upsert hash to db for postgres
-                        let mut hasher = Md5::new();
-                        // md5_prev_vec == md5_new_vec
-                        break;
-                    },
-                    StatusCode::NOT_FOUND => {
-                        break;
-                    },
-                    status => {
-                        epintln!("download_media: " (status));
-                    },
-                }
-            },
-        }
-            sleep(Duration::from_secs(1)).await;
-        }
-        
-        // println!("/{}/{} | {} [media]", board_info.board, post["resto"].as_u64().unwrap(),
-        // post["no"].as_u64().unwrap()); DL thumbs or not
-        // Validate file & hash
-        // Update post's checksum (sha256, etc..)
-        // utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC);
         Ok(())
     }
 }
+
+#[derive(PartialEq)]
+pub enum MediaType {
+    Full,
+    Thumbnail,
+}
+
+impl MediaType {
+    fn ext<'a>(&self) -> &'a str {
+        match self {
+            MediaType::Full => "",
+            MediaType::Thumbnail => "s.jpg",
+        }
+    }
+}
+
+pub type MediaDetails = (u64, u64, Option<String>, Option<Vec<u8>>, u64, String, String, Option<Vec<u8>>, Option<Vec<u8>>);
+// pub type MediaDetailsAsagi<'a> = (&'a str, u64, &'a str, &'a str);
 
 // From `hex-slice` crate
 pub struct HexSlice<'a, T: 'a>(&'a [T]);
@@ -1377,7 +1723,7 @@ impl<'a, T: fmt::LowerHex> fmt::LowerHex for HexSlice<'a, T> {
 }
 
 fn fmt_inner_hex<T, F: Fn(&T, &mut fmt::Formatter) -> fmt::Result>(slice: &[T], f: &mut fmt::Formatter, fmt_fn: F) -> fmt::Result {
-    for  val in slice.iter() {
+    for val in slice.iter() {
         fmt_fn(val, f)?;
     }
     Ok(())

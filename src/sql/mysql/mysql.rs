@@ -53,6 +53,26 @@ struct Threade {
     last_modified: u64,
 }
 
+/*
+#[async_trait]
+trait StatementExt {
+    async fn get_statement<'a>(&self, query: Query) -> &'a mysql_async::Statement;
+}
+
+#[async_trait]
+impl StatementExt for RwLock<mysql_async::Conn> {
+
+async fn get_statement<'a>(&self, query: Query) -> &'a mysql_async::Statement {
+    let mut conn = self.write().await;
+    let store = STATEMENTS.read().await;
+    // BoardId of boards.json entry in db is always 1
+    let map = (*store).get(&1).unwrap();
+    let statement = map.get(&query).unwrap();
+    statement
+}
+}
+*/
+
 // FIXME DONT USE JSON in `boards` table, use MEDIUMTEXT
 #[async_trait]
 impl QueryExecutor for RwLock<mysql_async::Conn> {
@@ -182,7 +202,8 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         Either::Right(res)
     }
 
-    async fn thread_get_media(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
+    /// Unused
+    async fn thread_get_media(&self, board_info: &Board, thread: u64, start: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
         let mut conn = self.write().await;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_info.id).unwrap();
@@ -305,18 +326,25 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
         // let posts: Vec<yotsuba::Post> = serde_json::from_value(json["posts"].clone()).unwrap();
         let posts = json["posts"].as_array().unwrap();
+
+        // TODO this should never happen. Return an error
         if posts.len() == 0 {
             return Either::Right(None);
         }
         // let posts_iter = posts.iter().filter(|post| post.time != 0 && post.no != 0);
         // let posts = json["posts"].as_array().unwrap();
         // let no = posts[if posts.len() == 1 { 0 } else { 1 }].no;
-        let no = posts[if posts.len() == 1 { 0 } else { 1 }]["no"].as_i64().map(|v| v as u64).unwrap();
+        let start = posts[if posts.len() == 1 { 0 } else { 1 }]["no"].as_u64().unwrap_or_default();
+        // let start = if let Some(post_json) = json["posts"].get(1) {
+        //     post_json["no"].as_u64().unwrap()
+        // } else {
+        //     json["posts"][0]["no"].as_u64().unwrap()
+        // };
         let mut conn = self.write().await;
 
         // Select all posts from DB starting from new json post's first reply `no` (default to OP if no
         // replies).
-        let query = format!("select * from `{board}` where thread_num = {thread} and num >= {num} and subnum = 0;", board = &board_info.board, num = no, thread = thread);
+        let query = format!("select * from `{board}` where thread_num = {thread} and num >= {start} and subnum = 0;", board = &board_info.board, start = start, thread = thread);
         let res: Result<Vec<mysql_async::Row>, _> = conn.query(query.as_str()).await;
 
         match res {
@@ -443,6 +471,20 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
             .map_or_else(|| false, |_| true)
     }
 
+    async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Option<mysql_async::Row>> {
+        let mut conn = self.write().await;
+        let store = STATEMENTS.read().await;
+        // BoardId of boards.json entry in db is always 1
+        let map = (*store).get(&board_info.id).unwrap();
+        let statement = map.get(&Query::PostGetMedia).unwrap();
+        let mut res: Option<mysql_async::Row> = conn.exec_first(statement, (md5,)).await.ok().flatten();
+        Either::Right(res)
+    }
+
+    async fn post_upsert_media(&self, md5: &[u8], hash_full: Option<&[u8]>, hash_thumb: Option<&[u8]>) -> Result<u64> {
+        unreachable!()
+    }
+
     async fn init_statements(&self, board_id: u16, board: &str) {
         let mut conn = self.write().await;
         let mut map = HashMap::new();
@@ -468,10 +510,13 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
                 Query::ThreadsGetCombined => conn.prep(threads_get_combined()),
                 Query::ThreadsGetModified => conn.prep(threads_get_modified()),
                 Query::PostGetSingle => conn.prep(post_get_single(board)),
+                Query::PostGetMedia => conn.prep(post_get_media(board)),
+                Query::PostUpsertMedia => conn.prep("SELECT 1;"),
             }
             .await
             .unwrap();
             map.insert(query, statement);
+            map.remove(&Query::PostUpsertMedia);
         }
         STATEMENTS.write().await.insert(board_id, map);
     }
@@ -559,7 +604,7 @@ pub mod queries {
     }
 
     pub fn thread_get_media(board: &str) -> String {
-        format!("SELECT * FROM `{board}` WHERE thread_num = ? AND subnum = 0 AND media_hash IS NOT NULL ORDER BY num;", board = board)
+        format!("SELECT *, FROM_BASE64(media_hash) AS md5 FROM `{board}` WHERE thread_num = ? AND subnum = 0 AND media_hash IS NOT NULL ORDER BY num;", board = board)
     }
 
     pub fn thread_get_last_modified(board: &str) -> String {
@@ -710,5 +755,9 @@ pub mod queries {
     "#,
             board = board
         )
+    }
+
+    pub fn post_get_media(board: &str) -> String {
+        format!("SELECT * FROM `{board}_images` WHERE media_hash=?;", board = board)
     }
 }

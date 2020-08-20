@@ -1,16 +1,16 @@
     -- To load this file:
     -- PGPASSWORD env $ENV:PGPASSWORD='zxc'
-    -- createdb -h localhost -p 5432 -U postgres ena4
-    -- echo "SELECT 'CREATE DATABASE ena4' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ena4')\gexec" | psql -h localhost -p 5432 -U postgres
-    -- psql -h localhost -p 5432 -U postgres -d ena4 -f up.sql
-    -- cat up.sql | psql -h localhost -p 5432 -U postgres -d ena4
+    -- createdb -h localhost -p 5432 -U postgres ena2
+    -- echo "SELECT 'CREATE DATABASE ena2' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ena2')\gexec" | psql -h localhost -p 5432 -U postgres
+    -- psql -h localhost -p 5432 -U postgres -d ena2 -f up.sql
+    -- cat src/sql/up.sql | psql -h localhost -p 5432 -U postgres -d ena2
     
     -- SHOW search_path;
     CREATE SCHEMA IF NOT EXISTS ch;
     CREATE SCHEMA IF NOT EXISTS extensions;
     SET search_path = "ch", "$user", public, extensions;
-    ALTER DATABASE ena4 SET search_path = "ch", "$user", public, extensions;
-    ALTER DATABASE ena4 SET timezone TO 'America/New_York';
+    ALTER DATABASE ena2 SET search_path = "ch", "$user", public, extensions;
+    ALTER DATABASE ena2 SET timezone TO 'America/New_York';
 
     -- make sure everybody can use everything in the extensions schema
     grant usage on schema extensions to public;
@@ -43,12 +43,14 @@
         -- "sha256"        BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content)) STORED,
         -- "sha256t"       BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content_thumb)) STORED,
         "sha256"        BYTEA UNIQUE,
-        "sha256t"       BYTEA UNIQUE,
+        -- Thumbnails aren't unique. 2 full medias can have the same thumbnail
+        "sha256t"       BYTEA,
         "content"       BYTEA,
         "content_thumb" BYTEA
     );
     
     CREATE UNIQUE   INDEX IF NOT EXISTS unq_idx_media_md5          ON "media" ("md5");
+    CREATE          INDEX IF NOT EXISTS idx_media_sha256t          ON "media" ("sha256t");
     
     COMMENT ON COLUMN media.id is 'SeaweedFS fid';
     

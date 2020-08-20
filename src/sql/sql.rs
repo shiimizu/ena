@@ -1,7 +1,6 @@
 // use fomat_macros::{epintln, fomat, pintln};
 use serde::{Deserialize, Serialize};
 
-use color_eyre::eyre::Result;
 // use futures::io::AsyncReadExt;
 // use futures::stream::StreamExt;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
@@ -9,6 +8,7 @@ use crate::config::{Board, Opt};
 use async_trait::async_trait;
 use futures::{future::Either, stream::Iter};
 // use std::{collections::HashSet, fmt::Debug};
+use color_eyre::eyre::{eyre, Result};
 use std::fmt::Debug;
 use strum_macros::EnumIter;
 pub mod postgres;
@@ -68,6 +68,8 @@ pub enum Query {
     ThreadsGetCombined,
     ThreadsGetModified,
     PostGetSingle,
+    PostGetMedia,
+    PostUpsertMedia,
 }
 
 #[async_trait]
@@ -83,7 +85,7 @@ pub trait QueryExecutor {
     async fn board_upsert_archive(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
 
     async fn thread_get(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>>;
-    async fn thread_get_media(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>>;
+    async fn thread_get_media(&self, board_info: &Board, thread: u64, start: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>>;
     async fn thread_get_last_modified(&self, board_id: u16, thread: u64) -> Option<String>;
     async fn thread_upsert(&self, board_info: &Board, thread_json: &serde_json::Value) -> u64;
     async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64>;
@@ -93,8 +95,63 @@ pub trait QueryExecutor {
     async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> bool;
+    async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Option<mysql_async::Row>>;
+    async fn post_upsert_media(&self, md5: &[u8], hash_full: Option<&[u8]>, hash_thumb: Option<&[u8]>) -> Result<u64>;
 
     async fn init_statements(&self, board_id: u16, board: &str);
+}
+
+// pub fn iter<I>(i: I) -> Row<impl RowTrait>
+//  {
+//         Ro
+//     }
+pub trait RowTrait {
+    fn get<'a, I, T>(&'a self, idx: I) -> Result<T>
+    where
+        I: RowIndex,
+        T: RowFrom<'a>;
+}
+pub trait RowIndex: tokio_postgres::row::RowIndex + mysql_common::row::ColumnIndex + std::fmt::Display {}
+pub trait RowFrom<'a>: tokio_postgres::types::FromSql<'a> + mysql_async::prelude::FromValue {}
+
+impl<'a> RowFrom<'a> for String {}
+impl<'a> RowFrom<'a> for Option<Vec<u8>> {}
+impl<'a> RowFrom<'a> for Option<String> {}
+impl<'a> RowFrom<'a> for i64 {}
+
+impl<'a> RowIndex for &'a str {}
+
+impl RowTrait for tokio_postgres::Row {
+    fn get<'a, I, T>(&'a self, idx: I) -> Result<T>
+    where
+        I: RowIndex,
+        T: RowFrom<'a>, {
+        Ok(self.try_get::<'a>(&idx)?)
+    }
+}
+
+impl RowTrait for mysql_async::Row {
+    fn get<'a, I, T>(&'a self, idx: I) -> Result<T>
+    where
+        I: RowIndex,
+        T: RowFrom<'a>, {
+        self.get(idx).ok_or_else(|| eyre!("Was an empty value"))
+    }
+}
+
+use std::ops::Deref;
+
+/// Row wrapper
+pub struct Row<T: RowTrait>(T);
+
+impl<T> Deref for Row<T>
+where T: RowTrait
+{
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
 }
 
 use std::iter::{Chain, Repeat, StepBy, Take};

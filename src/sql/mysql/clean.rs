@@ -140,7 +140,7 @@ mod tests {
                 .as_str()
                 .clean_full()
                 .to_string();
-        let target = "Welcome to /x/ - Paranormal. This is not a board for the faint of heart. If you need something to get started with, see the below lists for some basic resources. We hope you enjoy your venture into the spooks, the creeps and the unknown.\n\nThe resources in this thread are not exhaustive and are merely meant for beginners to get their footing.\n\n<img src=\"//s.4cdn.org/image/temp/danger.gif\" alt=\"\">";
+        let target = "/vrpg/ is a place to discuss all types of role-playing video games, including single-player, multi-player, and massively multi-player, turn-based and real-time action, western-style and JRPG.\n\nDoes this mean RPGs are banned on other video game boards? No! /vrpg/ is just a separate board specifically focused on RPGs where discussions about your favorite games can thrive.\n\nPlease familiarize yourself with the rules and remember to use the spoiler function where appropriate!\nPlease note that, like /v/, \"Generals\"—long-term, one-after-the-other, recurring threads about a specific game are not permitted on /vrpg/. Such threads belong on >>>/vg/.";
         pintln!([s]);
         assert_eq!(&s, target);
     }

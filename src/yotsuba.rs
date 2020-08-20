@@ -200,6 +200,14 @@ mod tests {
         posts: Vec<Post>,
     }
 
+    #[test]
+    fn percent_encoding() {
+        // https://i.4cdn.org/f/%E3%83%95%E3%83%A9%E3%83%B3%E5%A4%A7%E7%88%86%E8%B5%B0%EF%BC%81%EF%BC%81.swf
+        let s = percent_encoding::utf8_percent_encode("フラン大爆走！！", percent_encoding::NON_ALPHANUMERIC).to_string();
+        println!("{}", &s);
+        assert_eq!(&s, "%E3%83%95%E3%83%A9%E3%83%B3%E5%A4%A7%E7%88%86%E8%B5%B0%EF%BC%81%EF%BC%81");
+    }
+
     #[rustfmt::skip]
     #[test]
     fn threads_modified() {

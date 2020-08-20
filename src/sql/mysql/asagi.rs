@@ -1,7 +1,7 @@
 use super::clean::*;
 use crate::yotsuba;
 use fomat_macros::fomat;
-use format_sql_query::*;
+use format_sql_query::QuotedData;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
@@ -148,48 +148,56 @@ impl From<&yotsuba::Post> for Post {
             locked:            post.closed.map_or_else(|| false, |v| v == 1) && !post.archived.map_or_else(|| false, |v| v == 1),
             poster_hash:       post.id.as_ref().map(|s| if s == "Developer" { "Dev".into() } else { s.clone() }),
             poster_country:    post.country.as_ref().filter(|&v| !(v == "XX" || v == "A1")).map(|s| s.into()),
-            exif:              if let Some(extra_json) = post.extra.as_ref() {
-                // Add to `exif`
-                if post.unique_ips.is_some() || post.since4pass.is_some() || post.troll_country.is_some() || post.archived_on.is_some() {
+            exif:              {
+                if let Some(extra_json) = post.extra.as_ref() {
+                    // Add to `exif`
                     let mut extra_json_mut = extra_json.clone();
                     let mut _exif = extra_json_mut.as_object_mut().unwrap();
-                    if let Some(unique_ips) = post.unique_ips {
-                        _exif.insert(String::from("uniqueIps"), unique_ips.into());
+                    if _exif.len() > 0 {
+                        if post.unique_ips.is_some() || post.since4pass.is_some() || post.troll_country.is_some() || post.archived_on.is_some() {
+                            // let mut extra_json_mut = extra_json.clone();
+                            if let Some(unique_ips) = post.unique_ips {
+                                _exif.insert(String::from("uniqueIps"), unique_ips.into());
+                            }
+                            if let Some(since4pass) = post.since4pass {
+                                _exif.insert(String::from("since4pass"), since4pass.into());
+                            }
+                            if let Some(troll_country) = &post.troll_country {
+                                _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
+                            }
+                            if let Some(archived_on) = &post.archived_on {
+                                _exif.insert(String::from("archived_on"), (*archived_on).into());
+                            }
+                            let extra_string: String = serde_json::to_string(&extra_json_mut).unwrap();
+                            Some(extra_string)
+                        } else {
+                            let extra_string: String = serde_json::to_string(&extra_json_mut).unwrap();
+                            Some(extra_string)
+                        }
+                    } else {
+                        None
                     }
-                    if let Some(since4pass) = post.since4pass {
-                        _exif.insert(String::from("since4pass"), since4pass.into());
-                    }
-                    if let Some(troll_country) = &post.troll_country {
-                        _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
-                    }
-                    if let Some(archived_on) = &post.archived_on {
-                        _exif.insert(String::from("archived_on"), (*archived_on).into());
-                    }
-                    let extra_string: String = serde_json::to_string(&extra_json_mut).unwrap();
-                    Some(extra_string)
                 } else {
-                    None
-                }
-            } else {
-                // Go here if there's no extra keys
-                if post.unique_ips.is_some() || post.since4pass.is_some() || post.troll_country.is_some() || post.archived_on.is_some() {
-                    let mut _exif = serde_json::Map::new();
-                    if let Some(unique_ips) = post.unique_ips {
-                        _exif.insert(String::from("uniqueIps"), unique_ips.into());
+                    // Go here if there's no extra keys
+                    if post.unique_ips.is_some() || post.since4pass.is_some() || post.troll_country.is_some() || post.archived_on.is_some() {
+                        let mut _exif = serde_json::Map::new();
+                        if let Some(unique_ips) = post.unique_ips {
+                            _exif.insert(String::from("uniqueIps"), unique_ips.into());
+                        }
+                        if let Some(since4pass) = post.since4pass {
+                            _exif.insert(String::from("since4pass"), since4pass.into());
+                        }
+                        if let Some(troll_country) = &post.troll_country {
+                            _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
+                        }
+                        if let Some(archived_on) = &post.archived_on {
+                            _exif.insert(String::from("archived_on"), (*archived_on).into());
+                        }
+                        let extra_string: String = serde_json::to_string(&_exif).unwrap();
+                        Some(extra_string)
+                    } else {
+                        None
                     }
-                    if let Some(since4pass) = post.since4pass {
-                        _exif.insert(String::from("since4pass"), since4pass.into());
-                    }
-                    if let Some(troll_country) = &post.troll_country {
-                        _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
-                    }
-                    if let Some(archived_on) = &post.archived_on {
-                        _exif.insert(String::from("archived_on"), (*archived_on).into());
-                    }
-                    let extra_string: String = serde_json::to_string(&_exif).unwrap();
-                    Some(extra_string)
-                } else {
-                    None
                 }
             },
         }

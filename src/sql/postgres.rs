@@ -83,12 +83,13 @@ impl QueryExecutor for tokio_postgres::Client {
         Either::Left(res)
     }
 
-    async fn thread_get_media(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
+    async fn thread_get_media(&self, board_info: &Board, thread: u64, start: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
         let store = STATEMENTS.read().await;
-        let statement = (*store).get(&Query::ThreadGet).unwrap();
+        let statement = (*store).get(&Query::ThreadGetMedia).unwrap();
         let b = &(board_info.id as i16);
         let t = &(thread as i64);
-        let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync)];
+        let s = &(start as i64);
+        let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync), s as &(dyn ToSql + Sync)];
         let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
         Either::Left(res)
     }
@@ -159,6 +160,20 @@ impl QueryExecutor for tokio_postgres::Client {
         res.map(|r| true).unwrap_or(false)
     }
 
+    async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Option<mysql_async::Row>> {
+        let store = STATEMENTS.read().await;
+        let statement = (*store).get(&Query::PostGetMedia).unwrap();
+        let res = self.query_opt(statement, &[&hash_thumb]).await.map_err(|e| eyre!(e));
+        Either::Left(res)
+    }
+
+    async fn post_upsert_media(&self, md5: &[u8], hash_full: Option<&[u8]>, hash_thumb: Option<&[u8]>) -> Result<u64> {
+        let store = STATEMENTS.read().await;
+        let statement = (*store).get(&Query::PostUpsertMedia).unwrap();
+        let res = self.execute(statement, &[&md5, &Some(hash_full), &Some(hash_thumb)]).await.map_err(|e| eyre!(e));
+        res
+    }
+
     async fn init_statements(&self, board_id: u16, board: &str) {
         let mut map = STATEMENTS.write().await;
         for query in super::Query::iter() {
@@ -182,6 +197,8 @@ impl QueryExecutor for tokio_postgres::Client {
                 Query::ThreadsGetCombined => self.prepare(threads_get_combined()),
                 Query::ThreadsGetModified => self.prepare(threads_get_modified()),
                 Query::PostGetSingle => self.prepare(post_get_single()),
+                Query::PostGetMedia => self.prepare(post_get_media()),
+                Query::PostUpsertMedia => self.prepare(post_upsert_media()),
             }
             .await
             .unwrap();
@@ -264,8 +281,14 @@ pub fn thread_get<'a>() -> &'a str {
     "#
 }
 pub fn thread_get_media<'a>() -> &'a str {
+    // SELECT * FROM posts WHERE board=$1 AND (no=$2 or resto=$2) AND md5 IS NOT NULL ORDER BY no;
     r#"
-    SELECT * FROM posts WHERE board=$1 AND (no=$2 or resto=$2) AND md5 IS NOT NULL ORDER BY no;
+    SELECT posts.resto, posts.no, posts.tim, posts.ext, posts.filename, media.* FROM posts
+    INNER JOIN media ON posts.md5 = media.md5
+    WHERE posts.board = $1  AND (posts.resto=$2 or posts.no=$2)
+                            AND posts.no >= $3
+                            AND posts.md5 IS NOT null
+                            AND NOT (CASE WHEN posts.filedeleted is not null THEN posts.filedeleted = true ELSE false END);
     "#
 }
 
@@ -402,6 +425,27 @@ pub fn threads_get_modified<'a>() -> &'a str {
 
 pub fn post_get_single<'a>() -> &'a str {
     "SELECT * from posts where board=$1 and resto=$2 and no=$3 LIMIT 1;"
+}
+
+pub fn post_get_media<'a>() -> &'a str {
+    r#"
+    SELECT * FROM media WHERE sha256t=$1::bytea LIMIT 1;
+    "#
+}
+
+pub fn post_upsert_media<'a>() -> &'a str {
+    r#"
+    INSERT INTO media("md5", "sha256", "sha256t") VALUES($1, $2, $3)
+    ON CONFLICT ("md5")
+    DO UPDATE SET
+        "sha256"    = excluded."sha256", 
+        "sha256t"   = excluded."sha256t"
+    WHERE EXISTS (
+    		SELECT media."sha256", media."sha256t"
+    		EXCEPT
+    		SELECT excluded."sha256", excluded."sha256t"
+    	);
+    "#
 }
 
 pub fn get_thread_index<'a>() -> &'a str {
