@@ -499,7 +499,6 @@ pub fn get_opt() -> Result<Opt> {
                         if q.media_url              == default_opt.media_url            { q.media_url = opt.media_url;                              }
                         
                         // Database
-                        // TODO use database url?
                         if q.database.url           == default_database.url             { q.database.url        = opt.database.url.clone();         }
                         if q.database.engine        == default_database.engine          { q.database.engine     = opt.database.engine.clone();      }
                         if q.database.name          == default_database.name            { q.database.name       = opt.database.name.clone();        }

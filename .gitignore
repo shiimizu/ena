@@ -30,6 +30,7 @@ build*
 
 /db/
 /assets/
+/txt/
 
 *.png
 *.txt

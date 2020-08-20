@@ -22,25 +22,22 @@ use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
 use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
-use reqwest::{
-    self,
-    header::{IF_MODIFIED_SINCE, LAST_MODIFIED},
-    IntoUrl, StatusCode,
-};
-use smol::{unblock, Task, Timer};
+use reqwest::{self, StatusCode};
+use smol::{Task, Timer};
 use std::{
     collections::HashMap,
     fmt::Debug,
     fs::{create_dir_all, File},
-    io::Read,
     sync::atomic::{AtomicBool, AtomicU8, Ordering},
     thread,
     time::{Duration, Instant},
 };
 
 pub mod config;
+pub mod net;
 pub mod yotsuba;
 use config::*;
+use net::*;
 use yotsuba::update_post_with_extra;
 
 #[path = "sql/sql.rs"]
@@ -50,33 +47,14 @@ pub mod sql;
 // postgresql://postgres:zxc@localhost:5432/ena?client_encoding=utf8
 
 #[async_trait]
-pub trait HttpClient: Sync + Send {
-    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: &Option<String>) -> Result<(StatusCode, String, Vec<u8>)>;
-}
-
-#[async_trait]
 pub trait Archiver {
     async fn run(&self) -> Result<()>;
     async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()>;
     async fn download_boards_index(&self) -> Result<()>;
     async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<()>;
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<ThreadType>;
+    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)>;
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
 }
-/*
-#[derive(Deserialize, Debug)]
-struct Post {
-    no:    u64,
-    resto: u64,
-    tim:   u64,
-    ext:   String,
-}
-impl Default for Post {
-    fn default() -> Self {
-        let t = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
-        Self { no: t.as_secs(), resto: t.as_secs(), tim: t.as_secs(), ext: String::new() }
-    }
-}*/
 
 async fn sleep(dur: Duration) {
     Timer::new(dur).await;
@@ -85,190 +63,6 @@ async fn sleep(dur: Duration) {
 fn exists<P: AsRef<std::path::Path>>(path: P) -> bool {
     std::fs::metadata(path).is_ok()
 }
-
-/// Download to file
-/*
-async fn dl(client: &reqwest::Client, url: String, post: Post, config: &Opt) -> Result<()> {
-    if config.debug {
-        pintln!((url));
-    }
-    for _ in 0..=3 {
-        let resp = client.get(&url).send().await.unwrap();
-        match resp.status() {
-            StatusCode::OK => {
-                let _url = url::Url::parse(&url).unwrap();
-                let last = _url.path_segments().map(Iterator::last).flatten().unwrap();
-
-                let file_path = fomat!((config.media_dir.to_str().unwrap())"/"(last));
-
-                let file = blocking!(File::create(&file_path))?;
-                let mut file = writer(file);
-
-                // let bytes = resp.bytes().await.unwrap();
-                // io::copy_buf(bytes.as_ref(), &mut file).await.unwrap();
-                // writer.close().await.unwrap();
-                let mut stream = resp.bytes_stream();
-                while let Some(item) = stream.next().await {
-                    file.write_all(&item?).await.unwrap();
-                }
-                // file.write_all(bytes.as_ref()).await.unwrap();
-                file.flush().await.unwrap();
-            }
-            StatusCode::NOT_FOUND => epintln!((StatusCode::NOT_FOUND)": "(&url)" "[post]),
-            status => epintln!((status)": "(&url)),
-        }
-        break;
-    }
-    Ok(())
-}
-*/
-
-/// Implementation of `HttpClient` for `reqwest`.
-#[async_trait]
-impl HttpClient for reqwest::Client {
-    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: &Option<String>) -> Result<(StatusCode, String, Vec<u8>)> {
-        // let url: &str = url.into();
-        // let _url = url.clone();
-        let res = {
-            if let Some(lm) = last_modified {
-                if lm.is_empty() {
-                    self.get(url)
-                } else {
-                    self.get(url).header(IF_MODIFIED_SINCE, lm)
-                }
-            } else {
-                self.get(url)
-            }
-            .send()
-            .await
-        }?;
-
-        // Last-Modified Should never be empty is status is OK
-        // Which we always check after this method is called
-        let lm = res.headers().get(LAST_MODIFIED).map(|r| r.to_str().ok()).flatten().unwrap_or("");
-
-        Ok((res.status(), lm.into(), res.bytes().await.map(|b| b.to_vec()).unwrap_or(vec![])))
-    }
-}
-
-/*
-async fn get_json(client: &reqwest::Client, url: &str, last_modified: Option<&str>) -> Result<serde_json::Value> {
-    for idx in 0..3u8 {
-        let resp = if last_modified.is_some() { client.get(url).header(IF_MODIFIED_SINCE, last_modified.unwrap()) } else { client.get(url) }.send().await;
-        match resp {
-            // this will reach the end of idx if it keeps returning none, ie 404
-            Ok(res) => match res.status() {
-                StatusCode::OK =>
-                    if let Ok(j) = res.json().await {
-                        return Ok(j);
-                    },
-                StatusCode::NOT_FOUND => epintln!((StatusCode::NOT_FOUND)": "(&url)),
-                StatusCode::NOT_MODIFIED => epintln!((StatusCode::NOT_FOUND)": "(&url)),
-                status => epintln!((status)": "(&url)),
-            },
-            // hardly reaches the end here for errors
-            // probably network error
-            Err(err) => {
-                if idx == 5 {
-                    return Err(eyre!(err));
-                }
-                epintln!((err));
-            }
-        }
-    }
-    Err(eyre!("Something went wrong!")) // when none
-}
-*/
-
-async fn md5_of_file(file_path: String) -> Result<Vec<u8>> {
-    let result = unblock!({
-        // Check disk
-        let mut file = File::open(file_path);
-
-        // Get the hash for file on disk
-        let mut hasher = Md5::new();
-        let mut contents = Vec::new();
-        file.map(|mut f| f.read_to_end(&mut contents)).map(|f| {
-            f.map(|i| {
-                hasher.update(&contents);
-                hasher.finalize()
-            })
-        })
-    })??;
-    Ok(result.to_vec())
-}
-
-/*
-async fn process_thread(thread: serde_json::Value, client: &reqwest::Client, config: &Opt) -> Result<()> {
-    let mut fut = FuturesUnordered::new();
-    let no = thread.get("no").unwrap().as_i64().unwrap();
-    let posts_json = get_json(client, &fomat!((&config.api_url)"/a/thread/"(no)".json")).await.unwrap();
-    let posts = posts_json.get("posts").unwrap().as_array().unwrap();
-    for post in posts {
-        if let Some(md5) = post.get("md5") {
-            let tim = post.get("tim").unwrap().as_i64().unwrap();
-            // TODO: Media
-            let ext = if config.with_media { post.get("ext").unwrap().as_str().unwrap() } else { "s.jpg" };
-            // let ext = "s.jpg";
-            let url = fomat!((&config.media_url)"/a/"(tim)(ext));
-            let file_path = fomat!((&config.media_dir.to_str().unwrap())"/"(tim)(ext));
-            let path_file = std::path::Path::new(&file_path);
-
-            // let mut run:bool = false;
-
-            if path_file.is_file() {
-                // TODO: Can't verify thumbs, only full media
-                if ext != "s.jpg" {
-                    // md5 from json to binary
-                    let md5 = md5.as_str().unwrap();
-                    let md5_bytes = base64::decode(md5.as_bytes())?;
-                    let result = md5_of_file((&file_path).clone()).await.unwrap();
-
-                    // Compare
-                    if &md5_bytes[..] != &result[..] {
-                        // run = true;
-                        let no = post.get("no").unwrap().as_i64().unwrap();
-                        let resto = post.get("resto").unwrap().as_i64().unwrap();
-                        let po = Post { no: no as u64, resto: resto as u64, tim: tim as u64, ext: ext.into() };
-                        // TODO: Hashes don't match on disk! When downloading full media
-                        // epintln!("Page #"(p)" Thread #"(t)" Hashes don't match on disk!: "[po]);
-                        epintln!("Hashes don't match on disk!: "[po]);
-                        erintln!({"{:x?}", &md5_bytes[..]});
-                        erintln!({"{:x?}", &result[..]});
-                        fut.push(dl(&client, url, po, &config));
-                    }
-                }
-            } else {
-                // run = true;
-                let no = post.get("no").unwrap().as_i64().unwrap();
-                let resto = post.get("resto").unwrap().as_i64().unwrap();
-                let po = Post { no: no as u64, resto: resto as u64, tim: tim as u64, ext: ext.into() };
-                fut.push(dl(&client, url, po, &config));
-            }
-
-            // stream/chunk download media buffered to 10 concurrenlty rather than like 300
-            // concurrently/parallel  -> Only poll if >= limit
-            let media_threads = config.media_threads.max(5); // Choose the max between user and 5
-            if fut.len() >= (media_threads as usize) {
-                while let Some(_) = fut.next().await {}
-            }
-
-            // break;
-        }
-    }
-
-    // Finish off any images missing in the thread
-    while let Some(_) = fut.next().await {}
-
-    // TODO: CTRL-C has to be implemented here since where getting threads concurrently!
-    // if let Ok(item) = receiver.try_recv() {
-    //     if matches!(item, Some(true)) {
-    //         return Ok(());
-    //     }
-    // }
-    Ok(())
-}
-*/
 
 static CTRLC: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static INIT: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
@@ -282,9 +76,6 @@ struct FourChan<D> {
     db_client: D,
     opt:       Opt,
 }
-
-// pub trait Site {}
-// impl Site for FourChan {}
 
 impl<D> FourChan<D>
 where D: sql::QueryExecutor
@@ -329,14 +120,18 @@ async fn create_client(origin: &str, opt: &Opt) -> Result<reqwest::Client> {
                 let mut cb = reqwest::Client::builder().default_headers(headers.clone()).user_agent(ua).use_rustls_tls().gzip(true).brotli(true);
                 let mut cb = cb.proxy(_proxy.clone()).build()?;
                 pintln!("Testing proxy: "(proxy_url));
-                // TODO should be a head request?
-                let (status, last_modified, body) = cb.gett("https://a.4cdn.org/po/catalog.json", &None).await?;
-                if status == StatusCode::OK {
-                    break;
-                } else {
-                    if retry == 3 {
-                        epintln!("Proxy: " (proxy_url) " ["(status)"]");
-                        proxies_list.pop();
+                match cb.head("https://a.4cdn.org/po/catalog.json").send().await {
+                    Err(e) => epintln!("Error HEAD request: "(e)),
+                    Ok(resp) => {
+                        let status = resp.status();
+                        if status == StatusCode::OK {
+                            break;
+                        } else {
+                            if retry == 3 {
+                                epintln!("Proxy: " (proxy_url) " ["(status)"]");
+                                proxies_list.pop();
+                            }
+                        }
                     }
                 }
             }
@@ -468,7 +263,6 @@ where D: sql::QueryExecutor + Sync + Send
 
     async fn download_boards_index(&self) -> Result<()> {
         let last_modified = self.db_client.boards_index_get_last_modified().await;
-        // FIXME: retry variable
         for retry in 0..=3u8 {
             let resp = self.client.gett(self.opt.api_url.join("boards.json")?, &last_modified).await;
             match resp {
@@ -489,7 +283,7 @@ where D: sql::QueryExecutor + Sync + Send
     }
 
     async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()> {
-        if let Some(_boards) = boards {
+        if let Some(mut _boards) = boards {
             if _boards.len() == 0 {
                 return Ok(());
             }
@@ -499,11 +293,11 @@ where D: sql::QueryExecutor + Sync + Send
             // cycle
             loop {
                 let now = Instant::now();
-                for _board in _boards.iter() {
+                for _board in _boards.iter_mut() {
                     if startup {
                         let valid_board: bool = self.db_client.board_is_valid(_board.board.as_str()).await;
                         if !valid_board {
-                            // FIXME Filter out invalid boards from the vec before iterating
+                            // TODO Filter out invalid boards from the vec before iterating
                             return Err(eyre!("Invalid board `{}`", &_board.board));
                         }
                     }
@@ -513,8 +307,7 @@ where D: sql::QueryExecutor + Sync + Send
 
                     // get board
                     let board_id = self.db_client.board_get(_board.board.as_str()).await.unwrap();
-                    // FIXME Get rid of clones... probably have to do some interior mutability or something
-                    let mut _board = _board.clone();
+                    // let mut _board = _board.clone();
                     _board.id = board_id;
 
                     // When thread is None it's from list of boards
@@ -564,7 +357,7 @@ where D: sql::QueryExecutor + Sync + Send
 
             // get board
             let board_id = self.db_client.board_get(board_info.board.as_str()).await.unwrap();
-            // FIXME Get rid of clones... probably have to do some interior mutability or something
+            // TODO Get rid of clones... probably have to do some interior mutability or something
             let mut _board = board_info.clone();
             _board.id = board_id;
 
@@ -583,9 +376,8 @@ where D: sql::QueryExecutor + Sync + Send
                 let now = Instant::now();
                 // with_threads or with_archives don't apply here, since going here implies you want the
                 // thread/archive
-                // FIXME on delted/archived, need to leave the loop
-                self.download_thread(&_board, thread, ThreadType::Threads).await.unwrap();
-                if !_board.watch_threads || get_ctrlc() {
+                let (thread_type, deleted) = self.download_thread(&_board, thread, ThreadType::Threads).await.unwrap();
+                if !_board.watch_threads || get_ctrlc() || thread_type.is_archive() || deleted {
                     break;
                 }
                 // FIXME: elpased() silent panic
@@ -660,7 +452,6 @@ where D: sql::QueryExecutor + Sync + Send
                                     self.db_client.threads_get_combined(ThreadType::Archive, board_info.id, &body_json).await
                                 }
                             };
-                            // TODO mysql or postgres
                             match either {
                                 Either::Right(rows) =>
                                     if let Some(mut rows) = rows {
@@ -765,21 +556,21 @@ where D: sql::QueryExecutor + Sync + Send
         Ok(())
     }
 
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<ThreadType> {
+    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)> {
         let sem = SEMAPHORE.acquire(1).await;
         let mut with_tail = board_info.with_tail;
         let hz = Duration::from_millis(250);
         let mut interval = Duration::from_millis(board_info.interval_threads.into());
         let mut thread_type = thread_type;
+        let mut deleted = false;
 
         // One giant loop so we can re-execute this function (if we find out tail-json is nonexistent)
         // without resorting to recursion which generates unintended behaviours with the semaphore.
         // We break at the end so it's OK.
         'outer: loop {
             if get_ctrlc() {
-                return Ok(thread_type);
+                return Ok((thread_type, deleted));
             }
-            // TODO: OR media not complete (missing media)
             let last_modified = self.db_client.thread_get_last_modified(board_info.id, thread).await;
             let url =
                 self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join("thread/")?.join(&format!("{thread}{tail}.json", thread = thread, tail = if with_tail { "-tail" } else { "" }))?;
@@ -849,10 +640,8 @@ where D: sql::QueryExecutor + Sync + Send
                                         }
 
                                         if get_ctrlc() {
-                                            return Ok(thread_type);
+                                            return Ok((thread_type, deleted));
                                         }
-
-                                        // TODO: Download media only if we don't already have it
 
                                         // Upsert Thread
                                         let len = self.db_client.thread_upsert(board_info, &thread_json).await;
@@ -1019,7 +808,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                                 }
 
                                                                 if get_ctrlc() {
-                                                                    return Ok(thread_type);
+                                                                    return Ok((thread_type, deleted));
                                                                 }
 
                                                                 // Downlaod full media
@@ -1061,6 +850,7 @@ where D: sql::QueryExecutor + Sync + Send
                                     with_tail = false;
                                     continue 'outer;
                                 }
+                                deleted = true;
                                 let either = self.db_client.thread_update_deleted(board_info.id, thread).await;
                                 let tail = if with_tail { "-tail" } else { "" };
                                 match either {
@@ -1132,7 +922,7 @@ where D: sql::QueryExecutor + Sync + Send
             }
             break;
         }
-        Ok(thread_type)
+        Ok((thread_type, deleted))
     }
 
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()> {

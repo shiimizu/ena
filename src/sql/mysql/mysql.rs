@@ -73,7 +73,6 @@ async fn get_statement<'a>(&self, query: Query) -> &'a mysql_async::Statement {
 }
 */
 
-// FIXME DONT USE JSON in `boards` table, use MEDIUMTEXT
 #[async_trait]
 impl QueryExecutor for RwLock<mysql_async::Conn> {
     async fn boards_index_get_last_modified(&self) -> Option<String> {
@@ -279,12 +278,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         );
 
         let mut conn = self.write().await;
-        // let store = STATEMENTS.read().await;
-        // let map = (*store).get(&board_id).unwrap();
-        // let statement = map.get(&Query::ThreadUpsert).unwrap();
-        // let res = conn.exec_drop(thread_upsert(board_info.board), params).await;
         // TODO: Return rows affected
-        // res.map(|_| 0).unwrap_or(0)
         conn.query_drop(q.as_str()).await.unwrap();
         0
     }
