@@ -171,6 +171,16 @@ async fn async_main() -> Result<()> {
     let mut opt = config::get_opt()?;
 
     if opt.debug {
+        let new_url = format!(
+            "{engine}://{user}:{password}@{host}:{port}/{database}",
+            engine = if &opt.database.engine.as_str().to_lowercase() != "postgresql" { "mysql" } else { &opt.database.engine },
+            user = &opt.database.username,
+            password = "*****",
+            host = &opt.database.host,
+            port = &opt.database.port,
+            database = &opt.database.name
+        );
+        opt.database.url = Some(new_url);
         opt.database.password = "*****".into();
         pintln!((serde_json::to_string_pretty(&opt).unwrap()));
         return Ok(());
@@ -206,6 +216,42 @@ async fn async_main() -> Result<()> {
         let out = out.trim();
 
         if out.is_empty() {
+            let up_sql = {
+                let mut up = include_str!("sql/up.sql").to_string();
+                if opt.database.schema == "public" {
+                    up = up.replace(r#""%%SCHEMA%%", "#, "");
+                }
+
+                // This is could be better.. but w/e
+                // Just don't have empty strings on your timescaledb settings..
+                if let Some(ts) = &opt.timescaledb {
+                    if ts.column.is_empty() || ts.every.is_empty() {
+                        epintln!("Skipping timescaledb.. One of the columns are empty.");
+                        up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION");
+                        up = up.replace("SELECT create_hypertable", "-- SELECT create_hypertable");
+                    } else {
+                        up = up.replace("'time'", &fomat!("'"(ts.column)"'" ));
+
+                        if !ts.every.is_empty() && !ts.every.to_lowercase().contains("interval") {
+                            epintln!("Error!\nThe current schema cannot use an integer for the `every` column for TimescaleDB due to our use of triggers.\nSee tracking issue: https://github.com/timescale/timescaledb/issues/1084"
+                            "\n"
+                            r#"Consider using something like "INTERVAL '2 weeks'""#
+                            );
+                            return Ok(());
+                        }
+
+                        up = up.replace("INTERVAL '2 weeks'", &ts.every);
+                    }
+                } else {
+                    up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION");
+                    up = up.replace("SELECT create_hypertable", "-- SELECT create_hypertable");
+                }
+
+                up = up.replace("%%SCHEMA%%", &opt.database.schema);
+                up = up.replace("%%DB_NAME%%", &opt.database.name);
+                up
+            };
+
             pintln!("Initializing database..");
 
             // Create database if not exists
@@ -233,30 +279,6 @@ async fn async_main() -> Result<()> {
 
             // When the ouput is something, that means a new database was created
             if !out.is_empty() {
-                let mut up = include_str!("sql/up.sql").to_string();
-                if opt.database.schema == "public" {
-                    up = up.replace(r#""%%SCHEMA%%", "#, "");
-                }
-
-                // This is could be better.. but w/e
-                // Just don't have empty strings on your timescaledb settings..
-                if let Some(ts) = &opt.timescaledb {
-                    if ts.column.is_empty() || ts.every.is_empty() {
-                        epintln!("Skipping timescaledb.. One of the columns are empty.");
-                        up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION");
-                        up = up.replace("SELECT create_hypertable", "-- SELECT create_hypertable");
-                    } else {
-                        up = up.replace("'time'", &fomat!("'"(ts.column)"'" ));
-                        up = up.replace("INTERVAL '2 weeks'", &ts.every);
-                    }
-                } else {
-                    up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION");
-                    up = up.replace("SELECT create_hypertable", "-- SELECT create_hypertable");
-                }
-
-                up = up.replace("%%SCHEMA%%", &opt.database.schema);
-                up = up.replace("%%DB_NAME%%", &opt.database.name);
-
                 // Run the sql migration to init tables/triggers/etc
                 let mut child = Command::new("psql")
                     .stdin(async_process::Stdio::piped())
@@ -265,7 +287,7 @@ async fn async_main() -> Result<()> {
                     .spawn()?;
                 {
                     let stdin = child.stdin.as_mut().expect("Failed to open stdin");
-                    stdin.write_all(up.as_bytes()).await.expect("Failed to write to stdin");
+                    stdin.write_all(up_sql.as_bytes()).await.expect("Failed to write to stdin");
                 }
                 let output = child.output().await?;
             }
