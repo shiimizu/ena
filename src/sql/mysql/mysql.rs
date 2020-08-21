@@ -288,7 +288,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadUpdateLastModified).unwrap();
-        let res = conn.exec_drop(statement, (last_modified, board_id)).await;
+        let res = conn.exec_drop(statement, (last_modified, thread)).await;
         res.map(|_| 0).map_err(|e| eyre!(e))
     }
 
@@ -301,12 +301,12 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
 
         let get_single_statement = map.get(&Query::PostGetSingle).unwrap();
 
-        let res = conn.exec_drop(statement, (thread,)).await;
+        let res = conn.exec_drop(statement, (thread,)).await.unwrap();
         let mut single_res: Option<mysql_async::Row> = conn.exec_first(get_single_statement, (thread, thread)).await.ok().flatten();
 
+        // Get the post afterwards to see if it was deleted
         if let Some(mut row) = single_res {
-            let del: Option<Option<u8>> = row.get("deleted");
-            let del = del.flatten();
+            let del = row.get::<Option<u8>, &str>("deleted").flatten();
             if let Some(_del) = del {
                 if _del == 1 {
                     Either::Right(Some(futures::stream::iter(vec![thread])))
