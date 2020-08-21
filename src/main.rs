@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use ctrlc;
 use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
 // use futures::stream::FuturesOrdered;
+use async_process::Command;
 use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -177,8 +178,6 @@ async fn async_main() -> Result<()> {
     pintln!("Press CTRL+C to exit");
     let origin = "http://boards.4chan.org";
     if !opt.asagi_mode {
-        use async_process::Command;
-
         // temp set env variable
         std::env::set_var("PGPASSWORD", &opt.database.password);
         std::env::set_var("PGOPTIONS", "--client-min-messages=warning");
@@ -289,6 +288,28 @@ async fn async_main() -> Result<()> {
         fchan.run().await
     } else {
         use mysql_async::prelude::*;
+        // temp set env variable
+        std::env::set_var("MYSQL_PWD", &opt.database.password);
+
+        // Create database if not exists
+        let mut child = Command::new("mysql")
+            .stdout(async_process::Stdio::piped())
+            .args(&[
+                "-h",
+                &opt.database.host,
+                "-P",
+                &fomat!((opt.database.port)),
+                "-u",
+                &opt.database.username,
+                "-e",
+                // This is made to be wrapped in quotes, so we dont't need to wrap in quotes manually.
+                // CREATE DATABASE IF NOT EXISTS `asagi` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+                &fomat!(r#"CREATE DATABASE IF NOT EXISTS `"# (&opt.database.name) "` CHARACTER SET = " (&opt.database.charset) " COLLATE = " (&opt.database.collate) r#";"#),
+            ])
+            .spawn()?;
+
+        let _ = child.status().await?;
+
         let pool = mysql_async::Pool::new(opt.database.url.as_ref().unwrap());
         let mut conn = pool.get_conn().await?;
         conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;").await?;
@@ -475,28 +496,28 @@ where D: sql::QueryExecutor + Sync + Send
                 } else if _board.with_threads && _board.with_archives {
                     // FIXME this will not poll together since SEMPAHORE_BOARDS is only 1. Prob better this way, reduce
                     // memory
+                    // To fix this, have another SEMAPHORE for archive threads
 
-                    res = self.download_board(&_board, ThreadType::Threads, startup).await;
-                    let _ = self.download_board(&_board, ThreadType::Archive, startup).await;
+                    // res = self.download_board(&_board, ThreadType::Threads, startup).await;
+                    // let _ = self.download_board(&_board, ThreadType::Archive, startup).await;
 
-                // For some reason this doesn't poll in order. I want threads to go first
-                // let _vec = vec![self.download_board(&_board, ThreadType::Threads, startup),
-                // self.download_board(&_board, ThreadType::Archive, startup)];
-                // let mut _fut= _vec.into_iter()
-                // .collect::<FuturesOrdered<_>>();
-                // let mut i=0u8;
-                // while let Some(_res) = _fut.next().await {
-                //     if i == 0 {
-                //         res = _res;
-                //     }
-                //     i = i+1;
-                // }
+                    // For some reason this doesn't poll in order. I want threads to go first
+                    // let _vec = vec![self.download_board(&_board, ThreadType::Threads, startup),
+                    // self.download_board(&_board, ThreadType::Archive, startup)];
+                    // let mut _fut= _vec.into_iter()
+                    // .collect::<FuturesOrdered<_>>();
+                    // let mut i=0u8;
+                    // while let Some(_res) = _fut.next().await {
+                    //     if i == 0 {
+                    //         res = _res;
+                    //     }
+                    //     i = i+1;
+                    // }
 
-                // let (threads, archive) = futures::join!(self.download_board(&_board,
-                // ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive,
-                // startup)); res = threads;
-                // // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
-                // archive.unwrap();
+                    let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
+                    res = threads;
+                    // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
+                    archive.unwrap();
                 } else {
                     if _board.with_threads {
                         res = self.download_board(&_board, ThreadType::Threads, startup).await;
@@ -546,27 +567,11 @@ where D: sql::QueryExecutor + Sync + Send
     }
 
     async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<StatusCode> {
-        let mut _sem = None;
-        if thread_type.is_threads() {
-            _sem = Some(SEMAPHORE_BOARDS.acquire(1).await);
-        } else if thread_type.is_archive() {
-            _sem = Some(SEMAPHORE_BOARDS_ARCHIVE.acquire(1).await);
-        }
+        let _sem = if thread_type.is_threads() { SEMAPHORE_BOARDS.acquire(1).await } else { SEMAPHORE_BOARDS_ARCHIVE.acquire(1).await };
         if get_ctrlc() {
             return Ok(StatusCode::OK);
         }
         let fun_name = "download_board";
-        // if startup && self.opt.asagi_mode {
-        //     // The group of statments for just `Boards` was done in the beginning, so this can be called
-        //     // This will create all the board tables, triggers, etc if the board doesn't exist
-        //     self.db_client.board_table_exists(&board_info.board, &self.opt).await;
-
-        //     // Init the actual statements for this specific board
-        //     self.db_client.init_statements(board_info.id, &board_info.board).await;
-        // }
-        // if !startup {
-        //     sleep(Duration::from_secs(1)).await;
-        // }
         let last_modified = self.db_client.board_get_last_modified(thread_type, board_info.id).await;
         let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
         for retry in 0..=board_info.retry_attempts {
@@ -578,6 +583,17 @@ where D: sql::QueryExecutor + Sync + Send
             }
             let resp = self.client.gett(url.as_str(), &last_modified).await;
             match resp {
+                Err(e) => {
+                    epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
+                    if board_info.board.len() <= 2 { "\t\t" } else {"\t "}
+                    if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
+                    " | ["
+                    (e)"]"
+                    );
+                    if retry == board_info.retry_attempts {
+                        return Ok(StatusCode::SERVICE_UNAVAILABLE);
+                    }
+                }
                 Ok((status, lm, body)) => {
                     match status {
                         StatusCode::OK => {
@@ -678,26 +694,19 @@ where D: sql::QueryExecutor + Sync + Send
                         }
                     }
                 }
-                Err(e) => {
-                    epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
-                    if board_info.board.len() <= 2 { "\t\t" } else {"\t "}
-                    if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
-                    " | ["
-                    (e)"]"
-                    );
-                }
             }
         }
         Ok(StatusCode::OK)
     }
 
     async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)> {
-        let sem = SEMAPHORE_THREADS.acquire(1).await;
+        let mut thread_type = thread_type;
+        let mut deleted = false;
+
+        let sem = if thread_type.is_threads() { SEMAPHORE_THREADS.acquire(1).await } else { SEMAPHORE_THREADS_ARCHIVE.acquire(1).await };
         let mut with_tail = if thread_type.is_threads() { board_info.with_tail } else { false };
         let hz = Duration::from_millis(250);
         let mut interval = Duration::from_millis(board_info.interval_threads.into());
-        let mut thread_type = thread_type;
-        let mut deleted = false;
 
         // One giant loop so we can re-execute this function (if we find out tail-json is nonexistent)
         // without resorting to recursion which generates unintended behaviours with the semaphore.
@@ -970,6 +979,7 @@ where D: sql::QueryExecutor + Sync + Send
                                         }
 
                                         // Update thread's last_modified
+                                        pintln!("download_thread: (" (thread_type) ") Update thread's last_modified /" (&board_info.board) "/" (thread));
                                         self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
                                         break; // exit the retry loop
                                     }
@@ -988,13 +998,16 @@ where D: sql::QueryExecutor + Sync + Send
                                 deleted = true;
                                 let either = self.db_client.thread_update_deleted(board_info.id, thread).await;
                                 let tail = if with_tail { "-tail" } else { "" };
+
+                                // Display the deleted thread
                                 match either {
                                     Either::Right(rows) =>
                                         if let Some(mut rows) = rows {
                                             while let Some(no) = rows.next().await {
-                                                pintln!(
-                                                    "download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]"
-                                                );
+                                                pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]");
+                                                // Due to triggers, when a board is updated/deleted/inserted, the `time_last` is updated
+                                                // So I have to reset it to the correct value based on the HTTP response `Last-Modified`
+                                                self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
                                             }
                                         },
 

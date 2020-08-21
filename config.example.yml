@@ -1,6 +1,5 @@
 site:           4chan
 asagi_mode:     false
-quickstart:     false
 strict:         true    # if true, sets limit to 1
 limit:          151
 limit_media:    151
@@ -9,7 +8,6 @@ api_url:        https://a.4cdn.org
 media_url:      https://i.4cdn.org
 user_agent:     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0"
 database:
-  url:          "postgresql://postgres:zxc@localhost:5432/ena" # Or just specify the db url. This takes precedence and updates the fields below.
   engine:       postgresql
   database:     ena
   schema:       public
@@ -18,7 +16,7 @@ database:
   username:     postgres
   password:     zxc
   charset:      utf8
-timescaledb:
+timescaledb:                # Optional. If used, make sure you have the extension installed!
   column:       time        #    e.g. time or no
   every:        123456      # or e.g. "INTERVAL '2 weeks'" if `time`. See INTERVAL examples @ https://postgresql.org/docs/current/functions-datetime.html
 proxies:

@@ -21,6 +21,8 @@ pub(crate) static SEMAPHORE_BOARDS: Lazy<futures_intrusive::sync::Semaphore> = L
 pub(crate) static SEMAPHORE_BOARDS_ARCHIVE: Lazy<futures_intrusive::sync::Semaphore> =
     Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_BOARDS_ARCHIVE.load(Ordering::SeqCst) as usize));
 pub(crate) static SEMAPHORE_THREADS: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst) as usize));
+pub(crate) static SEMAPHORE_THREADS_ARCHIVE: Lazy<futures_intrusive::sync::Semaphore> =
+    Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst) as usize));
 pub(crate) static SEMAPHORE_MEDIA: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_MEDIA.load(Ordering::SeqCst) as usize));
 pub(crate) static SEMAPHORE_MEDIA_TEST: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, 1));
 
@@ -170,7 +172,8 @@ pub struct Opt {
     pub asagi_mode: bool,
 
     /// Download everything in the beginning with no limits and then throttle
-    #[structopt(long, display_order(5))]
+    // #[structopt(long, display_order(5))]
+    #[structopt(long, hidden(true))]
     pub quickstart: bool,
 
     /// Download from external archives in the beginning
@@ -362,9 +365,10 @@ impl std::fmt::Display for MediaStorage {
 }
 
 #[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
+#[serde(default)]
 pub struct DatabaseOpt {
     /// Set database url
-    #[structopt(display_order(10), long = "db-url", env = "ENA_DATABASE_URL", hide_env_values = true, hide_default_value(true))]
+    #[structopt(hidden(true), display_order(10), long = "db-url", env = "ENA_DATABASE_URL", hide_env_values = true, hide_default_value(true))]
     pub url: Option<String>,
 
     /// Set database engine
@@ -644,6 +648,9 @@ pub fn get_opt() -> Result<Opt> {
             create_dir_all(&tmp)?;
         }
     } else {
+        let default_database = DatabaseOpt::default();
+        if opt.database.charset           == default_database.charset             { opt.database.charset        = "utf8mb4".into();         }
+        if opt.database.collate           == default_database.collate             { opt.database.collate        = "utf8mb4_unicode_ci".into();         }
         opt.database.schema = opt.database.name.clone();
     }
 

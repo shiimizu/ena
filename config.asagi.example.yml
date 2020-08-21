@@ -1,6 +1,5 @@
 site:           4chan
 asagi_mode:     true
-quickstart:     false
 strict:         true    # if true, sets limit to 1
 limit:          151
 limit_media:    151
