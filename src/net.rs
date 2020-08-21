@@ -70,11 +70,11 @@ pub async fn create_client(origin: &str, opt: &Opt) -> Result<reqwest::Client> {
             let username = proxy.username.as_ref();
             let password = proxy.password.as_ref();
             let mut _proxy = reqwest::Proxy::https(proxy_url.as_str())?;
-            if username.is_some() && password.is_some() {
-                let user = username.unwrap();
-                let pass = password.unwrap();
+            // Add credentials. A password may be empty but a username must be something.
+            if let Some(user) = username {
                 if !user.is_empty() {
-                    _proxy = _proxy.basic_auth(user.as_str(), pass.as_str());
+                    let pass = password.map(|s| s.as_str()).unwrap_or_default();
+                    _proxy = _proxy.basic_auth(user, pass);
                 }
             }
             proxies_list.push(_proxy.clone());
@@ -98,6 +98,7 @@ pub async fn create_client(origin: &str, opt: &Opt) -> Result<reqwest::Client> {
                 }
             }
         }
+        
         if proxies_list.len() > 0 {
             let mut cb = create_client_builder(headers, ua);
             for proxy in proxies_list {
