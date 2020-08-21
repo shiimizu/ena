@@ -16,9 +16,9 @@ database:
   username:     postgres
   password:     zxc
   charset:      utf8
-timescaledb:                # Optional. If used, make sure you have the extension installed!
-  column:       time        #    e.g. time or no
-  every:        123456      # or e.g. "INTERVAL '2 weeks'" if `time`. See INTERVAL examples @ https://postgresql.org/docs/current/functions-datetime.html
+timescaledb:                              # Optional. If used, make sure you have the extension installed!
+  column:       time
+  every:        "INTERVAL '2 weeks'"      # See INTERVAL examples @ https://postgresql.org/docs/current/functions-datetime.html
 proxies:
   - url:        ""
     username:   ""
