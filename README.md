@@ -94,6 +94,20 @@ OPTIONS:
         --collate <collate>                      Set database charset [env: ENA_DATABASE_COLLATE]
 ```
 
+## Features
+* `archive` threads
+* Save bandwidth. Uses `If-Modified-Since` and `Last-Modified`. 
+* Save even more bandwidth with the option of using `-tail.json`.
+* State save restore. Resume right where you left off.
+* Poll boards/threads or oneshot
+* Dynamic thread refresh rate
+* Retain `unique_ips` after archived
+* Proxies
+* TimescaleDB support
+* Asagi drop-in replacement support
+* `UPSERT` for superior thread accuracy and correctness
+* `SHA256` for full media and thumbnails to prevent duplicates
+
 ## Quickstart
 1. The easiest way to start is to give a config file:  
         `ena -c config.yml`
@@ -112,3 +126,13 @@ OPTIONS:
 $ cargo build --release -j4
 ```
 
+## Status  
+Core functionality works. There are things that could be improved on:  
+* Panics on no network connection. Workaround currently is to set a really high `retry_attempts`.
+* Logging could be better
+* Postgres is not getting to correct amount of media files...
+
+## Asagi drop-in status
+* Posts deleted that are outputted to the screen will likely appear twice. Don't worry, it's just displaying issue.
+    Finding a way to incorporate `RETURNING *` for `mysql|mariadb` would fix this.
+* `UPSERTED` doesnt display the upserted count like the postgres version. Same issue and fix as above.

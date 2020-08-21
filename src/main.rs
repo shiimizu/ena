@@ -727,7 +727,14 @@ where D: sql::QueryExecutor + Sync + Send
 
             for retry in 0..=board_info.retry_attempts {
                 let now = Instant::now();
+                
+                if get_ctrlc() {
+                    return Ok((thread_type, deleted));
+                }
                 let resp = self.client.gett(url.as_str(), &last_modified).await;
+                if get_ctrlc() {
+                    return Ok((thread_type, deleted));
+                }
                 if retry != 0 {
                     sleep(Duration::from_secs(1)).await;
                 }
@@ -1014,9 +1021,16 @@ where D: sql::QueryExecutor + Sync + Send
                                         if let Some(mut rows) = rows {
                                             while let Some(no) = rows.next().await {
                                                 pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]");
+                                                // Ignore the below comments. If it's deleted, it won't matter what last-modified it is.
+                                                //
                                                 // Due to triggers, when a board is updated/deleted/inserted, the `time_last` is updated
                                                 // So I have to reset it to the correct value based on the HTTP response `Last-Modified`
-                                                self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
+                                                //
+                                                //
+                                                // Just to be safe?...
+                                                if !lm.is_empty() {
+                                                    self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
+                                                }
                                             }
                                         },
 
@@ -1131,11 +1145,10 @@ where D: sql::QueryExecutor + Sync + Send
                 let _path = fomat!(
                     (_dir) "/" (&tim_filename)
                 );
-
-                let actual_filename = if board_info.board == "f" { fomat!((percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC))(ext)) } else { tim_filename };
                 if exists(&_path) {
                     return Ok(());
                 }
+                let actual_filename = if board_info.board == "f" { fomat!((percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC))(ext)) } else { tim_filename };
                 path = Some(_path);
                 dir = Some(_dir);
                 let _url = format!("{api_domain}/{board}/{filename}", api_domain = &self.opt.media_url, board = &board_info.board, filename = &actual_filename);
@@ -1175,7 +1188,7 @@ where D: sql::QueryExecutor + Sync + Send
                     );
                     if exists(&_path) {
                         // Upsert the thumbnail at the given md5 since full medias
-                        // can have duplicate thumbnails, if this particular md5 doesn't have it
+                        // can have duplicate thumbnails, if this particular md5 (full-media) doesn't have it
                         // then upsert the hash, since we have it on the filesystem.
                         if media_type == MediaType::Thumbnail {
                             for retry in 0..=3u8 {
@@ -1203,15 +1216,13 @@ where D: sql::QueryExecutor + Sync + Send
                 // path = Some(_path);
             }
 
-            let tim_filename = fomat!((tim) if media_type == MediaType::Full { (ext) } else { "s.jpg" } );
-
-            let actual_filename = {
+            let actual_filename = fomat!(
                 if board_info.board == "f" {
-                    fomat!((percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC))(ext))
+                    (percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC)) (ext) 
                 } else {
-                    tim_filename
+                    (tim) if media_type == MediaType::Full { (ext) } else { "s.jpg" }
                 }
-            };
+            );
 
             let _url = format!("{api_domain}/{board}/{filename}", api_domain = &self.opt.media_url, board = &board_info.board, filename = &actual_filename);
             url = Some(_url);
@@ -1228,7 +1239,9 @@ where D: sql::QueryExecutor + Sync + Send
             }
             for retry in 0..=board_info.retry_attempts {
                 if retry != 0 {
-                    epintln!("download_media: /"(board_info.board)"/"(resto)"/"(no) " [Retry #" (retry)"]");
+                    epintln!("download_media: /"(board_info.board)"/"
+                    if resto == 0 { (no) } else { (resto) }
+                    "/"(no) " [Retry #" (retry)"]");
                     sleep(Duration::from_millis(500)).await;
                 }
                 match self.client.get(_url.as_str()).send().await {
@@ -1405,16 +1418,19 @@ where D: sql::QueryExecutor + Sync + Send
                                                     break;
                                                 }
                                                 if get_ctrlc() {
-                                                    let _ = std::fs::remove_file(&tmp_path);
+                                                    success = true;
                                                     break;
                                                 }
                                                 sleep(Duration::from_millis(500)).await;
                                             }
+                                            
+                                            // Delete temp file after since going in this block means the file exists
                                             let _ = std::fs::remove_file(&tmp_path);
+                                            
+                                            // Exit if exists
                                             if success {
                                                 break;
                                             }
-                                            // return Ok(());
                                         }
                                         // Make dirs
                                         let dirs_result = smol::Unblock::new(create_dir_all(_dir.as_str())).into_inner().await;
