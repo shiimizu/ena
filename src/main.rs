@@ -448,9 +448,15 @@ where D: sql::QueryExecutor + Sync + Send
 
         // Create the boards if it doesn't exist
         if self.opt.asagi_mode {
+            if get_ctrlc() {
+                return Ok(());
+            }
             // The group of statments for just `Boards` was done in the beginning, so this can be called
             // This will create all the board tables, triggers, etc if the board doesn't exist
             self.db_client.board_table_exists(&_board.board, &self.opt).await;
+            if get_ctrlc() {
+                return Ok(());
+            }
         }
 
         // Get board id
@@ -790,6 +796,10 @@ where D: sql::QueryExecutor + Sync + Send
                                         // Upsert Thread
                                         let len = self.db_client.thread_upsert(board_info, &thread_json).await;
 
+                                        if get_ctrlc() {
+                                            return Ok((thread_type, deleted));
+                                        }
+
                                         // Display
                                         // "download_thread: ({thread_type}) /{board}/{thread}{tail}{retry_status} {new_lm} | {prev_lm} |
                                         // {len}"
@@ -979,7 +989,6 @@ where D: sql::QueryExecutor + Sync + Send
                                         }
 
                                         // Update thread's last_modified
-                                        pintln!("download_thread: (" (thread_type) ") Update thread's last_modified /" (&board_info.board) "/" (thread));
                                         self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
                                         break; // exit the retry loop
                                     }
