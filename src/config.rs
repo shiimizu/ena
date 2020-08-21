@@ -422,7 +422,6 @@ impl Default for DatabaseOpt {
     }
 }
 
-
 /// Display an ascii art with the crate version
 pub fn display() {
     println!(
@@ -456,7 +455,6 @@ pub fn display() {
 pub fn version() -> String {
     option_env!("CARGO_PKG_VERSION").unwrap_or("?.?.?").to_string()
 }
-
 
 #[rustfmt::skip]
 pub fn get_opt() -> Result<Opt> {

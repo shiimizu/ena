@@ -18,7 +18,8 @@ use futures::future;
 
 use async_trait::async_trait;
 use ctrlc;
-use futures::{channel::oneshot, future::Either, stream::FuturesUnordered, stream::FuturesOrdered};
+use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
+// use futures::stream::FuturesOrdered;
 use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -375,9 +376,9 @@ where D: sql::QueryExecutor + Sync + Send
             })
             .chain(self.opt.boards.iter().cloned().map(|board| self.download_board_and_thread(board, None)))
             .collect::<FuturesUnordered<_>>();
-        
+
         config::display();
-        
+
         while let Some(res) = fut.next().await {
             res.unwrap();
         }
@@ -424,17 +425,18 @@ where D: sql::QueryExecutor + Sync + Send
         // Upsert Board
         self.db_client.board_upsert(&_board.board).await.unwrap();
 
+        // Create the boards if it doesn't exist
+        if self.opt.asagi_mode {
+            // The group of statments for just `Boards` was done in the beginning, so this can be called
+            // This will create all the board tables, triggers, etc if the board doesn't exist
+            self.db_client.board_table_exists(&_board.board, &self.opt).await;
+        }
+
         // Get board id
         let board_id = self.db_client.board_get(&_board.board).await;
         if let Ok(id) = board_id {
             _board.id = id;
         } else {
-            // Create the boards if it doesn't exist
-            if self.opt.asagi_mode {
-                // The group of statments for just `Boards` was done in the beginning, so this can be called
-                // This will create all the board tables, triggers, etc if the board doesn't exist
-                self.db_client.board_table_exists(&_board.board, &self.opt).await;
-            }
             let id = self.db_client.board_get(&_board.board).await.unwrap();
             _board.id = id;
         }
@@ -473,20 +475,28 @@ where D: sql::QueryExecutor + Sync + Send
                 } else if _board.with_threads && _board.with_archives {
                     // FIXME this will not poll together since SEMPAHORE_BOARDS is only 1. Prob better this way, reduce
                     // memory
-                    let _vec = vec![self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup)];
-                    let mut _fut= _vec.into_iter()
-                    .collect::<FuturesOrdered<_>>();
-                    let mut i=0u8;
-                    while let Some(_res) = _fut.next().await {
-                        if i == 0 {
-                            res = _res;
-                        }
-                        i = i+1;
-                    }
-                    // let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
-                    // res = threads;
-                    // // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
-                    // archive.unwrap();
+
+                    res = self.download_board(&_board, ThreadType::Threads, startup).await;
+                    let _ = self.download_board(&_board, ThreadType::Archive, startup).await;
+
+                // For some reason this doesn't poll in order. I want threads to go first
+                // let _vec = vec![self.download_board(&_board, ThreadType::Threads, startup),
+                // self.download_board(&_board, ThreadType::Archive, startup)];
+                // let mut _fut= _vec.into_iter()
+                // .collect::<FuturesOrdered<_>>();
+                // let mut i=0u8;
+                // while let Some(_res) = _fut.next().await {
+                //     if i == 0 {
+                //         res = _res;
+                //     }
+                //     i = i+1;
+                // }
+
+                // let (threads, archive) = futures::join!(self.download_board(&_board,
+                // ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive,
+                // startup)); res = threads;
+                // // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
+                // archive.unwrap();
                 } else {
                     if _board.with_threads {
                         res = self.download_board(&_board, ThreadType::Threads, startup).await;
@@ -536,29 +546,27 @@ where D: sql::QueryExecutor + Sync + Send
     }
 
     async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<StatusCode> {
-        let mut _sem_threads = None;
-        let mut _sem_archive = None;
+        let mut _sem = None;
         if thread_type.is_threads() {
-            _sem_threads = Some(SEMAPHORE_BOARDS.acquire(1).await);
-        }
-        if thread_type.is_archive() {
-            _sem_archive = Some(SEMAPHORE_BOARDS_ARCHIVE.acquire(1).await);
+            _sem = Some(SEMAPHORE_BOARDS.acquire(1).await);
+        } else if thread_type.is_archive() {
+            _sem = Some(SEMAPHORE_BOARDS_ARCHIVE.acquire(1).await);
         }
         if get_ctrlc() {
             return Ok(StatusCode::OK);
         }
         let fun_name = "download_board";
-        if startup && self.opt.asagi_mode {
-            // The group of statments for just `Boards` was done in the beginning, so this can be called
-            // This will create all the board tables, triggers, etc if the board doesn't exist
-            self.db_client.board_table_exists(&board_info.board, &self.opt).await;
+        // if startup && self.opt.asagi_mode {
+        //     // The group of statments for just `Boards` was done in the beginning, so this can be called
+        //     // This will create all the board tables, triggers, etc if the board doesn't exist
+        //     self.db_client.board_table_exists(&board_info.board, &self.opt).await;
 
-            // Init the actual statements for this specific board
-            self.db_client.init_statements(board_info.id, &board_info.board).await;
-        }
-        if !startup {
-            sleep(Duration::from_secs(1)).await;
-        }
+        //     // Init the actual statements for this specific board
+        //     self.db_client.init_statements(board_info.id, &board_info.board).await;
+        // }
+        // if !startup {
+        //     sleep(Duration::from_secs(1)).await;
+        // }
         let last_modified = self.db_client.board_get_last_modified(thread_type, board_info.id).await;
         let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
         if get_ctrlc() {
