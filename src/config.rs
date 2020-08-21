@@ -50,8 +50,8 @@ pub struct Board {
     #[structopt(display_order(5), long, default_value("1000"), env, hide_env_values = true)]
     pub interval_threads: u16,
 
-    /// Add 5s on intervals for each 404. Capped.
-    #[structopt(display_order(5), long)]
+    /// Add 5s on intervals for each NOT_MODIFIED. Capped.  
+    #[structopt(display_order(6), long)]
     pub interval_dynamic: bool,
 
     /// Grab threads from threads.json

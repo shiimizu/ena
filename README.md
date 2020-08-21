@@ -1,3 +1,5 @@
+
+
 <!--
 
 # New
@@ -34,6 +36,18 @@
 
 -->
 # Ena
+
+[![License][license-badge]][license-url]
+
+[license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue
+[license-url]: LICENSE
+[matrix-chat-link]: https://matrix.to/#/#bibanon-chat:matrix.org
+[matrix-chat-badge]: https://img.shields.io/matrix/bibanon-chat:matrix.org?logo=matrix&color=green
+
+Low resource and high performance archiver to save posts, images and all relevant data from an imageboard into a local database and local image store. The project currently only supports 4chan.  
+
+## Usage
+
 ```
 ena 0.8.0-dev
 An ultra-low resource imageboard archiver
@@ -43,8 +57,6 @@ USAGE:
 
 FLAGS:
         --asagi               Use Ena as an Asagi drop-in
-        --interval-dynamic    Add 5s on intervals for each 404. Capped
-        --quickstart          Download everything in the beginning with no limits and then throttle
         --strict              Download sequentially rather than concurrently. This sets limit to 1
         --watch-boards        Enable archiving the boards
         --watch-threads       Enable archiving the live threads until deleted or archived (only applies to threadslist)
@@ -53,6 +65,7 @@ FLAGS:
         --with-tail           Prefer to use tail json if available
         --with-threads        Grab threads from threads.json
         --with-thumbnails     Download thumbnails as well
+        --interval-dynamic    Add 5s on intervals for each NOT_MODIFIED. Capped
     -h, --help                Prints help information
     -V, --version             Prints version information
 
@@ -70,7 +83,6 @@ OPTIONS:
     -A, --user-agent <user-agent>                Set user agent [env: USER_AGENT]
         --api-url <api-url>                      Set api endpoint url [env: API_URL]
         --media-url <media-url>                  Set media endpoint url [env: MEDIA_URL]
-        --db-url <url>                           Set database url [env: ENA_DATABASE_URL]
         --engine <engine>                        Set database engine [env: ENA_DATABASE_ENGINE]
         --name <name>                            Set database name [env: ENA_DATABASE_NAME]
         --schema <schema>                        Set database schema [env: ENA_DATABASE_SCHEMA]
@@ -82,21 +94,20 @@ OPTIONS:
         --collate <collate>                      Set database charset [env: ENA_DATABASE_COLLATE]
 ```
 
-# Asagi drop-in
-1. Create a database if you haven't already
+## Quickstart
 1. The easiest way to start is to give a config file:  
         `ena -c config.yml`
+1. A database is created if it wasn't already.
 1. ???
 1. Profit
 
-# Ena
+### Asagi drop-in
+1. Set `asagi_mode` to `true` in the config or pass `--asagi` in the command line.
+2. ???
+2. Profit
 
-1. The easiest way to start is to give a config file:  
-        `ena -c config.yml`
-1. ???
-1. Profit
+## Building/Updating
 
-# Building/Updating
 ```shell
 $ cargo build --release -j4
 ```
