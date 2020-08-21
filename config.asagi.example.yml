@@ -33,6 +33,7 @@ board_settings:
   with_thumbnails:          false
   watch_boards:             false
   watch_threads:            false
+  skip_board_check:         false
 boards:
   - board:                    a
     with_full_media:          true

@@ -107,7 +107,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         if let Some(res) = res {
             let j: serde_json::Value = serde_json::from_str(&res).unwrap();
             let boards = j["boards"].as_array().unwrap();
-            let b = boards.iter().any(|v| matches!(v["board"].as_str(), Some(board)));
+            let b = boards.iter().any(|v| v["board"].as_str() == Some(board));
             b
         } else {
             false
@@ -769,3 +769,22 @@ pub mod queries {
         format!("SELECT * FROM `{board}_images` WHERE media_hash=?;", board = board)
     }
 }
+
+/*
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn board_is_valid() {
+            let j: serde_json::Value = serde_json::from_str(include_str!("../boards.json")).unwrap();
+            let boards = j["boards"].as_array().unwrap();
+            let board = "vmg";
+            let b = boards.iter().any(|v| v["board"].as_str() == Some(board) );
+            println!("{}", b);
+            // println!("{:?}", boards.iter().find(|v| v["board"].as_str() == Some(board) ));
+            assert!(b, true);
+
+    }
+}
+*/

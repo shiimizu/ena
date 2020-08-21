@@ -74,7 +74,6 @@ format-sql-query = "0.4"
 # Media
 md-5 = "0.9"
 sha2 = "0.9"
-percent-encoding = "2"
 
 [dev-dependencies]
 pretty_assertions = "0.6"

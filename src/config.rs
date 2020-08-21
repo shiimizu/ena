@@ -54,6 +54,10 @@ pub struct Board {
     #[structopt(display_order(6), long)]
     pub interval_dynamic: bool,
 
+    /// Skip checking if a board is valid  
+    #[structopt(display_order(7), long)]
+    pub skip_board_check: bool,
+
     /// Grab threads from threads.json
     // #[structopt(long, env, hide_env_values = true)]
     #[structopt(display_order(5), long)]
@@ -99,6 +103,7 @@ impl Default for Board {
             interval_boards:  30000,
             interval_threads: 1000,
             interval_dynamic: false,
+            skip_board_check: false,
             with_threads:     false,
             with_archives:    false,
             with_tail:        false,
@@ -506,6 +511,7 @@ pub fn get_opt() -> Result<Opt> {
                         if opt.board_settings.interval_boards   != default.interval_boards  { q.board_settings.interval_boards = opt.board_settings.interval_boards; }
                         if opt.board_settings.interval_threads  != default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
                         if opt.board_settings.interval_dynamic  != default.interval_dynamic { q.board_settings.interval_dynamic = opt.board_settings.interval_dynamic; }
+                        if opt.board_settings.skip_board_check  != default.skip_board_check { q.board_settings.skip_board_check = opt.board_settings.skip_board_check; }
                         if opt.board_settings.with_threads      != default.with_threads     { q.board_settings.with_threads = opt.board_settings.with_threads; }
                         if opt.board_settings.with_archives     != default.with_archives    { q.board_settings.with_archives = opt.board_settings.with_archives; }
                         if opt.board_settings.with_tail         != default.with_tail        { q.board_settings.with_tail = opt.board_settings.with_tail; }
@@ -530,6 +536,7 @@ pub fn get_opt() -> Result<Opt> {
                             if b.interval_threads   == default.interval_threads { b.interval_threads = q.board_settings.interval_threads; }
                             if b.with_threads       == default.with_threads     { b.with_threads = q.board_settings.with_threads; }
                             if b.interval_dynamic   == default.interval_dynamic { b.interval_dynamic = q.board_settings.interval_dynamic; }
+                            if b.skip_board_check   == default.skip_board_check { b.skip_board_check = q.board_settings.skip_board_check; }
                             if b.with_archives      == default.with_archives    { b.with_archives =  q.board_settings.with_archives; }
                             if b.with_tail          == default.with_tail        { b.with_tail = q.board_settings.with_tail; }
                             if b.with_full_media    == default.with_full_media  { b.with_full_media = q.board_settings.with_full_media; }
@@ -580,6 +587,7 @@ pub fn get_opt() -> Result<Opt> {
                         if q.board_settings.interval_boards     == default.interval_boards  { q.board_settings.interval_boards  = opt.board_settings.interval_boards; };
                         if q.board_settings.interval_threads    == default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
                         if q.board_settings.interval_dynamic    == default.interval_dynamic { q.board_settings.interval_dynamic = opt.board_settings.interval_dynamic; }
+                        if q.board_settings.skip_board_check    == default.skip_board_check { q.board_settings.skip_board_check = opt.board_settings.skip_board_check; }
                         if q.board_settings.with_threads        == default.with_threads     { q.board_settings.with_threads = opt.board_settings.with_threads; }
                         if q.board_settings.with_archives       == default.with_archives    { q.board_settings.with_archives = opt.board_settings.with_archives; }
                         if q.board_settings.with_tail           == default.with_tail        { q.board_settings.with_tail = opt.board_settings.with_tail; }

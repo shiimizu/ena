@@ -680,7 +680,6 @@ dependencies = [
  "native-tls",
  "num_cpus",
  "once_cell",
- "percent-encoding",
  "postgres-types",
  "pretty_assertions",
  "regex",

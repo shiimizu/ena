@@ -73,11 +73,11 @@ pub enum ThreadType {
 
 impl ThreadType {
     fn is_threads(&self) -> bool {
-        matches!(self, ThreadType::Threads)
+        *self == ThreadType::Threads
     }
 
     fn is_archive(&self) -> bool {
-        matches!(self, ThreadType::Archive)
+        *self == ThreadType::Archive
     }
 
     fn as_str<'a>(&self) -> &'a str {
@@ -436,11 +436,13 @@ where D: sql::QueryExecutor + Sync + Send
             }
         }
 
-        // Check if valid
-        let valid_board: bool = self.db_client.board_is_valid(&_board.board).await;
-        if !valid_board {
-            epintln!("Invalid board `"(&_board.board)"`");
-            return Ok(());
+        if !_board.skip_board_check {
+            // Check if valid
+            let valid_board: bool = self.db_client.board_is_valid(&_board.board).await;
+            if !valid_board {
+                epintln!("Invalid board `"(&_board.board)"`");
+                return Ok(());
+            }
         }
 
         // Upsert Board
@@ -1222,7 +1224,7 @@ where D: sql::QueryExecutor + Sync + Send
                 (&self.opt.media_url)"/"(&board_info.board)"/"
                 if board_info.board == "f" {
                     (&filename)(ext)
-                }  else { 
+                }  else {
                     (tim) if media_type == MediaType::Full { (ext) } else { "s.jpg" }
                 }
             );
