@@ -9,9 +9,9 @@ api_url:        https://a.4cdn.org
 media_url:      https://i.4cdn.org
 user_agent:     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0"
 database:
-  url:          "mysql://root:zxc@localhost:3306/asagi" # Or just specify the db url. This takes precedence and updates the fields below.
   engine:       innodb
   database:     asagi
+  schema:       asagi
   host:         localhost
   port:         3306
   username:     root

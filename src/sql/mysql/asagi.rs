@@ -166,7 +166,7 @@ impl From<&yotsuba::Post> for Post {
                                 _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
                             }
                             if let Some(archived_on) = &post.archived_on {
-                                _exif.insert(String::from("archived_on"), (*archived_on).into());
+                                _exif.insert(String::from("archivedOn"), (*archived_on).into());
                             }
                             let extra_string: String = serde_json::to_string(&extra_json_mut).unwrap();
                             Some(extra_string)
@@ -191,7 +191,7 @@ impl From<&yotsuba::Post> for Post {
                             _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
                         }
                         if let Some(archived_on) = &post.archived_on {
-                            _exif.insert(String::from("archived_on"), (*archived_on).into());
+                            _exif.insert(String::from("archivedOn"), (*archived_on).into());
                         }
                         let extra_string: String = serde_json::to_string(&_exif).unwrap();
                         Some(extra_string)
@@ -367,7 +367,7 @@ mod tests {
                                 _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
                             }
                             if let Some(archived_on) = &post.archived_on {
-                                _exif.insert(String::from("archived_on"), (*archived_on).into());
+                                _exif.insert(String::from("archivedOn"), (*archived_on).into());
                             }
                             let extra_string:String = serde_json::to_string(&extra_json_mut).unwrap();
                             let s = QuotedData(extra_string.as_str()).to_string();
@@ -391,7 +391,7 @@ mod tests {
                                 _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
                             }
                             if let Some(archived_on) = &post.archived_on {
-                                _exif.insert(String::from("archived_on"), (*archived_on).into());
+                                _exif.insert(String::from("archivedOn"), (*archived_on).into());
                             }
                             let extra_string:String = serde_json::to_string(&_exif).unwrap();
                             let s = QuotedData(extra_string.as_str()).to_string();

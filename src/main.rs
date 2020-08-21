@@ -569,9 +569,6 @@ where D: sql::QueryExecutor + Sync + Send
         // }
         let last_modified = self.db_client.board_get_last_modified(thread_type, board_info.id).await;
         let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
-        if get_ctrlc() {
-            return Ok(StatusCode::OK);
-        }
         for retry in 0..=board_info.retry_attempts {
             if get_ctrlc() {
                 break;
@@ -1064,7 +1061,14 @@ where D: sql::QueryExecutor + Sync + Send
     }
 
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()> {
-        let sem_test = SEMAPHORE_MEDIA_TEST.acquire(1).await;
+        // TEST CONCLUSION: Since this makes downloading sequential, basically one by one, it's really slow
+        // to get everything.. But it does gaurantee no duplicates in the beginning!!
+
+        // Test individual get for pg
+        // let mut _sem_test = None;
+        // if !self.opt.asagi_mode {
+        //     _sem_test = Some(SEMAPHORE_MEDIA_TEST.acquire(1).await);
+        // }
         if get_ctrlc() {
             return Ok(());
         }

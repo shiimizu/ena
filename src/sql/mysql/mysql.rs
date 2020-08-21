@@ -419,9 +419,14 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         } else {
             // If an entry does not exist in the database just use the json received
             // This usually occurs on startup when there's no cache of threads/archive for the board
-            let mut received: Vec<Page> = serde_json::from_value(json.clone()).unwrap();
-            let res: Vec<u64> = received.into_iter().flat_map(|page| page.threads.into_iter().map(|thread| thread.no)).unique().collect();
-            Either::Right(Some(futures::stream::iter(res)))
+            if thread_type.is_threads() {
+                let mut received: Vec<Page> = serde_json::from_value(json.clone()).unwrap();
+                let res: Vec<u64> = received.into_iter().flat_map(|page| page.threads.into_iter().map(|thread| thread.no)).unique().collect();
+                Either::Right(Some(futures::stream::iter(res)))
+            } else {
+                let mut res: Vec<u64> = serde_json::from_value(json.clone()).unwrap();
+                Either::Right(Some(futures::stream::iter(res)))
+            }
         }
 
         /*let diff = previous_json

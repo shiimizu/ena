@@ -146,14 +146,15 @@ OPTIONS:
 - [x] Patch the rest of Opt fields. See `Opt::default()`. So far we only did BoardSettings
 - [x] watch-threads
 - [x] excluded boards
-- [ ] SQL migrations up.sql
-- [ ] Custom parse for timescaledb interval (just validate, either num or interval )
+- [x] SQL migrations up.sql
+- [x] Custom parse for timescaledb interval (just validate, either num or interval )
 - [x] limit / strict / media-threads
-- [ ] watch-boards: needs to exit a board, not the whole loop
+- [x] watch-boards: needs to exit a board, not the whole loop
 - [x] watch-thread on an archive should end
 - [x] percent_encode the filename to get the correct url for /f/
 - [x] Media
 - [x] Config, DB_URL, default-rust->yaml->env->cli
+- [ ] quickstart
 - [ ] modules bin lib workspaces, Module system, Lib in diff crate so ppl can actually use without pulling executor
 - [ ] Kuroba threads + other sites
 - [ ] Move wiki to in-code doc
