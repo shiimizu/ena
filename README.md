@@ -128,7 +128,7 @@ $ cargo build --release -j4
 ```
 Build artifacts can be found in `target/release/`  
 
-# Reading the output
+## Reading the output
 Generally, the ouput looks something like:  
 
 ```

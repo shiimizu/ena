@@ -104,10 +104,14 @@ impl QueryExecutor for tokio_postgres::Client {
     }
 
     // FIXME: Follow this method's example to use PG functions
+    // TODO return an Option|Result
     async fn thread_upsert(&self, board_info: &Board, thread_json: &serde_json::Value) -> u64 {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadUpsert).unwrap();
-        self.query_one(statement, &[&(board_info.id as i32), &thread_json]).await.ok().map(|row| row.get(0)).map(|c: Option<i64>| c.map(|count| count as u64)).flatten().unwrap_or(0)
+        let res = self.query_one(statement, &[&(board_info.id as i32), &thread_json]).await.map(|row| row.get::<usize, Option<i64>>(0));
+        // .map(|c: Option<i64>| c.map(|count| count as u64));
+        res.unwrap().unwrap() as u64
+        // unreachable!()
     }
 
     async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64> {
@@ -159,8 +163,8 @@ impl QueryExecutor for tokio_postgres::Client {
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> bool {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::PostGetSingle).unwrap();
-        let res = self.query_one(statement, &[&(board_id as i16), &(thread as i64), &(no as i64)]).await.map_err(|e| eyre!(e));
-        res.map(|r| true).unwrap_or(false)
+        let res = self.query_opt(statement, &[&(board_id as i16), &(thread as i64), &(no as i64)]).await.map_err(|e| eyre!(e));
+        res.map(|r| r.is_some()).unwrap()
     }
 
     async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Option<mysql_async::Row>> {

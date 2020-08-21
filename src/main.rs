@@ -856,6 +856,7 @@ where D: sql::QueryExecutor + Sync + Send
                                         }
 
                                         // Upsert Thread
+                                        // TODO This should never return 0
                                         let len = self.db_client.thread_upsert(board_info, &thread_json).await;
 
                                         if get_ctrlc() {
@@ -867,7 +868,7 @@ where D: sql::QueryExecutor + Sync + Send
                                         // {len}"
                                         pintln!("download_thread: (" (thread_type) ") /" (&board_info.board) "/" (thread)
                                             if with_tail { "-tail" } else { "" }
-                                            if retry > 0 { " Retry #"(retry)" [RESOLVED]" } else { "" }
+                                            if retry > 0 { " Retry #"(retry)" [RESOLVED]" }
                                             " "
                                             (&lm)
                                             " | "
@@ -878,6 +879,8 @@ where D: sql::QueryExecutor + Sync + Send
                                             } else {
                                                 "NEW" if len == 0 { "" } else { ": "(len) }
                                             }
+                                            if len == 0 { " | WARNING EMPTY SET" }
+                                            
                                         );
 
                                         // Update thread's deleteds
