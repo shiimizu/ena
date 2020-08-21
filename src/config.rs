@@ -657,9 +657,12 @@ pub fn get_opt() -> Result<Opt> {
         }
     } else {
         let default_database = DatabaseOpt::default();
+        // If a user actually wanted the default (utf8), this would overwrite their setting to utf8mb4.. it's ok right?
+        // Since utf8mb4 is actually the real UTF8.
         if opt.database.charset           == default_database.charset             { opt.database.charset        = "utf8mb4".into();         }
         if opt.database.collate           == default_database.collate             { opt.database.collate        = "utf8mb4_unicode_ci".into();         }
         opt.database.schema = opt.database.name.clone();
+        opt.timescaledb = None;
     }
 
     Ok(opt)

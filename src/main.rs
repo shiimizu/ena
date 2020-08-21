@@ -434,9 +434,36 @@ where D: sql::QueryExecutor + Sync + Send
             if t == 0 {
                 return Ok(());
             }
+        } else {
+            // Go here if this function was called for a board
+            if !_board.with_threads && !_board.with_archives {
+                return Ok(());
+            }
         }
 
-        if !_board.skip_board_check {
+        if _board.skip_board_check {
+            for retry in 0..=_board.retry_attempts {
+                match self.client.head(&fomat!((self.opt.api_url)"/"(&_board.board)"/threads.json")).send().await {
+                    Err(e) =>
+                        if retry == _board.retry_attempts {
+                            epintln!("download_board_and_thread: Error requesting `/" (&_board.board) "/threads.json` [" (e) "]");
+                            return Ok(());
+                        },
+                    Ok(resp) => {
+                        let status = resp.status();
+                        if status == StatusCode::OK {
+                            break;
+                        } else {
+                            if retry == _board.retry_attempts {
+                                epintln!("Invalid board `"(&_board.board)"`");
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                sleep(Duration::from_millis(500)).await
+            }
+        } else {
             // Check if valid
             let valid_board: bool = self.db_client.board_is_valid(&_board.board).await;
             if !valid_board {
@@ -499,9 +526,7 @@ where D: sql::QueryExecutor + Sync + Send
             } else {
                 // Go here if this function was called for a board
 
-                if !_board.with_threads && !_board.with_archives {
-                    break;
-                } else if _board.with_threads && _board.with_archives {
+                if _board.with_threads && _board.with_archives {
                     // FIXME this will not poll together since SEMPAHORE_BOARDS is only 1. Prob better this way, reduce
                     // memory
                     // To fix this, have another SEMAPHORE for archive threads
@@ -532,6 +557,7 @@ where D: sql::QueryExecutor + Sync + Send
                     } else if _board.with_archives {
                         res = self.download_board(&_board, ThreadType::Archive, startup).await;
                     } else {
+                        unreachable!()
                     }
                 }
 
