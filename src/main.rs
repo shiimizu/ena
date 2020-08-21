@@ -46,11 +46,6 @@ pub mod sql;
 
 static CTRLC: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static INIT: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
-
-// Semaphores to limit concurrency
-static SEMAPHORE: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, config::SEMAPHORE_AMOUNT.load(Ordering::SeqCst) as usize));
-static MEDIA_SEMAPHORE: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, config::MEDIA_SEMAPHORE_AMOUNT.load(Ordering::SeqCst) as usize));
-
 struct FourChan<D> {
     client:    reqwest::Client,
     db_client: D,
@@ -119,12 +114,11 @@ impl MediaType {
 }
 
 pub type MediaDetails = (u64, u64, Option<String>, Option<Vec<u8>>, u64, String, String, Option<Vec<u8>>, Option<Vec<u8>>);
-// pub type MediaDetailsAsagi<'a> = (&'a str, u64, &'a str, &'a str);
 
-// From `hex-slice` crate
+/// From `hex-slice` crate
 pub struct HexSlice<'a, T: 'a>(&'a [T]);
 use core::fmt;
-// use core::fmt::Write;
+
 impl<'a, T: fmt::LowerHex> fmt::LowerHex for HexSlice<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let val = self.0;
@@ -132,15 +126,7 @@ impl<'a, T: fmt::LowerHex> fmt::LowerHex for HexSlice<'a, T> {
             fmt::LowerHex::fmt(b, f)?
         }
         Ok(())
-        // fmt_inner_hex(self.0, f, fmt::LowerHex::fmt)
     }
-}
-
-fn fmt_inner_hex<T, F: Fn(&T, &mut fmt::Formatter) -> fmt::Result>(slice: &[T], f: &mut fmt::Formatter, fmt_fn: F) -> fmt::Result {
-    for val in slice.iter() {
-        fmt_fn(val, f)?;
-    }
-    Ok(())
 }
 
 async fn sleep(dur: Duration) {
@@ -152,14 +138,13 @@ fn exists<P: AsRef<std::path::Path>>(path: P) -> bool {
 }
 
 fn main() -> Result<()> {
-
     // Backtraces are only useful in debug builds
     if cfg!(debug_assertions) {
         if std::env::var("RUST_BACKTRACE").is_err() {
             std::env::set_var("RUST_BACKTRACE", "full");
         }
     }
-    
+
     color_eyre::install()?;
     let num_threads = num_cpus::get().max(1);
 
@@ -190,7 +175,7 @@ async fn async_main() -> Result<()> {
     }
 
     pintln!("Press CTRL+C to exit");
-    
+    let origin = "http://boards.4chan.org";
     if !opt.asagi_mode {
         let (client, connection) = tokio_postgres::connect(opt.database.url.as_ref().unwrap(), tokio_postgres::NoTls).await.unwrap();
         Task::spawn(async move {
@@ -199,7 +184,7 @@ async fn async_main() -> Result<()> {
             }
         })
         .detach();
-        let fchan = FourChan::new(create_client("http://boards.4chan.org", &opt).await?, client, opt).await;
+        let fchan = FourChan::new(create_client(origin, &opt).await?, client, opt).await;
         fchan.run().await
     } else {
         use mysql_async::prelude::*;
@@ -207,7 +192,7 @@ async fn async_main() -> Result<()> {
         let mut conn = pool.get_conn().await?;
         conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;").await?;
         let rw = RwLock::new(conn);
-        let fchan = FourChan::new(create_client("http://boards.4chan.org", &opt).await?, rw, opt).await;
+        let fchan = FourChan::new(create_client(origin, &opt).await?, rw, opt).await;
         fchan.run().await?;
         drop(fchan);
         pool.disconnect().await?;
@@ -218,9 +203,9 @@ async fn async_main() -> Result<()> {
 #[async_trait]
 pub trait Archiver {
     async fn run(&self) -> Result<()>;
-    async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()>;
+    async fn download_board_and_thread(&self, board: Board, thread: Option<u64>) -> Result<()>;
     async fn download_boards_index(&self) -> Result<()>;
-    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<()>;
+    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<StatusCode>;
     async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)>;
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
 }
@@ -257,7 +242,7 @@ where D: sql::QueryExecutor + Sync + Send
         // Grab seperate threads to dl
         // Combine them and run
         // let mut current_board = ""; // First board will always have an entry due to opt parsing rules
-        let temp = vec![self.opt.boards.clone()];
+        // let temp = vec![self.opt.boards.clone()];
         // let mut tv = vec![];
         for s_thread in self.opt.threads.iter() {
             let split: Vec<&str> = s_thread.split('/').filter(|s| !s.is_empty()).collect();
@@ -284,10 +269,11 @@ where D: sql::QueryExecutor + Sync + Send
                 let no = split[1].parse::<u64>().unwrap();
                 let search = self.opt.boards.iter().find(|&b| b.board.as_str() == b_cli);
 
-                let res = if let Some(found) = search { Some((found, no)) } else { Some((boards_map.get(b_cli).unwrap(), no)) };
-                self.download_board_and_thread(None, res)
+                let res =
+                    if let Some(found) = search { self.download_board_and_thread(found.clone(), Some(no)) } else { self.download_board_and_thread(boards_map.get(b_cli).unwrap().clone(), Some(no)) };
+                res
             })
-            .chain(temp.into_iter().map(|boards| self.download_board_and_thread(Some(boards), None)))
+            .chain(self.opt.boards.iter().cloned().map(|board| self.download_board_and_thread(board, None)))
             .collect::<FuturesUnordered<_>>();
         while let Some(res) = fut.next().await {
             res.unwrap();
@@ -317,152 +303,138 @@ where D: sql::QueryExecutor + Sync + Send
         Ok(())
     }
 
-    async fn download_board_and_thread(&self, boards: Option<Vec<Board>>, thread_entry: Option<(&Board, u64)>) -> Result<()> {
-        if let Some(mut _boards) = boards {
-            if _boards.len() == 0 {
+    async fn download_board_and_thread(&self, board: Board, thread: Option<u64>) -> Result<()> {
+        let mut _board = board;
+        if let Some(t) = thread {
+            if t == 0 {
                 return Ok(());
             }
-            let mut startup = true;
-            let hz = Duration::from_millis(250);
-            // let mut interval = Duration::from_millis(30_000);
-            // cycle
-                
-                // Download the boards atleast once
-                for _board in _boards.iter_mut() {
-                    let now = Instant::now();
-                    if startup {
-                        let valid_board: bool = self.db_client.board_is_valid(_board.board.as_str()).await;
-                        if !valid_board {
-                            // TODO Filter out invalid boards from the vec before iterating
-                            return Err(eyre!("Invalid board `{}`", &_board.board));
-                        }
-                    }
+        }
 
-                    // upsert_board
-                    self.db_client.board_upsert(_board.board.as_str()).await.unwrap();
+        // Check if valid
+        let valid_board: bool = self.db_client.board_is_valid(&_board.board).await;
+        if !valid_board {
+            epintln!("Invalid board `"(&_board.board)"`");
+            return Ok(());
+        }
 
-                    // get board
-                    let board_id = self.db_client.board_get(_board.board.as_str()).await.unwrap();
-                    // let mut _board = _board.clone();
-                    _board.id = board_id;
+        // Upsert Board
+        self.db_client.board_upsert(&_board.board).await.unwrap();
 
-                    if _board.with_threads && !_board.with_archives {
-                        self.download_board(&_board, ThreadType::Threads, startup).await.unwrap();
-                    } else if !_board.with_threads && _board.with_archives {
-                        self.download_board(&_board, ThreadType::Archive, startup).await.unwrap();
-                    } else if _board.with_threads && _board.with_archives {
-                        let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
-                        threads.unwrap();
-                        archive.unwrap();
-                    }
-                    if get_ctrlc() {
-                        return Ok(());
-                    }
-                    if !_board.watch_boards || !_board.with_threads {
-                        continue;
-                    }
-                    let interval = Duration::from_millis(_board.interval_boards.into());
-                    // FIXME: elpased() silent panic
-                    while now.elapsed() < interval {
-                        if get_ctrlc() {
-                            break;
-                        }
-                        sleep(hz).await;
-                    }
-                    if get_ctrlc() {
-                        break;
-                    }
-                }
-                if startup {
-                    startup = false;
-                }
-                // let m = refresh::refresh_rate(_board.interval_boards.into(), 5*1000, 10);
-                // Cycle
-                let mut cycle = _boards.iter().filter(|b| b.watch_boards && (b.with_threads || b.with_archives) ).cycle();
-                while let Some(_board) =  cycle.next() {
-                    let now = Instant::now();
-                    if _board.with_threads && !_board.with_archives {
-                        self.download_board(&_board, ThreadType::Threads, startup).await.unwrap();
-                    } else if !_board.with_threads && _board.with_archives {
-                        self.download_board(&_board, ThreadType::Archive, startup).await.unwrap();
-                    } else if _board.with_threads && _board.with_archives {
-                        let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
-                        threads.unwrap();
-                        archive.unwrap();
-                    }
-                    if get_ctrlc() {
-                        return Ok(());
-                    }
-                    let interval = Duration::from_millis(_board.interval_boards.into());
-                    // FIXME: elpased() silent panic
-                    while now.elapsed() < interval {
-                        if get_ctrlc() {
-                            break;
-                        }
-                        sleep(hz).await;
-                    }
-                    if get_ctrlc() {
-                        break;
-                    }
-                }
-                
-        } else if let Some((board_info, thread)) = thread_entry {
-            if thread == 0 {
-                return Ok(());
-            }
-
-            // Check if valid
-            let valid_board: bool = self.db_client.board_is_valid(board_info.board.as_str()).await;
-            if !valid_board {
-                return Err(eyre!("Invalid board `{}`", &board_info.board));
-            }
-
-            // upsert_board
-            self.db_client.board_upsert(board_info.board.as_str()).await.unwrap();
-
-            // get board
-            let board_id = self.db_client.board_get(board_info.board.as_str()).await.unwrap();
-            // TODO Get rid of clones... probably have to do some interior mutability or something
-            let mut _board = board_info.clone();
-            _board.id = board_id;
-
+        // Get board id
+        let board_id = self.db_client.board_get(&_board.board).await;
+        if let Ok(id) = board_id {
+            _board.id = id;
+        } else {
+            // Create the boards if it doesn't exist
             if self.opt.asagi_mode {
                 // The group of statments for just `Boards` was done in the beginning, so this can be called
                 // This will create all the board tables, triggers, etc if the board doesn't exist
                 self.db_client.board_table_exists(&_board.board, &self.opt).await;
-
-                // Init the actual statements for this specific board
-                self.db_client.init_statements(_board.id, &_board.board).await;
             }
+            let id = self.db_client.board_get(&_board.board).await.unwrap();
+            _board.id = id;
+        }
 
-            let hz = Duration::from_millis(250);
-            let interval = Duration::from_millis(_board.interval_threads.into());
-            loop {
-                let now = Instant::now();
+        if self.opt.asagi_mode {
+            // Init the actual statements for this specific board. Ignores when already exists.
+            // For postgres, all the statements were initialized in the `run` method
+            self.db_client.init_statements(_board.id, &_board.board).await;
+        }
+
+        let mut rate = refresh::refresh_rate(if thread.is_some() { _board.interval_threads.into() } else { _board.interval_boards.into() }, 5 * 1000, 10);
+        let mut rate_ref = rate.by_ref();
+
+        let hz = Duration::from_millis(250);
+        let interval = Duration::from_millis(_board.interval_threads.into());
+
+        // Startup is to determine whether to get combined or modified threads
+        let mut startup = true;
+        let mut res = Err(eyre!("Temporary for download_board!"));
+        loop {
+            let now = Instant::now();
+
+            // Go here if this function was called for a thread
+            if let Some(_thread) = thread {
                 // with_threads or with_archives don't apply here, since going here implies you want the
                 // thread/archive
-                let (thread_type, deleted) = self.download_thread(&_board, thread, ThreadType::Threads).await.unwrap();
+                let (thread_type, deleted) = self.download_thread(&_board, _thread, ThreadType::Threads).await.unwrap();
                 if !_board.watch_threads || get_ctrlc() || thread_type.is_archive() || deleted {
                     break;
                 }
-                // FIXME: elpased() silent panic
-                while now.elapsed() < interval {
-                    if get_ctrlc() {
-                        break;
+            } else {
+                // Go here if this function was called for a board
+
+                if !_board.with_threads && !_board.with_archives {
+                    break;
+                } else if _board.with_threads && _board.with_archives {
+                    // FIXME this will not poll together since SEMPAHORE_BOARDS is only 1. Prob better this way, reduce
+                    // memory
+                    let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
+                    res = threads;
+                    // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
+                    archive.unwrap();
+                } else {
+                    if _board.with_threads {
+                        res = self.download_board(&_board, ThreadType::Threads, startup).await;
+                    } else if _board.with_archives {
+                        res = self.download_board(&_board, ThreadType::Archive, startup).await;
+                    } else {
                     }
-                    sleep(hz).await;
                 }
-                if get_ctrlc() {
+
+                // After getting the board once, see if we're archiving it or not
+                if !_board.watch_boards || get_ctrlc() {
                     break;
                 }
             }
-        } else {
-            unreachable!()
+
+            // FIXME: elpased() silent panics!
+            let interval = {
+                if _board.interval_dynamic {
+                    if let Ok(st) = res {
+                        if st == StatusCode::OK {
+                            // reset
+                            rate_ref = rate.by_ref();
+                            Duration::from_millis(rate_ref.next().unwrap().into())
+                        } else {
+                            Duration::from_millis(rate_ref.next().unwrap().into())
+                        }
+                    } else {
+                        Duration::from_millis(rate_ref.next().unwrap().into())
+                    }
+                } else {
+                    Duration::from_millis(if thread.is_some() { _board.interval_threads.into() } else { _board.interval_boards.into() })
+                }
+            };
+            pintln!("interval: "[interval]);
+            while now.elapsed() < interval {
+                if get_ctrlc() {
+                    break;
+                }
+                sleep(hz).await;
+            }
+            if get_ctrlc() {
+                break;
+            }
+            startup = false;
         }
+
         Ok(())
     }
 
-    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<()> {
+    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<StatusCode> {
+        let mut _sem_threads = None;
+        let mut _sem_archive = None;
+        if thread_type.is_threads() {
+            _sem_threads = Some(SEMAPHORE_BOARDS.acquire(1).await);
+        }
+        if thread_type.is_archive() {
+            _sem_archive = Some(SEMAPHORE_BOARDS_ARCHIVE.acquire(1).await);
+        }
+        if get_ctrlc() {
+            return Ok(StatusCode::OK);
+        }
         let fun_name = "download_board";
         if startup && self.opt.asagi_mode {
             // The group of statments for just `Boards` was done in the beginning, so this can be called
@@ -472,17 +444,13 @@ where D: sql::QueryExecutor + Sync + Send
             // Init the actual statements for this specific board
             self.db_client.init_statements(board_info.id, &board_info.board).await;
         }
-        // Board has to take all permits
-        if get_ctrlc() {
-            return Ok(());
-        }
         if !startup {
             sleep(Duration::from_secs(1)).await;
         }
         let last_modified = self.db_client.board_get_last_modified(thread_type, board_info.id).await;
         let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
         if get_ctrlc() {
-            return Ok(());
+            return Ok(StatusCode::OK);
         }
         for retry in 0..=board_info.retry_attempts {
             if get_ctrlc() {
@@ -528,7 +496,6 @@ where D: sql::QueryExecutor + Sync + Send
                                 Either::Left(rowstream) => match rowstream {
                                     Ok(rows) => {
                                         futures::pin_mut!(rows);
-
                                         let mut fut = rows
                                             .map(|row| {
                                                 let no: i64 = row.unwrap().get(0);
@@ -536,23 +503,6 @@ where D: sql::QueryExecutor + Sync + Send
                                             })
                                             .collect::<FuturesUnordered<_>>()
                                             .await;
-                                        // let mut fut = FuturesUnordered::new();
-                                        // while let Some(row) = rows.next().await {
-                                        //     match row {
-                                        //         Ok(row) => {
-                                        //             let t: i64 = row.get(0);
-                                        //             fut.push(self.download_thread(board_info, t as u64, thread_type));
-                                        //         }
-                                        //         Err(e) => {
-                                        //             epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
-                                        //             if board_info.board.len() <= 2 { "\t\t" } else {"\t"}
-                                        //             (&lm)
-                                        //             " | ["
-                                        //             (e)"]"
-                                        //             );
-                                        //         }
-                                        //     }
-                                        // }
                                         while let Some(res) = fut.next().await {
                                             res.unwrap();
                                         }
@@ -587,7 +537,7 @@ where D: sql::QueryExecutor + Sync + Send
                             " | ["
                             (status)"]"
                             );
-                            break;
+                            return Ok(status);
                         }
                         StatusCode::NOT_MODIFIED => {
                             epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
@@ -596,7 +546,7 @@ where D: sql::QueryExecutor + Sync + Send
                             " | ["
                             (status)"]"
                             );
-                            break;
+                            return Ok(status);
                         }
                         _ => {
                             epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
@@ -605,6 +555,9 @@ where D: sql::QueryExecutor + Sync + Send
                             " | ["
                             (status)"]"
                             );
+                            if retry == board_info.retry_attempts {
+                                return Ok(status);
+                            }
                         }
                     }
                 }
@@ -618,11 +571,11 @@ where D: sql::QueryExecutor + Sync + Send
                 }
             }
         }
-        Ok(())
+        Ok(StatusCode::OK)
     }
 
     async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)> {
-        let sem = SEMAPHORE.acquire(1).await;
+        let sem = SEMAPHORE_THREADS.acquire(1).await;
         let mut with_tail = if thread_type.is_threads() { board_info.with_tail } else { false };
         let hz = Duration::from_millis(250);
         let mut interval = Duration::from_millis(board_info.interval_threads.into());
@@ -991,6 +944,7 @@ where D: sql::QueryExecutor + Sync + Send
     }
 
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()> {
+        let sem_test = SEMAPHORE_MEDIA_TEST.acquire(1).await;
         if get_ctrlc() {
             return Ok(());
         }
@@ -1122,7 +1076,7 @@ where D: sql::QueryExecutor + Sync + Send
             if get_ctrlc() {
                 return Ok(());
             }
-            let sem = MEDIA_SEMAPHORE.acquire(1).await;
+            let sem = SEMAPHORE_MEDIA.acquire(1).await;
             if get_ctrlc() {
                 return Ok(());
             }
@@ -1264,8 +1218,7 @@ where D: sql::QueryExecutor + Sync + Send
                                             if media_type == MediaType::Full { (&ext) } else { ".jpg" }
                                         );
                                         if exists(&_path) {
-                                        
-                                            // FIXME Becuase this `download_media` method is run concurrently 
+                                            // FIXME Becuase this `download_media` method is run concurrently
                                             // If in the beginning there's no hashes, this error will always be reported
                                             // because hashes are upserted at the end of this method, but they're all being ran
                                             // at the same time, so there won't be any hashes to work with in the beginning.
@@ -1273,13 +1226,14 @@ where D: sql::QueryExecutor + Sync + Send
                                             // Another solutions is to run this method sequentially but then we lose the async http get
                                             // for lots of media..
                                             // Another solution is to use md5 on the filesystem since we're checking with md5 anyways.
-                                            // 
+                                            //
                                             // Ignore error report for now.
-                                            // epintln!("download_media: `" 
+                                            // epintln!("download_media: `"
                                             // {"{:02x}",HexSlice(md5.as_ref().unwrap().as_slice()) }
                                             // " | "
                                             // (&_path)
-                                            // "` exists! Downloaded for nothing.. Perhaps you didn't upload your hashes to the database beforehand?");
+                                            // "` exists! Downloaded for nothing.. Perhaps you didn't upload your hashes to the database
+                                            // beforehand?");
 
                                             // Try to upsert to database
                                             let mut success = true;

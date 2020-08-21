@@ -12,8 +12,17 @@ use structopt::StructOpt;
 use url::Url;
 
 // Semaphores to limit concurrency
-pub(crate) static SEMAPHORE_AMOUNT: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
-pub(crate) static MEDIA_SEMAPHORE_AMOUNT: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
+// Boards currently limit to 1, so it's sequential
+pub(crate) static SEMAPHORE_AMOUNT_BOARDS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1));
+pub(crate) static SEMAPHORE_AMOUNT_BOARDS_ARCHIVE: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1));
+pub(crate) static SEMAPHORE_AMOUNT_THREADS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
+pub(crate) static SEMAPHORE_AMOUNT_MEDIA: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
+pub(crate) static SEMAPHORE_BOARDS: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_BOARDS.load(Ordering::SeqCst) as usize));
+pub(crate) static SEMAPHORE_BOARDS_ARCHIVE: Lazy<futures_intrusive::sync::Semaphore> =
+    Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_BOARDS_ARCHIVE.load(Ordering::SeqCst) as usize));
+pub(crate) static SEMAPHORE_THREADS: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst) as usize));
+pub(crate) static SEMAPHORE_MEDIA: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_MEDIA.load(Ordering::SeqCst) as usize));
+pub(crate) static SEMAPHORE_MEDIA_TEST: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, 1));
 
 // default_value must be closely tied to Default::default() for sanity.
 // Since structopt doesn't use Default::default...
@@ -38,6 +47,10 @@ pub struct Board {
     /// Delay (ms) between each thread
     #[structopt(display_order(5), long, default_value("1000"), env, hide_env_values = true)]
     pub interval_threads: u16,
+
+    /// Add 5s on intervals for each 404. Capped.
+    #[structopt(display_order(5), long)]
+    pub interval_dynamic: bool,
 
     /// Grab threads from threads.json
     // #[structopt(long, env, hide_env_values = true)]
@@ -83,6 +96,7 @@ impl Default for Board {
             retry_attempts:   3,
             interval_boards:  30000,
             interval_threads: 1000,
+            interval_dynamic: false,
             with_threads:     false,
             with_archives:    false,
             with_tail:        false,
@@ -173,7 +187,7 @@ pub struct Opt {
     pub boards: Vec<Board>,
 
     /// Exclude boards [example: a,b,c]  
-    /// 
+    ///
     /// (Only applies to boards from boardslist, not threadslist)
     #[structopt(display_order(2), short("e"), long("exclude-boards"),  multiple(true), required(false),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
     pub boards_excluded: Vec<Board>,
@@ -453,6 +467,7 @@ pub fn get_opt() -> Result<Opt> {
                         if opt.board_settings.retry_attempts    != default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
                         if opt.board_settings.interval_boards   != default.interval_boards  { q.board_settings.interval_boards = opt.board_settings.interval_boards; }
                         if opt.board_settings.interval_threads  != default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
+                        if opt.board_settings.interval_dynamic  != default.interval_dynamic { q.board_settings.interval_dynamic = opt.board_settings.interval_dynamic; }
                         if opt.board_settings.with_threads      != default.with_threads     { q.board_settings.with_threads = opt.board_settings.with_threads; }
                         if opt.board_settings.with_archives     != default.with_archives    { q.board_settings.with_archives = opt.board_settings.with_archives; }
                         if opt.board_settings.with_tail         != default.with_tail        { q.board_settings.with_tail = opt.board_settings.with_tail; }
@@ -476,6 +491,7 @@ pub fn get_opt() -> Result<Opt> {
                             if b.interval_boards    == default.interval_boards  { b.interval_boards = q.board_settings.interval_boards; } 
                             if b.interval_threads   == default.interval_threads { b.interval_threads = q.board_settings.interval_threads; }
                             if b.with_threads       == default.with_threads     { b.with_threads = q.board_settings.with_threads; }
+                            if b.interval_dynamic   == default.interval_dynamic { b.interval_dynamic = q.board_settings.interval_dynamic; }
                             if b.with_archives      == default.with_archives    { b.with_archives =  q.board_settings.with_archives; }
                             if b.with_tail          == default.with_tail        { b.with_tail = q.board_settings.with_tail; }
                             if b.with_full_media    == default.with_full_media  { b.with_full_media = q.board_settings.with_full_media; }
@@ -525,6 +541,7 @@ pub fn get_opt() -> Result<Opt> {
                         if q.board_settings.retry_attempts      == default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
                         if q.board_settings.interval_boards     == default.interval_boards  { q.board_settings.interval_boards  = opt.board_settings.interval_boards; };
                         if q.board_settings.interval_threads    == default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
+                        if q.board_settings.interval_dynamic    == default.interval_dynamic { q.board_settings.interval_dynamic = opt.board_settings.interval_dynamic; }
                         if q.board_settings.with_threads        == default.with_threads     { q.board_settings.with_threads = opt.board_settings.with_threads; }
                         if q.board_settings.with_archives       == default.with_archives    { q.board_settings.with_archives = opt.board_settings.with_archives; }
                         if q.board_settings.with_tail           == default.with_tail        { q.board_settings.with_tail = opt.board_settings.with_tail; }
@@ -569,8 +586,8 @@ pub fn get_opt() -> Result<Opt> {
     }
     
     // Patch concurrency limit
-    SEMAPHORE_AMOUNT.fetch_add(if opt.strict { 1 } else { opt.limit }, Ordering::SeqCst);
-    MEDIA_SEMAPHORE_AMOUNT.fetch_add(opt.limit_media, Ordering::SeqCst);
+    SEMAPHORE_AMOUNT_THREADS.fetch_add(if opt.strict { 1 } else { opt.limit }, Ordering::SeqCst);
+    SEMAPHORE_AMOUNT_MEDIA.fetch_add(opt.limit_media, Ordering::SeqCst);
     
     // &opt.threads.dedup();
 
