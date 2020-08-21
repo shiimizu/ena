@@ -66,6 +66,7 @@ FLAGS:
         --with-threads        Grab threads from threads.json
         --with-thumbnails     Download thumbnails as well
         --interval-dynamic    Add 5s on intervals for each NOT_MODIFIED. Capped
+        --skip-board-check    Skip checking if a board is valid
     -h, --help                Prints help information
     -V, --version             Prints version information
 
