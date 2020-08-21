@@ -727,7 +727,7 @@ where D: sql::QueryExecutor + Sync + Send
 
             for retry in 0..=board_info.retry_attempts {
                 let now = Instant::now();
-                
+
                 if get_ctrlc() {
                     return Ok((thread_type, deleted));
                 }
@@ -1148,11 +1148,13 @@ where D: sql::QueryExecutor + Sync + Send
                 if exists(&_path) {
                     return Ok(());
                 }
-                let actual_filename = if board_info.board == "f" { fomat!((percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC))(ext)) } else { tim_filename };
                 path = Some(_path);
                 dir = Some(_dir);
-                let _url = format!("{api_domain}/{board}/{filename}", api_domain = &self.opt.media_url, board = &board_info.board, filename = &actual_filename);
-                url = Some(_url);
+                let url_string = fomat!(
+                    (&self.opt.media_url)"/"(&board_info.board)"/"
+                    if board_info.board == "f" { (&filename)(ext) }  else { (tim_filename) }
+                );
+                url = Some(url::Url::parse(&url_string).unwrap());
             } else {
                 epintln!("download_media: Error getting media! This shouldn't have happened!");
             }
@@ -1216,16 +1218,15 @@ where D: sql::QueryExecutor + Sync + Send
                 // path = Some(_path);
             }
 
-            let actual_filename = fomat!(
+            let url_string = fomat!(
+                (&self.opt.media_url)"/"(&board_info.board)"/"
                 if board_info.board == "f" {
-                    (percent_encoding::utf8_percent_encode(&filename, percent_encoding::NON_ALPHANUMERIC)) (ext) 
-                } else {
+                    (&filename)(ext)
+                }  else { 
                     (tim) if media_type == MediaType::Full { (ext) } else { "s.jpg" }
                 }
             );
-
-            let _url = format!("{api_domain}/{board}/{filename}", api_domain = &self.opt.media_url, board = &board_info.board, filename = &actual_filename);
-            url = Some(_url);
+            url = Some(url::Url::parse(&url_string).unwrap());
         }
 
         // Download the file
@@ -1423,10 +1424,10 @@ where D: sql::QueryExecutor + Sync + Send
                                                 }
                                                 sleep(Duration::from_millis(500)).await;
                                             }
-                                            
+
                                             // Delete temp file after since going in this block means the file exists
                                             let _ = std::fs::remove_file(&tmp_path);
-                                            
+
                                             // Exit if exists
                                             if success {
                                                 break;
