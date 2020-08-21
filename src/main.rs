@@ -168,9 +168,10 @@ fn main() -> Result<()> {
     })
 }
 async fn async_main() -> Result<()> {
-    let opt = config::get_opt()?;
+    let mut opt = config::get_opt()?;
 
     if opt.debug {
+        opt.database.password = "*****".into();
         pintln!((serde_json::to_string_pretty(&opt).unwrap()));
         return Ok(());
     }
