@@ -18,7 +18,7 @@ use futures::future;
 
 use async_trait::async_trait;
 use ctrlc;
-use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
+use futures::{channel::oneshot, future::Either, stream::FuturesUnordered, stream::FuturesOrdered};
 use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -165,7 +165,6 @@ fn main() -> Result<()> {
         Ok(())
     })
 }
-
 async fn async_main() -> Result<()> {
     let opt = config::get_opt()?;
 
@@ -177,6 +176,106 @@ async fn async_main() -> Result<()> {
     pintln!("Press CTRL+C to exit");
     let origin = "http://boards.4chan.org";
     if !opt.asagi_mode {
+        use async_process::Command;
+
+        // temp set env variable
+        std::env::set_var("PGPASSWORD", &opt.database.password);
+        std::env::set_var("PGOPTIONS", "--client-min-messages=warning");
+
+        // Check if database exists just for the sake of displaying if it exists or not
+
+        let mut child = Command::new("psql")
+            .stdin(async_process::Stdio::piped())
+            .stdout(async_process::Stdio::piped())
+            .args(&["-h", &opt.database.host, "-p", &fomat!((opt.database.port)), "-U", &opt.database.username, "-t"])
+            .spawn()?;
+        {
+            let stdin = child.stdin.as_mut().expect("Failed to open stdin");
+            stdin
+                .write_all(
+                    fomat!(
+                    "SELECT true WHERE EXISTS (SELECT FROM pg_database WHERE datname = '" (&opt.database.name) "')"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .expect("Failed to write to stdin");
+        }
+        let output = child.output().await?;
+        let out = String::from_utf8_lossy(&output.stdout);
+        let out = out.trim();
+
+        if out.is_empty() {
+            pintln!("Initializing database..");
+
+            // Create database if not exists
+            let mut child = Command::new("psql")
+                .stdin(async_process::Stdio::piped())
+                .stdout(async_process::Stdio::piped())
+                .args(&["-h", &opt.database.host, "-p", &fomat!((opt.database.port)), "-U", &opt.database.username])
+                .spawn()?;
+            {
+                let stdin = child.stdin.as_mut().expect("Failed to open stdin");
+                stdin
+                    .write_all(
+                        fomat!(
+                "SELECT 'CREATE DATABASE " (&opt.database.name) "' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '" 
+                (&opt.database.name)
+                r#"')\gexec"#)
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("Failed to write to stdin");
+            }
+            let output = child.output().await?;
+            let out = String::from_utf8_lossy(&output.stdout);
+            let out = out.trim();
+
+            // When the ouput is something, that means a new database was created
+            if !out.is_empty() {
+                let mut up = include_str!("sql/up.sql").to_string();
+                if opt.database.schema == "public" {
+                    up = up.replace(r#""%%SCHEMA%%", "#, "");
+                }
+
+                // This is could be better.. but w/e
+                // Just don't have empty strings on your timescaledb settings..
+                if let Some(ts) = &opt.timescaledb {
+                    if ts.column.is_empty() || ts.every.is_empty() {
+                        epintln!("Skipping timescaledb.. One of the columns are empty.");
+                        up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION");
+                        up = up.replace("SELECT create_hypertable", "-- SELECT create_hypertable");
+                    } else {
+                        up = up.replace("'time'", &fomat!("'"(ts.column)"'" ));
+                        up = up.replace("INTERVAL '2 weeks'", &ts.every);
+                    }
+                } else {
+                    up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION");
+                    up = up.replace("SELECT create_hypertable", "-- SELECT create_hypertable");
+                }
+
+                up = up.replace("%%SCHEMA%%", &opt.database.schema);
+                up = up.replace("%%DB_NAME%%", &opt.database.name);
+
+                // Run the sql migration to init tables/triggers/etc
+                let mut child = Command::new("psql")
+                    .stdin(async_process::Stdio::piped())
+                    .stdout(async_process::Stdio::piped())
+                    .args(&["-q", "-h", &opt.database.host, "-p", &fomat!((opt.database.port)), "-U", &opt.database.username, "-d", &opt.database.name])
+                    .spawn()?;
+                {
+                    let stdin = child.stdin.as_mut().expect("Failed to open stdin");
+                    stdin.write_all(up.as_bytes()).await.expect("Failed to write to stdin");
+                }
+                let output = child.output().await?;
+            }
+        }
+
+        if get_ctrlc() {
+            return Ok(());
+        }
+
+        // Finally connect to the database
         let (client, connection) = tokio_postgres::connect(opt.database.url.as_ref().unwrap(), tokio_postgres::NoTls).await.unwrap();
         Task::spawn(async move {
             if let Err(e) = connection.await {
@@ -184,6 +283,7 @@ async fn async_main() -> Result<()> {
             }
         })
         .detach();
+
         let fchan = FourChan::new(create_client(origin, &opt).await?, client, opt).await;
         fchan.run().await
     } else {
@@ -275,6 +375,9 @@ where D: sql::QueryExecutor + Sync + Send
             })
             .chain(self.opt.boards.iter().cloned().map(|board| self.download_board_and_thread(board, None)))
             .collect::<FuturesUnordered<_>>();
+        
+        config::display();
+        
         while let Some(res) = fut.next().await {
             res.unwrap();
         }
@@ -370,10 +473,20 @@ where D: sql::QueryExecutor + Sync + Send
                 } else if _board.with_threads && _board.with_archives {
                     // FIXME this will not poll together since SEMPAHORE_BOARDS is only 1. Prob better this way, reduce
                     // memory
-                    let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
-                    res = threads;
-                    // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
-                    archive.unwrap();
+                    let _vec = vec![self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup)];
+                    let mut _fut= _vec.into_iter()
+                    .collect::<FuturesOrdered<_>>();
+                    let mut i=0u8;
+                    while let Some(_res) = _fut.next().await {
+                        if i == 0 {
+                            res = _res;
+                        }
+                        i = i+1;
+                    }
+                    // let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
+                    // res = threads;
+                    // // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
+                    // archive.unwrap();
                 } else {
                     if _board.with_threads {
                         res = self.download_board(&_board, ThreadType::Threads, startup).await;
@@ -407,7 +520,6 @@ where D: sql::QueryExecutor + Sync + Send
                     Duration::from_millis(if thread.is_some() { _board.interval_threads.into() } else { _board.interval_boards.into() })
                 }
             };
-            pintln!("interval: "[interval]);
             while now.elapsed() < interval {
                 if get_ctrlc() {
                     break;

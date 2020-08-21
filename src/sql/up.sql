@@ -2,15 +2,16 @@
     -- PGPASSWORD env $ENV:PGPASSWORD='zxc'
     -- createdb -h localhost -p 5432 -U postgres ena4
     -- echo "SELECT 'CREATE DATABASE ena4' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ena4')\gexec" | psql -h localhost -p 5432 -U postgres
+    -- echo "SELECT true WHERE EXISTS (SELECT FROM pg_database WHERE datname = 'ena4')" | psql -h localhost -p 5432 -U postgres
     -- psql -h localhost -p 5432 -U postgres -d ena4 -f up.sql
     -- cat src/sql/up.sql | psql -h localhost -p 5432 -U postgres -d ena4
     
     -- SHOW search_path;
-    CREATE SCHEMA IF NOT EXISTS ch;
+    CREATE SCHEMA IF NOT EXISTS %%SCHEMA%%;
     CREATE SCHEMA IF NOT EXISTS extensions;
-    SET search_path = "ch", "$user", public, extensions;
-    ALTER DATABASE ena4 SET search_path = "ch", "$user", public, extensions;
-    ALTER DATABASE ena4 SET timezone TO 'America/New_York';
+    SET search_path = "%%SCHEMA%%", "$user", public, extensions;
+    ALTER DATABASE %%DB_NAME%% SET search_path = "%%SCHEMA%%", "$user", public, extensions;
+    ALTER DATABASE %%DB_NAME%% SET timezone TO 'America/New_York';
 
     -- make sure everybody can use everything in the extensions schema
     grant usage on schema extensions to public;
@@ -114,8 +115,8 @@
     COMMENT ON COLUMN posts.ip is 'Gotta have a way to ban spammers ya''know';
     
     -- Optional TimescaleDB. It is recommended to partition on a huge table such as posts.
-    -- CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;
-    -- SELECT create_hypertable('posts', 'time', if_not_exists => true, chunk_time_interval => INTERVAL '2 weeks');
+    CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;
+    SELECT create_hypertable('posts', 'time', if_not_exists => true, chunk_time_interval => INTERVAL '2 weeks');
     -- (the default value is 1 week)
     -- other functions:
     -- SELECT create_hypertable('posts', 'time', if_not_exists => true, chunk_time_interval => 1296000); -- 15 days
