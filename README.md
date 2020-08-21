@@ -126,6 +126,18 @@ OPTIONS:
 ```shell
 $ cargo build --release -j4
 ```
+Build artifacts can be found in `target/release/`  
+
+# Reading the output
+Generally, the ouput looks something like:  
+
+```
+({function}): (threads|archive) /{board}/{thread} {Response-Last-Modified} | {In-Database-Last-Modified} | {NEW|UPSERTED|DELETED}
+```  
+
+If you see a line it means the thread/post was modified and reported back to the screen.  
+The two datetimes are used to compare the times of modification.
+
 
 ## Status  
 Core functionality works. There are things that could be improved on:  

@@ -175,7 +175,6 @@ async fn async_main() -> Result<()> {
         return Ok(());
     }
 
-    pintln!("Press CTRL+C to exit");
     let origin = "http://boards.4chan.org";
     if !opt.asagi_mode {
         // temp set env variable
@@ -398,7 +397,12 @@ where D: sql::QueryExecutor + Sync + Send
             .chain(self.opt.boards.iter().cloned().map(|board| self.download_board_and_thread(board, None)))
             .collect::<FuturesUnordered<_>>();
 
-        config::display();
+        if self.opt.asagi_mode {
+            config::display_asagi();
+        } else {
+            config::display();
+        }
+        pintln!("Press CTRL+C to exit");
 
         while let Some(res) = fut.next().await {
             res.unwrap();
