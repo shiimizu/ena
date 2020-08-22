@@ -60,13 +60,19 @@ download_media: /a/207635927#207635927 23403f8dc2cec85bcc136c736dec6bc2 | assets
 
 SQL query output:
 ```
- 23403f8dc2cec85bcc136c736dec6bc2 |        | bbae8c36a97c41e32b7e94eb7d871234684c8bc00022634b9c87270a3fcbf57e
+ena=# select * from media where md5='\x23403f8dc2cec85bcc136c736dec6bc2';
+ banned | id |                md5                 | sha256 |                              sha256t                               | content | content_thumb
+--------+----+------------------------------------+--------+--------------------------------------------------------------------+---------+---------------
+        |    | \x23403f8dc2cec85bcc136c736dec6bc2 |        | \xbbae8c36a97c41e32b7e94eb7d871234684c8bc00022634b9c87270a3fcbf57e |         |
 ```
 
 Log output:
 ```
 download_media: /a/207567202#207637317 23403f8dc2cec85bcc136c736dec6bc2 | assets/media_ena_a_test_thumbs3/thumbnails/e/57/bbae8c36a97c41e32b7e94eb7d871234684c8bc00022634b9c87270a3fcbf57e.jpg
 ```
+
+As you can see they have the same `md5`: `23403f8dc2cec85bcc136c736dec6bc2`   
+Also you can see one is OP, the other is a REPLY
 
 see : `my-file.txt` (program log output) (btw it's not pushed to the repo)
 
