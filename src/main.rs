@@ -1209,7 +1209,7 @@ where D: sql::QueryExecutor + Sync + Send
                 path = Some(_path);
                 dir = Some(_dir);
                 let url_string = fomat!(
-                    (&self.opt.media_url)"/"(&board_info.board)"/"
+                    (&self.opt.media_url) (&board_info.board)"/"
                     if board_info.board == "f" { (&filename)(ext) }  else { (tim_filename) }
                 );
                 url = Some(url::Url::parse(&url_string).unwrap());
@@ -1217,7 +1217,8 @@ where D: sql::QueryExecutor + Sync + Send
                 epintln!("download_media: Error getting media! This shouldn't have happened!");
             }
         } else {
-            let _checksum = if media_type == MediaType::Full {
+            let _checksum = {
+            if media_type == MediaType::Full {
                 sha256
             } else {
                 // Thumbnails aren't unique and can have duplicates
@@ -1229,6 +1230,7 @@ where D: sql::QueryExecutor + Sync + Send
                     // Since the Either will always run
                     sha256t
                 }
+            }
             };
 
             // Directory Structure:
@@ -1237,6 +1239,9 @@ where D: sql::QueryExecutor + Sync + Send
             if let Some(checksum) = &_checksum {
                 let hash = format!("{:02x}", HexSlice(checksum.as_slice()));
                 let len = hash.len();
+                pintln!(
+                "download_media: (threads) /"(&board_info.board)"/" if resto == 0 { (no) } else { (resto) }"#"(no)" | " [md5] " | " (&hash) " : " (len)
+                );
                 if len == 64 {
                     let _path = fomat!
                     (
@@ -1275,9 +1280,8 @@ where D: sql::QueryExecutor + Sync + Send
                 }
                 // path = Some(_path);
             }
-
             let url_string = fomat!(
-                (&self.opt.media_url)"/"(&board_info.board)"/"
+                (&self.opt.media_url) (&board_info.board)"/"
                 if board_info.board == "f" {
                     (&filename)(ext)
                 }  else {
