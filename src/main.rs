@@ -879,7 +879,7 @@ where D: sql::QueryExecutor + Sync + Send
                                             } else {
                                                 "NEW" if len == 0 { "" } else { ": "(len) }
                                             }
-                                            if len == 0 { " | WARNING EMPTY SET" }
+                                            if len == 0 && !self.opt.asagi_mode { " | WARNING EMPTY SET" }
                                             
                                         );
 
