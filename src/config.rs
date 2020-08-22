@@ -54,7 +54,7 @@ pub struct Board {
     #[structopt(display_order(6), long)]
     pub interval_dynamic: bool,
 
-    /// Skip checking if a board is valid  
+    /// Skip checking if a board is valid
     #[structopt(display_order(7), long)]
     pub skip_board_check: bool,
 

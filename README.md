@@ -46,6 +46,8 @@
 
 Low resource and high performance archiver to save posts, images and all relevant data from an imageboard into a local database and local image store. The project currently only supports 4chan.  
 
+**This development branch is currently undergoing active breaking changes towards ena v0.8.0. Do not use in production.**
+
 ## Usage
 
 ```

@@ -10,7 +10,6 @@ user_agent:     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/201001
 database:
   engine:       innodb
   database:     asagi
-  schema:       asagi
   host:         localhost
   port:         3306
   username:     root
