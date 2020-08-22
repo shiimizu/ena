@@ -782,17 +782,7 @@ where D: sql::QueryExecutor + Sync + Send
 
             for retry in 0..=board_info.retry_attempts {
                 let now = Instant::now();
-
-                if get_ctrlc() {
-                    return Ok((thread_type, deleted));
-                }
                 let resp = self.client.gett(url.as_str(), &last_modified).await;
-                if get_ctrlc() {
-                    return Ok((thread_type, deleted));
-                }
-                if retry != 0 {
-                    sleep(Duration::from_secs(1)).await;
-                }
                 match resp {
                     Ok((status, lm, body)) => {
                         if body.len() > 0 {
@@ -822,6 +812,11 @@ where D: sql::QueryExecutor + Sync + Send
 
                                 // ignore if err, it means it's empty or incomplete
                                 match serde_json::from_slice::<serde_json::Value>(&body) {
+                                    Err(e) => {
+                                        epintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
+                                        if with_tail { "-tail " } else { " " }
+                                        "["(e)"] " [&last_modified]);
+                                    }
                                     Ok(mut thread_json) => {
                                         if !with_tail {
                                             update_post_with_extra(&mut thread_json);
@@ -880,7 +875,7 @@ where D: sql::QueryExecutor + Sync + Send
                                                 "NEW" if len == 0 { "" } else { ": "(len) }
                                             }
                                             if len == 0 && !self.opt.asagi_mode { " | WARNING EMPTY SET" }
-                                            
+
                                         );
 
                                         // Update thread's deleteds
@@ -978,13 +973,24 @@ where D: sql::QueryExecutor + Sync + Send
                                                 }
                                             } else {
                                                 // Postgres Side
-                                                let start = if let Some(post_json) = thread_json["posts"].get(1) {
-                                                    post_json["no"].as_u64().unwrap_or_default()
-                                                } else {
-                                                    thread_json["posts"][0]["no"].as_u64().unwrap_or_default()
+
+                                                // If 0 it usually means the thread hardly has any replies, if any.
+                                                let next_no = {
+                                                    // Boards like /f/ have media in the OP almost always, so that's where start should be
+                                                    if board_info.board == "f" {
+                                                        0
+                                                    } else {
+                                                        // First reply no, if not exists default to 0
+                                                        thread_json["posts"].get(1).and_then(|j| j.get("no")).map(serde_json::Value::as_u64).flatten().unwrap_or_default()
+                                                    }
                                                 };
+
                                                 loop {
-                                                    let either = self.db_client.thread_get_media(board_info, thread, start).await;
+                                                    // We basically want to get the same amount of posts from recieved from the json
+                                                    // i.e The posts from the live thread minus the bumped off posts (if any) that's recorded in the db
+                                                    // (if any) But queried from the database since
+                                                    // it has sha256 & sha256t
+                                                    let either = self.db_client.thread_get_media(board_info, thread, next_no).await;
                                                     if let Either::Left(res) = either {
                                                         match res {
                                                             Err(e) => epintln!("download_media: "(e)),
@@ -1056,11 +1062,6 @@ where D: sql::QueryExecutor + Sync + Send
                                         // Update thread's last_modified
                                         self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
                                         break; // exit the retry loop
-                                    }
-                                    Err(e) => {
-                                        epintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
-                                        if with_tail { "-tail " } else { " " }
-                                        "["(e)"] " [&last_modified]);
                                     }
                                 }
                             }
@@ -1148,6 +1149,14 @@ where D: sql::QueryExecutor + Sync + Send
                         );
                     }
                 }
+
+                if get_ctrlc() {
+                    return Ok((thread_type, deleted));
+                }
+                sleep(Duration::from_secs(1)).await;
+                if get_ctrlc() {
+                    return Ok((thread_type, deleted));
+                }
             }
             break;
         }
@@ -1155,6 +1164,11 @@ where D: sql::QueryExecutor + Sync + Send
     }
 
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()> {
+        let sem = SEMAPHORE_MEDIA.acquire(1).await;
+        if get_ctrlc() {
+            return Ok(());
+        }
+
         // TEST CONCLUSION: Since this makes downloading sequential, basically one by one, it's really slow
         // to get everything.. But it does gaurantee no duplicates in the beginning!!
 
@@ -1218,19 +1232,19 @@ where D: sql::QueryExecutor + Sync + Send
             }
         } else {
             let _checksum = {
-            if media_type == MediaType::Full {
-                sha256
-            } else {
-                // Thumbnails aren't unique and can have duplicates
-                // So check the database if we already have it or not
-                if let Either::Left(s) = self.db_client.post_get_media(board_info, "", sha256t.as_ref().map(|v| v.as_slice())).await {
-                    s.ok().flatten().map(|row| row.get::<&str, Option<Vec<u8>>>("sha256t")).flatten()
+                if media_type == MediaType::Full {
+                    sha256
                 } else {
-                    // This else case will probably never run
-                    // Since the Either will always run
-                    sha256t
+                    // Thumbnails aren't unique and can have duplicates
+                    // So check the database if we already have it or not
+                    if let Either::Left(s) = self.db_client.post_get_media(board_info, "", sha256t.as_ref().map(|v| v.as_slice())).await {
+                        s.ok().flatten().map(|row| row.get::<&str, Option<Vec<u8>>>("sha256t")).flatten()
+                    } else {
+                        // This else case will probably never run
+                        // Since the Either will always run
+                        sha256t
+                    }
                 }
-            }
             };
 
             // Directory Structure:
@@ -1239,9 +1253,8 @@ where D: sql::QueryExecutor + Sync + Send
             if let Some(checksum) = &_checksum {
                 let hash = format!("{:02x}", HexSlice(checksum.as_slice()));
                 let len = hash.len();
-                pintln!(
-                "download_media: (threads) /"(&board_info.board)"/" if resto == 0 { (no) } else { (resto) }"#"(no)" | " [md5] " | " (&hash) " : " (len)
-                );
+                // pintln!("download_media: (threads) /"(&board_info.board)"/" if resto == 0 { (no) } else { (resto)
+                // }"#"(no)" | " [md5] " | " (&hash) " : " (len));
                 if len == 64 {
                     let _path = fomat!
                     (
@@ -1278,7 +1291,7 @@ where D: sql::QueryExecutor + Sync + Send
                 } else {
                     epintln!("download_media: Error! Hash found to be " (len) " chars long when it's supposed to be 64" );
                 }
-                // path = Some(_path);
+                // path = Some(_path); // used by asagi
             }
             let url_string = fomat!(
                 (&self.opt.media_url) (&board_info.board)"/"
@@ -1293,14 +1306,10 @@ where D: sql::QueryExecutor + Sync + Send
 
         // Download the file
         if let Some(_url) = url {
-            if get_ctrlc() {
-                return Ok(());
-            }
-            let sem = SEMAPHORE_MEDIA.acquire(1).await;
-            if get_ctrlc() {
-                return Ok(());
-            }
             for retry in 0..=board_info.retry_attempts {
+                if get_ctrlc() {
+                    break;
+                }
                 if retry != 0 {
                     epintln!("download_media: /"(board_info.board)"/"
                     if resto == 0 { (no) } else { (resto) }
@@ -1316,14 +1325,12 @@ where D: sql::QueryExecutor + Sync + Send
                     Ok(resp) => {
                         match resp.status() {
                             StatusCode::NOT_FOUND => {
+                                epintln!("download_media: /"(&board_info.board)"/" if resto == 0 { (no) } else { (resto) }"#"(no)" " (StatusCode::NOT_FOUND));
                                 break;
                             }
                             StatusCode::OK => {
-                                // pintln!("download_media: /" (&board_info.board)"/"
-                                //     if resto == 0 { (no) } else { (resto) }
-                                //     "#" (no)
-                                //     );
                                 // Going here means that we don't have the file
+
                                 if get_ctrlc() {
                                     break;
                                 }
@@ -1505,6 +1512,19 @@ where D: sql::QueryExecutor + Sync + Send
                                                 match rename_result {
                                                     Err(e) => epintln!("download_media: Error moving `" (&tmp_path) "` to `" (&_path) "` [" (e) "]"),
                                                     Ok(_) => {
+                                                        // TODO clear this
+                                                        /*
+                                                        {
+                                                            let mut file = OpenOptions::new().write(true).append(true).open("my-file.txt").unwrap();
+
+                                                            if let Err(e) = fomat_macros::witeln!(file, "download_media: /"(&board_info.board)"/" if resto == 0 { (no) } else { (resto)
+                                                        }"#"(no) { " {:02x} | ", HexSlice(md5.as_ref().unwrap().as_slice()) } (&_path)  )
+                                                            {
+                                                                eprintln!("Couldn't write to file: {}", e);
+                                                            }
+                                                        }
+                                                        */
+
                                                         // Try to upsert to database
                                                         let mut success = true;
                                                         for _ in 0..=5u8 {
@@ -1555,3 +1575,7 @@ where D: sql::QueryExecutor + Sync + Send
         Ok(())
     }
 }
+
+// TODO clear this
+#[allow(unused_imports)]
+use std::{fs::OpenOptions, io::prelude::*};

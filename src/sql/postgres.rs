@@ -292,8 +292,7 @@ pub fn thread_get_media<'a>() -> &'a str {
     r#"
     SELECT posts.resto, posts.no, posts.tim, posts.ext, posts.filename, media.* FROM posts
     INNER JOIN media ON posts.md5 = media.md5
-    WHERE posts.board = $1  AND (posts.resto=$2 or posts.no=$2)
-                            AND posts.no >= $3
+    WHERE posts.board = $1  AND (posts.no = $2 OR (posts.no >= $3 AND posts.resto=$2 ))
                             AND posts.md5 IS NOT null
                             AND NOT (CASE WHEN posts.filedeleted is not null THEN posts.filedeleted = true ELSE false END);
     "#
