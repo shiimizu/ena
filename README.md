@@ -145,7 +145,8 @@ The two datetimes are used to compare the times of modification.
 Core functionality works. There are things that could be improved on:  
 * Panics on no network connection. Workaround currently is to set a really high `retry_attempts`.
 * Logging could be better
-* Postgres is not getting to correct amount of media files...
+* Postgres is not getting to correct amount of media files.  
+    Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
 
 ## Asagi drop-in status
 * Posts deleted that are outputted to the screen will likely appear twice. Don't worry, it's just displaying issue.

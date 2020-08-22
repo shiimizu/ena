@@ -42,3 +42,4 @@ build*
 README_.md
 fun.sql
 up-my-schema-mysql.sql
+!error-media-log.md
