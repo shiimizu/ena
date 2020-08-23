@@ -153,10 +153,12 @@ Core functionality works. There are things that could be improved on:
 * Things are a bit fragile at the moment as the codebase is littered with `unwrap()` (for debugging) and can panic if any one of them sets off. (This will be cleaned up as things are finalized)
   * Also panics on no network connection. Workaround currently is to set a really high `retry_attempts`.
 * Logging could be better
-* Postgres is not getting to correct amount of media files.  
-    Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
+* Postgres side
+  * Currently not getting the correct amount of media files.  
+        Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
 
 ## Asagi drop-in status
-* Posts deleted that are outputted to the screen will likely appear twice. Don't worry, it's just displaying issue.
+Core functionality works. There are things that could be improved on:  
+* Posts deleted that are outputted to the screen will likely appear twice. Don't worry, it's just a displaying issue.
     Finding a way to incorporate `RETURNING *` for `mysql|mariadb` would fix this.
-* `UPSERTED` doesnt display the upserted count like the postgres version. Same issue and fix as above.
+* `NEW` & `UPSERTED` doesn't display the amount like the postgres version. Same issue and fix as above.
