@@ -34,11 +34,13 @@ impl HttpClient for Client {
             .await
         }?;
 
-        // Last-Modified Should never be empty is status is OK
+        // Last-Modified Should never be empty where status is OK
         // Which we always check after this method is called
-        let lm = res.headers().get(LAST_MODIFIED).map(|r| r.to_str().ok()).flatten().unwrap_or("");
-
-        Ok((res.status(), lm.into(), res.bytes().await.map(|b| b.to_vec()).unwrap_or(vec![])))
+        let status = res.status();
+        let last_modified = res.headers().get(LAST_MODIFIED).and_then(|r| r.to_str().ok()).unwrap_or("").to_string();
+        let body = res.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
+        
+        Ok((status, last_modified, body))
     }
 }
 
