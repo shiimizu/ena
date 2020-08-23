@@ -124,11 +124,18 @@ OPTIONS:
 2. Profit
 
 ## Building/Updating
+1. Install [Rust](https://www.rust-lang.org/tools/install) if you haven't already
+1. Clone this branch and `cd` if you haven't already
+   ```shell
+   $ git clone --single-branch --branch dev https://github.com/shiimizu/ena.git ena-dev
+   $ cd ena-dev
+   ```
 
-```shell
-$ cargo build --release -j4
-```
-Build artifacts can be found in `target/release/`  
+2. Building/Updating  
+    ```shell
+    $ cargo build --release -j4
+    ```  
+    Build artifacts can be found in `target/release/`  
 
 ## Reading the output
 Generally, the ouput looks something like:  
