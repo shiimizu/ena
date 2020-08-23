@@ -46,7 +46,7 @@
 
 Low resource and high performance archiver to save posts, images and all relevant data from an imageboard into a local database and local image store. The project currently only supports 4chan.  
 
-**This development branch is currently undergoing active breaking changes towards ena v0.8.0. Do not use in production.**
+**This development branch is currently undergoing active breaking changes towards ena v0.8.0. Do not use in production. See the current [status](#Status).**
 
 ## Usage
 
@@ -143,7 +143,8 @@ The two datetimes are used to compare the times of modification.
 
 ## Status  
 Core functionality works. There are things that could be improved on:  
-* Panics on no network connection. Workaround currently is to set a really high `retry_attempts`.
+* Things are a bit fragile at the moment as the codebase is littered with `unwrap()` (for debugging) and can panic if any one of them sets off. (This will be cleaned up as things are finalized)
+  * Also panics on no network connection. Workaround currently is to set a really high `retry_attempts`.
 * Logging could be better
 * Postgres is not getting to correct amount of media files.  
     Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
