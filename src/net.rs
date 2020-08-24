@@ -39,7 +39,7 @@ impl HttpClient for Client {
         let status = res.status();
         let last_modified = res.headers().get(LAST_MODIFIED).and_then(|r| r.to_str().ok()).unwrap_or("").to_string();
         let body = res.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
-        
+
         Ok((status, last_modified, body))
     }
 }

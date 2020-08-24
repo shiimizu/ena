@@ -1325,7 +1325,8 @@ where D: sql::QueryExecutor + Sync + Send
                     Ok(resp) => {
                         match resp.status() {
                             StatusCode::NOT_FOUND => {
-                                epintln!("download_media: /"(&board_info.board)"/" if resto == 0 { (no) } else { (resto) }"#"(no)" " (StatusCode::NOT_FOUND));
+                                // epintln!("download_media: /"(&board_info.board)"/" if resto == 0 { (no) } else { (resto)
+                                // }"#"(no)" " (StatusCode::NOT_FOUND));
                                 break;
                             }
                             StatusCode::OK => {
