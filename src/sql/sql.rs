@@ -75,6 +75,10 @@ pub enum Query {
 }
 
 #[async_trait]
+pub trait DropExecutor {
+    async fn disconnect_pool(self) -> Result<()>;
+}
+#[async_trait]
 pub trait QueryExecutor {
     async fn boards_index_get_last_modified(&self) -> Option<String>;
     async fn boards_index_upsert(&self, json: &serde_json::Value, last_modified: &str) -> Result<u64>;

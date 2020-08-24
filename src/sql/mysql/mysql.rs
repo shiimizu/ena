@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use super::{Query, QueryExecutor};
+use super::{DropExecutor, Query, QueryExecutor};
 use crate::{
     config::{Board, Opt},
     yotsuba, ThreadType,
@@ -26,12 +26,14 @@ use strum::IntoEnumIterator;
 pub mod clean;
 pub use clean::*;
 mod asagi;
+use crate::{get_ctrlc, sleep};
 use asagi::*;
 pub use queries::*;
+use std::time::Duration;
 
 /// List of prepared statments to query
 pub type BoardId = u16;
-pub type StatementStore = HashMap<BoardId, HashMap<super::Query, mysql_async::Statement>>;
+pub type StatementStore = HashMap<BoardId, HashMap<Query, String>>;
 
 /// List of computged prepared statments
 static STATEMENTS: Lazy<RwLock<StatementStore>> = Lazy::new(|| RwLock::new(HashMap::new()));
@@ -40,6 +42,12 @@ fn get_sql_template(board: &str, engine: &str, charset: &str, collate: &str, que
     // let s = std::fs::read_to_string(path).unwrap();
     query.replace("%%ENGINE%%", engine).replace("%%BOARD%%", board).replace("%%CHARSET%%", charset).replace("%%COLLATE%%", collate)
 }
+
+// async fn db_handler<T, Fut: Fn()>(f: Fut) -> T {
+//     loop {
+//         f().await;
+//     }
+// }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default, Eq)]
 struct Page {
@@ -53,56 +61,51 @@ struct Threade {
     last_modified: u64,
 }
 
-/*
 #[async_trait]
-trait StatementExt {
-    async fn get_statement<'a>(&self, query: Query) -> &'a mysql_async::Statement;
+impl DropExecutor for mysql_async::Pool {
+    async fn disconnect_pool(self) -> Result<()> {
+        self.disconnect().await.map_err(|e| eyre!(e))
+    }
 }
 
 #[async_trait]
-impl StatementExt for RwLock<mysql_async::Conn> {
-
-async fn get_statement<'a>(&self, query: Query) -> &'a mysql_async::Statement {
-    let mut conn = self.write().await;
-    let store = STATEMENTS.read().await;
-    // BoardId of boards.json entry in db is always 1
-    let map = (*store).get(&1).unwrap();
-    let statement = map.get(&query).unwrap();
-    statement
-}
-}
-*/
-
-#[async_trait]
-impl QueryExecutor for RwLock<mysql_async::Conn> {
+impl QueryExecutor for mysql_async::Pool {
     async fn boards_index_get_last_modified(&self) -> Option<String> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await;
+        if conn.is_err() {
+            return None;
+        };
+        let mut conn = conn.unwrap();
         let store = STATEMENTS.read().await;
         // BoardId of boards.json entry in db is always 1
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardsIndexGetLastModified).unwrap();
-        let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement, ()).await;
+        let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement.as_str(), ()).await;
         res.ok().flatten().flatten()
     }
 
     async fn boards_index_upsert(&self, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         // BoardId of boards.json entry in db is always 1
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardsIndexUpsert).unwrap();
         let json = serde_json::to_string(json).unwrap();
-        let res = conn.exec_drop(statement, (json, last_modified)).await;
+        let res = conn.exec_drop(statement.as_str(), (json, last_modified)).await;
         res.map(|_| 0).map_err(|e| eyre!(e))
     }
 
     async fn board_is_valid(&self, board: &str) -> bool {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await;
+        if conn.is_err() {
+            return false;
+        };
+        let mut conn = conn.unwrap();
         let store = STATEMENTS.read().await;
         // BoardId of boards.json entry in db is always 1
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardIsValid).unwrap();
-        let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement, ()).await;
+        let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement.as_str(), ()).await;
         let res = res.ok().flatten().flatten();
         if let Some(res) = res {
             let j: serde_json::Value = serde_json::from_str(&res).unwrap();
@@ -115,16 +118,20 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     }
 
     async fn board_upsert(&self, board: &str) -> Result<u64> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardUpsert).unwrap();
-        let res = conn.exec_drop(statement, params! { "board" => board }).await;
+        let res = conn.exec_drop(statement.as_str(), params! { "board" => board }).await;
         res.map(|_| 0).map_err(|e| eyre!(e))
     }
 
     async fn board_table_exists(&self, board: &str, opt: &Opt) -> Option<String> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await;
+        if conn.is_err() {
+            return None;
+        };
+        let mut conn = conn.unwrap();
 
         // Init the `boards` table
         if board == "boards" {
@@ -140,7 +147,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardTableExists).unwrap();
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (&opt.database.name, board)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (&opt.database.name, board)).await;
         let res = res.ok().flatten().flatten();
         if res.is_none() {
             // let boards = get_sql_template(board, &opt.database.engine, &opt.database.charset,
@@ -155,69 +162,101 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     }
 
     async fn board_get(&self, board: &str) -> Result<u16> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardGet).unwrap();
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement, (board,)).await.map_err(|e| eyre!(e));
+        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board,)).await.map_err(|e| eyre!(e));
         res.map(|opt| opt.unwrap().get("id").unwrap())
     }
 
     async fn board_get_last_modified(&self, thread_type: ThreadType, board_id: u16) -> Option<String> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await;
+        if conn.is_err() {
+            return None;
+        };
+        let mut conn = conn.unwrap();
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardGetLastModified).unwrap();
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (thread_type.as_str(), board_id)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (thread_type.as_str(), board_id)).await;
         res.ok().flatten().flatten()
     }
 
     async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardUpsertThreads).unwrap();
         let json = serde_json::to_string(json).unwrap();
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement, (board_id, board, json, last_modified)).await.map_err(|e| eyre!(e));
+        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| eyre!(e));
         Ok(0)
     }
 
     async fn board_upsert_archive(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardUpsertArchive).unwrap();
         let json = serde_json::to_string(json).unwrap();
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement, (board_id, board, json, last_modified)).await.map_err(|e| eyre!(e));
+        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| eyre!(e));
         Ok(0)
     }
 
     async fn thread_get(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
-        let mut conn = self.write().await;
-        let store = STATEMENTS.read().await;
-        let map = (*store).get(&board_info.id).unwrap();
-        let statement = map.get(&Query::ThreadGet).unwrap();
-        let res: Result<Vec<mysql_async::Row>> = conn.exec(statement, (thread,)).await.map_err(|e| eyre!(e));
-        Either::Right(res)
+        let mut conn = self.get_conn().await;
+        match conn {
+            Err(e) => Either::Right(Err(eyre!(e))),
+            Ok(mut conn) => {
+                let store = STATEMENTS.read().await;
+                let map = (*store).get(&board_info.id).unwrap();
+                let statement = map.get(&Query::ThreadGet).unwrap();
+                let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| eyre!(e));
+                Either::Right(res)
+            }
+        }
     }
 
     /// Unused
     async fn thread_get_media(&self, board_info: &Board, thread: u64, start: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
-        let mut conn = self.write().await;
-        let store = STATEMENTS.read().await;
-        let map = (*store).get(&board_info.id).unwrap();
-        let statement = map.get(&Query::ThreadGet).unwrap();
-        let res: Result<Vec<mysql_async::Row>> = conn.exec(statement, (thread,)).await.map_err(|e| eyre!(e));
-        Either::Right(res)
+        let mut conn = self.get_conn().await;
+
+        match conn {
+            Err(e) => Either::Right(Err(eyre!(e))),
+            Ok(mut conn) => {
+                let store = STATEMENTS.read().await;
+                let map = (*store).get(&board_info.id).unwrap();
+                let statement = map.get(&Query::ThreadGet).unwrap();
+                let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| eyre!(e));
+                Either::Right(res)
+            }
+        }
     }
 
     async fn thread_get_last_modified(&self, board_id: u16, thread: u64) -> Option<String> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await;
+        if conn.is_err() {
+            return None;
+        };
+        let mut conn = conn.unwrap();
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadGetLastModified).unwrap();
-        let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement, params! {"thread" => thread}).await;
-        res.ok().flatten().flatten()
+        let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement.as_str(), params! {"thread" => thread}).await;
+        loop {
+            match res {
+                Err(_) => {
+                    if get_ctrlc() {
+                        return None;
+                        //break;
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
+                Ok(_res) => {
+                    return _res.flatten();
+                }
+            }
+        }
     }
 
     async fn thread_upsert(&self, board_info: &Board, thread_json: &serde_json::Value) -> u64 {
@@ -277,33 +316,40 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         poster_country=VALUES(poster_country),
         exif=VALUES(exif);"#
         );
-
-        let mut conn = self.write().await;
-        // TODO: Return rows affected
-        conn.query_drop(q.as_str()).await.unwrap();
+        loop {
+            let mut conn = self.get_conn().await.unwrap();
+            // TODO: Return rows affected
+            if let Ok(_) = conn.query_drop(q.as_str()).await {
+                return 0;
+            }
+            if get_ctrlc() {
+                break;
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
         0
     }
 
     async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadUpdateLastModified).unwrap();
-        let res = conn.exec_drop(statement, (last_modified, thread)).await;
+        let res = conn.exec_drop(statement.as_str(), (last_modified, thread)).await;
         res.map(|_| 0).map_err(|e| eyre!(e))
     }
 
     async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
         // TODO the return of this function should just be u64 or bool
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadUpdateDeleted).unwrap();
 
         let get_single_statement = map.get(&Query::PostGetSingle).unwrap();
 
-        let res = conn.exec_drop(statement, (thread,)).await.unwrap();
-        let mut single_res: Option<mysql_async::Row> = conn.exec_first(get_single_statement, (thread, thread)).await.ok().flatten();
+        let res = conn.exec_drop(statement.as_str(), (thread,)).await.unwrap();
+        let mut single_res: Option<mysql_async::Row> = conn.exec_first(get_single_statement.as_str(), (thread, thread)).await.ok().flatten();
 
         // Get the post afterwards to see if it was deleted
         if let Some(mut row) = single_res {
@@ -339,7 +385,7 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
         // } else {
         //     json["posts"][0]["no"].as_u64().unwrap()
         // };
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await.unwrap();
 
         // Select all posts from DB starting from new json post's first reply `no` (default to OP if no
         // replies).
@@ -380,7 +426,12 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
                 deleted=1,
                 timestamp_expired=UNIX_TIMESTAMP();"#
                     );
-                    conn.query_drop(query.as_str()).await.unwrap();
+                    while let Err(e) = conn.query_drop(query.as_str()).await {
+                        if get_ctrlc() {
+                            break;
+                        }
+                        sleep(Duration::from_millis(500)).await;
+                    }
 
                     Either::Right(Some(futures::stream::iter(diff)))
                 } else {
@@ -395,11 +446,11 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     }
 
     async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadsGetCombined).unwrap();
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (thread_type.as_str(), board_id)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (thread_type.as_str(), board_id)).await;
         let res = res.ok().flatten().flatten();
         if let Some(res) = res {
             // If an entry exists in the database we can apply a diff
@@ -440,11 +491,11 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     }
 
     async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadsGetModified).unwrap();
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement, (board_id,)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (board_id,)).await;
         let res = res.ok().flatten().flatten();
         if let Some(res) = res {
             let mut prev: Vec<Page> = serde_json::from_str(&res).unwrap();
@@ -459,12 +510,12 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     }
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> bool {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         // BoardId of boards.json entry in db is always 1
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::PostGetSingle).unwrap();
-        let res: Result<Option<mysql_async::Row>, _> = conn.exec_first(statement, (thread, no)).await;
+        let res: Result<Option<mysql_async::Row>, _> = conn.exec_first(statement.as_str(), (thread, no)).await;
         res.ok()
             .flatten()
             .map(|row| {
@@ -476,12 +527,12 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
     }
 
     async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Option<mysql_async::Row>> {
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         // BoardId of boards.json entry in db is always 1
         let map = (*store).get(&board_info.id).unwrap();
         let statement = map.get(&Query::PostGetMedia).unwrap();
-        let mut res: Option<mysql_async::Row> = conn.exec_first(statement, (md5,)).await.ok().flatten();
+        let mut res: Option<mysql_async::Row> = conn.exec_first(statement.as_str(), (md5,)).await.ok().flatten();
         Either::Right(res)
     }
 
@@ -494,35 +545,33 @@ impl QueryExecutor for RwLock<mysql_async::Conn> {
             return;
         }
 
-        let mut conn = self.write().await;
+        let mut conn = self.get_conn().await.unwrap();
         let mut map = HashMap::new();
         let actual = if board_id == 1 { super::Query::iter().filter(|q: &Query| q.to_string().starts_with("Board")).collect::<Vec<Query>>() } else { super::Query::iter().collect::<Vec<Query>>() };
         for query in actual {
             let statement = match query {
-                Query::BoardsIndexGetLastModified => conn.prep(boards_index_get_last_modified()),
-                Query::BoardsIndexUpsert => conn.prep(boards_index_upsert()),
-                Query::BoardIsValid => conn.prep(board_is_valid()),
-                Query::BoardUpsert => conn.prep(board_upsert()),
-                Query::BoardTableExists => conn.prep(board_table_exists()),
-                Query::BoardGet => conn.prep(board_get()),
-                Query::BoardGetLastModified => conn.prep(board_get_last_modified()),
-                Query::BoardUpsertThreads => conn.prep(board_upsert_threads()),
-                Query::BoardUpsertArchive => conn.prep(board_upsert_archive()),
-                Query::ThreadGet => conn.prep(thread_get(board)),
-                Query::ThreadGetMedia => conn.prep(thread_get_media(board)),
-                Query::ThreadGetLastModified => conn.prep(thread_get_last_modified(board)),
-                Query::ThreadUpsert => conn.prep(thread_upsert(board)),
-                Query::ThreadUpdateLastModified => conn.prep(thread_update_last_modified(board)),
-                Query::ThreadUpdateDeleted => conn.prep(thread_update_deleted(board)),
-                Query::ThreadUpdateDeleteds => conn.prep(thread_update_deleteds(board)),
-                Query::ThreadsGetCombined => conn.prep(threads_get_combined()),
-                Query::ThreadsGetModified => conn.prep(threads_get_modified()),
-                Query::PostGetSingle => conn.prep(post_get_single(board)),
-                Query::PostGetMedia => conn.prep(post_get_media(board)),
-                Query::PostUpsertMedia => conn.prep("SELECT 1;"),
-            }
-            .await
-            .unwrap();
+                Query::BoardsIndexGetLastModified => boards_index_get_last_modified().into(),
+                Query::BoardsIndexUpsert => boards_index_upsert().into(),
+                Query::BoardIsValid => board_is_valid().into(),
+                Query::BoardUpsert => board_upsert().into(),
+                Query::BoardTableExists => board_table_exists().into(),
+                Query::BoardGet => board_get().into(),
+                Query::BoardGetLastModified => board_get_last_modified().into(),
+                Query::BoardUpsertThreads => board_upsert_threads().into(),
+                Query::BoardUpsertArchive => board_upsert_archive().into(),
+                Query::ThreadGet => thread_get(board).into(),
+                Query::ThreadGetMedia => thread_get_media(board).into(),
+                Query::ThreadGetLastModified => thread_get_last_modified(board).into(),
+                Query::ThreadUpsert => thread_upsert(board).into(),
+                Query::ThreadUpdateLastModified => thread_update_last_modified(board).into(),
+                Query::ThreadUpdateDeleted => thread_update_deleted(board).into(),
+                Query::ThreadUpdateDeleteds => thread_update_deleteds(board).into(),
+                Query::ThreadsGetCombined => threads_get_combined().into(),
+                Query::ThreadsGetModified => threads_get_modified().into(),
+                Query::PostGetSingle => post_get_single(board).into(),
+                Query::PostGetMedia => post_get_media(board).into(),
+                Query::PostUpsertMedia => "SELECT 1;".into(),
+            };
             map.insert(query, statement);
             map.remove(&Query::PostUpsertMedia);
         }

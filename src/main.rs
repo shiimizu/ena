@@ -11,7 +11,6 @@
 // use futures::io::AsyncWriteExt;
 // use async_std::sync::RwLock;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
-use async_rwlock::RwLock;
 use color_eyre::eyre::{eyre, Result};
 use fomat_macros::{epintln, fomat, pintln};
 use futures::future;
@@ -48,14 +47,15 @@ pub mod sql;
 
 static CTRLC: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static INIT: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
-struct FourChan<D> {
+struct FourChan<D>
+where D: sql::QueryExecutor + sql::DropExecutor {
     client:    reqwest::Client,
     db_client: D,
     opt:       Opt,
 }
 
 impl<D> FourChan<D>
-where D: sql::QueryExecutor
+where D: sql::QueryExecutor + sql::DropExecutor
 {
     pub async fn new(client: reqwest::Client, db_client: D, opt: Opt) -> Self {
         Self { client, db_client, opt }
@@ -309,7 +309,11 @@ async fn async_main() -> Result<()> {
         let fchan = FourChan::new(create_client(origin, &opt).await?, client, opt).await;
         fchan.run().await
     } else {
+        use itertools::Itertools;
         use mysql_async::prelude::*;
+        use sql::DropExecutor;
+        use strum::IntoEnumIterator;
+
         // temp set env variable
         std::env::set_var("MYSQL_PWD", &opt.database.password);
 
@@ -331,15 +335,17 @@ async fn async_main() -> Result<()> {
             .spawn()?;
 
         let _ = child.status().await?;
-
-        let pool = mysql_async::Pool::new(opt.database.url.as_ref().unwrap());
+        let query_count = sql::Query::iter().count() - 1;
+        let board_count = opt.boards.iter().map(|b| b.board.as_str()).chain(opt.threads.iter().map(|t| t.trim_start_matches('/').split('/').nth(0).unwrap())).unique().count();
+        let stmt_count = board_count * query_count;
+        let pool = mysql_async::Pool::new(&fomat!( (opt.database.url.as_ref().unwrap()) "?stmt_cache_size=" (stmt_count) "&pool_min=1&pool_max=3"));
         let mut conn = pool.get_conn().await?;
         conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;").await?;
-        let rw = RwLock::new(conn);
-        let fchan = FourChan::new(create_client(origin, &opt).await?, rw, opt).await;
+        drop(conn);
+        let fchan = FourChan::new(create_client(origin, &opt).await?, pool, opt).await;
         fchan.run().await?;
-        drop(fchan);
-        pool.disconnect().await?;
+        fchan.db_client.disconnect_pool().await?;
+
         Ok(())
     }
 }
@@ -356,7 +362,7 @@ pub trait Archiver {
 
 #[async_trait]
 impl<D> Archiver for FourChan<D>
-where D: sql::QueryExecutor + Sync + Send
+where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 {
     /// Archive 4chan based on --boards | --threads options
     async fn run(&self) -> Result<()> {

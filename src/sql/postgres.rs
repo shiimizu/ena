@@ -1,6 +1,6 @@
 // use fomat_macros::fomat;
 // use futures::stream::StreamExt;
-use super::{Query, QueryExecutor};
+use super::{DropExecutor, Query, QueryExecutor};
 use crate::{
     config::{Board, Opt},
     ThreadType,
@@ -20,6 +20,14 @@ pub type StatementStore = HashMap<Query, tokio_postgres::Statement>;
 
 /// List of computged prepared statments
 static STATEMENTS: Lazy<RwLock<StatementStore>> = Lazy::new(|| RwLock::new(HashMap::new()));
+
+#[async_trait]
+impl DropExecutor for tokio_postgres::Client {
+    async fn disconnect_pool(self) -> Result<()> {
+        Ok(())
+        // self.disconnect().await.map_err(|e| eyre!(e))
+    }
+}
 
 #[async_trait]
 impl QueryExecutor for tokio_postgres::Client {
