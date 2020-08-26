@@ -522,7 +522,7 @@ pub fn get_opt() -> Result<Opt> {
                         Ok(_res) => { _res },
                     }
                 };
-                let mut o = if !content.is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|eyre!(e)) } else { Ok(Opt::default()) };
+                let mut o = if !content.trim().is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|eyre!("Error parsing config `{}` [{}]", &config_file, e)) } else { Err(eyre!("Error `{}` is empty.", &config_file)) };
                 match o {
                     Err(e) => {
                         return Err(e);
