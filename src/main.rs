@@ -11,13 +11,12 @@
 // use futures::io::AsyncWriteExt;
 // use async_std::sync::RwLock;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
-use color_eyre::eyre::{eyre, Result};
-use fomat_macros::{epintln, fomat, pintln};
-use futures::future;
-
 use async_trait::async_trait;
+use color_eyre::eyre::{eyre, Result};
 use ctrlc;
-use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
+use fomat_macros::{epintln, fomat, pintln};
+use futures::{channel::oneshot, future, future::Either, stream::FuturesUnordered};
+
 // use futures::stream::FuturesOrdered;
 use async_process::Command;
 use futures_lite::*;
@@ -163,12 +162,18 @@ fn main() -> Result<()> {
         })
         .expect("Error setting Ctrl-C handler");
         async_main().await.unwrap();
-        pintln!("Done!");
+        //pintln!("Done!");
         Ok(())
     })
 }
 async fn async_main() -> Result<()> {
-    let mut opt = config::get_opt()?;
+    let mut opt = match config::get_opt() {
+        Err(e) => {
+            epintln!((e));
+            return Ok(());
+        }
+        Ok(res) => res,
+    };
 
     if opt.debug {
         let new_url = format!(
@@ -265,7 +270,7 @@ async fn async_main() -> Result<()> {
                 stdin
                     .write_all(
                         fomat!(
-                "SELECT 'CREATE DATABASE " (&opt.database.name) "' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '" 
+                "SELECT 'CREATE DATABASE " (&opt.database.name) "' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '"
                 (&opt.database.name)
                 r#"')\gexec"#)
                         .as_bytes(),

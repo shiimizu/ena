@@ -50,7 +50,7 @@ pub struct Board {
     #[structopt(display_order(5), long, default_value("1000"), env, hide_env_values = true)]
     pub interval_threads: u16,
 
-    /// Add 5s on intervals for each NOT_MODIFIED. Capped.  
+    /// Add 5s on intervals for each NOT_MODIFIED. Capped.
     #[structopt(display_order(6), long)]
     pub interval_dynamic: bool,
 
@@ -194,7 +194,7 @@ pub struct Opt {
     #[structopt(display_order(2), short, long,  multiple(true), required_unless("config"),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
     pub boards: Vec<Board>,
 
-    /// Exclude boards [example: a,b,c]  
+    /// Exclude boards [example: a,b,c]
     ///
     /// (Only applies to boards from boardslist, not threadslist)
     #[structopt(display_order(2), short("e"), long("exclude-boards"),  multiple(true), required(false),  use_delimiter = true, parse(try_from_str = boards_cli_string),  env, hide_env_values = true)]
@@ -202,10 +202,9 @@ pub struct Opt {
 
     /// Get threads
     ///
-    /// First specify the board, then all the threads belonging to that board.  
-    /// Comma delimited: /a/12345,/a/1487823,/b/134654,/c/13478,/d/134798   
-    /// Space delimited: /a/12345 /a/1487823 /b/134654 /c/13478 /d/134798  
-    ///   
+    /// First specify the board, then all the threads belonging to that board.
+    /// Comma delimited: /a/12345,/a/1487823,/b/134654,/c/13478,/d/134798
+    /// Space delimited: /a/12345 /a/1487823 /b/134654 /c/13478 /d/134798
     #[structopt(verbatim_doc_comment, display_order(3), short, long, multiple(true), required_unless("config"), use_delimiter = true, parse(try_from_str = threads_cli_string),  env, hide_env_values = true )]
     pub threads: Vec<String>,
 
@@ -466,7 +465,7 @@ pub fn display_asagi() {
     ⣿⠏⠀⠁⠀⠀⠀⠀⠀⠀⠀⢀⣶⡄⠀⠀⠀⠀⠀⠀⣡⣄⣿⡆⠀⠀⠀⠀⣿⣿          \/___/  \/_/\/_/\/__/\/_/   v{}
     ⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠚⠛⠛⢛⣲⣶⣿⣷⣉⠉⢉⣥⡄⠀⠀⠀⠨⣿⣿
     ⡇⢠⡆⠀⠀⢰⠀⠀⠀⠀⢸⣿⣧⣠⣿⣿⣿⣿⣿⣿⣷⣾⣿⡅⠀⠀⡄⠠⢸⣿        You're using Asagi when you could be using Ena instead!
-    ⣧⠸⣇⠀⠀⠘⣤⡀⠀⠀⠘⣿⣿⣿⣿⣿⠟⠛⠻⣿⣿⣿⡿⢁⠀⠀⢰⠀⢸⣿        
+    ⣧⠸⣇⠀⠀⠘⣤⡀⠀⠀⠘⣿⣿⣿⣿⣿⠟⠛⠻⣿⣿⣿⡿⢁⠀⠀⢰⠀⢸⣿
     ⣿⣷⣽⣦⠀⠀⠙⢷⡀⠀⠀⠙⠻⠿⢿⣷⣾⣿⣶⠾⢟⣥⣾⣿⣧⠀⠂⢀⣿⣿        You're unbelievable!
     ⣿⣿⣿⣿⣷⣆⣠⣤⣤⣤⣀⣀⡀⠀⠒⢻⣶⣾⣿⣿⣿⣿⣿⣿⣿⢀⣀⣾⣿⣿
     "#,
@@ -493,7 +492,7 @@ pub fn get_opt() -> Result<Opt> {
     for b in opt.boards.iter_mut() {
         // Patch CLI opt boards to use its board_settings
         if b.retry_attempts     == default.retry_attempts   { b.retry_attempts      = opt.board_settings.retry_attempts; }
-        if b.interval_boards    == default.interval_boards  { b.interval_boards     = opt.board_settings.interval_boards; } 
+        if b.interval_boards    == default.interval_boards  { b.interval_boards     = opt.board_settings.interval_boards; }
         if b.interval_threads   == default.interval_threads { b.interval_threads    = opt.board_settings.interval_threads; }
         if b.with_threads       == default.with_threads     { b.with_threads        = opt.board_settings.with_threads; }
         if b.with_archives      == default.with_archives    { b.with_archives       = opt.board_settings.with_archives; }
@@ -517,7 +516,11 @@ pub fn get_opt() -> Result<Opt> {
                     std::io::stdin().lock().read_to_string(&mut content)?;
                     content
                 } else {
-                    std::fs::read_to_string(config_file).unwrap_or_default()
+                    let res = std::fs::read_to_string(config_file);
+                    match res {
+                        Err(e) => { return Err(eyre!("Error accessing config `{}` [{}]", &config_file, e)); },
+                        Ok(_res) => { _res },
+                    }
                 };
                 let mut o = if !content.is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|eyre!(e)) } else { Ok(Opt::default()) };
                 match o {
@@ -540,8 +543,8 @@ pub fn get_opt() -> Result<Opt> {
                         if opt.board_settings.with_thumbnails   != default.with_thumbnails  { q.board_settings.with_thumbnails = opt.board_settings.with_thumbnails; }
                         if opt.board_settings.watch_boards      != default.watch_boards     { q.board_settings.watch_boards = opt.board_settings.watch_boards; }
                         if opt.board_settings.watch_threads     != default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; }
-                        
-                        
+
+
                         let boards_excluded_combined: Vec<Board>  = q.boards_excluded.iter().chain(opt.boards_excluded.iter()).map(|b| b.clone()).collect();
                         let threads_combined: Vec<String> = q.threads.iter().chain(opt.threads.iter()).map(|s| s.clone()).collect();
                         let boards_combined: Vec<Board> = q.boards.iter().chain(opt.boards.iter()).map(|b| b.clone())
@@ -553,7 +556,7 @@ pub fn get_opt() -> Result<Opt> {
                         for  b in q.boards.iter_mut() {
                             // Patch config.yaml to use its board_settings
                             if b.retry_attempts     == default.retry_attempts   { b.retry_attempts = q.board_settings.retry_attempts; }
-                            if b.interval_boards    == default.interval_boards  { b.interval_boards = q.board_settings.interval_boards; } 
+                            if b.interval_boards    == default.interval_boards  { b.interval_boards = q.board_settings.interval_boards; }
                             if b.interval_threads   == default.interval_threads { b.interval_threads = q.board_settings.interval_threads; }
                             if b.with_threads       == default.with_threads     { b.with_threads = q.board_settings.with_threads; }
                             if b.interval_dynamic   == default.interval_dynamic { b.interval_dynamic = q.board_settings.interval_dynamic; }
@@ -581,7 +584,7 @@ pub fn get_opt() -> Result<Opt> {
                         if q.user_agent             == default_opt.user_agent           { q.user_agent = opt.user_agent;                            }
                         if q.api_url                == default_opt.api_url              { q.api_url = opt.api_url;                                  }
                         if q.media_url              == default_opt.media_url            { q.media_url = opt.media_url;                              }
-                        
+
                         // Database
                         if q.database.url           == default_database.url             { q.database.url        = opt.database.url.clone();         }
                         if q.database.engine        == default_database.engine          { q.database.engine     = opt.database.engine.clone();      }
@@ -592,7 +595,7 @@ pub fn get_opt() -> Result<Opt> {
                         if q.database.password      == default_database.password        { q.database.password   = opt.database.password.clone();    }
                         if q.database.charset       == default_database.charset         { q.database.charset    = opt.database.charset.clone();     }
                         if q.database.collate       == default_database.collate         { q.database.collate    = opt.database.collate;             }
-                        // Or you can do it this way: 
+                        // Or you can do it this way:
                         // if opt.database.url           != default_database.url             { q.database.url        = opt.database.url.clone();         }
                         // if opt.database.engine        != default_database.engine          { q.database.engine     = opt.database.engine.clone();      }
                         // if opt.database.name          != default_database.name            { q.database.name       = opt.database.name.clone();        }
@@ -602,7 +605,7 @@ pub fn get_opt() -> Result<Opt> {
                         // if opt.database.password      != default_database.password        { q.database.password   = opt.database.password.clone();    }
                         // if opt.database.charset       != default_database.charset         { q.database.charset    = opt.database.charset.clone();     }
                         // if opt.database.collate       != default_database.collate         { q.database.collate    = opt.database.collate;             }
-                        
+
 
                         if q.board_settings.retry_attempts      == default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
                         if q.board_settings.interval_boards     == default.interval_boards  { q.board_settings.interval_boards  = opt.board_settings.interval_boards; };
@@ -615,20 +618,20 @@ pub fn get_opt() -> Result<Opt> {
                         if q.board_settings.with_full_media     == default.with_full_media  { q.board_settings.with_full_media = opt.board_settings.with_full_media; }
                         if q.board_settings.with_thumbnails     == default.with_thumbnails  { q.board_settings.with_thumbnails  = opt.board_settings.with_thumbnails; }
                         if q.board_settings.watch_boards        == default.watch_boards     { q.board_settings.watch_boards = opt.board_settings.watch_boards; }
-                        if q.board_settings.watch_threads       == default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; } 
+                        if q.board_settings.watch_threads       == default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; }
 
                         q.clone()
                     }
-                   
+
                 }
             }
         } else {
             opt
         }
     };
-    
-    
-    // TODO db_url is up-to-date, also update the individual fields (extract from db_url) 
+
+
+    // TODO db_url is up-to-date, also update the individual fields (extract from db_url)
     if opt.database.url.is_none() {
         let db_url = format!(
             "{engine}://{user}:{password}@{host}:{port}/{database}",
@@ -643,34 +646,34 @@ pub fn get_opt() -> Result<Opt> {
         );
         opt.database.url = Some(db_url);
     }
-    
+
     if opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("mysql") {
         return Err(eyre!("Asagi mode must be used with a MySQL database. Did you mean to disable --asagi ?"));
     }
-    
+
     if !opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("postgresql") {
         return Err(eyre!("Ena must be used with a PostgreSQL database. Did you mean to enable --asagi ?"));
     }
-    
+
     // Patch concurrency limit
     SEMAPHORE_AMOUNT_THREADS.fetch_add(if opt.strict { 1 } else { opt.limit }, Ordering::SeqCst);
     SEMAPHORE_AMOUNT_MEDIA.fetch_add(opt.limit_media, Ordering::SeqCst);
-    
+
     // &opt.threads.dedup();
 
     // Afterwards dedup boards
     use itertools::Itertools;
     opt.boards = (&opt.boards).into_iter().unique_by(|board| board.board.as_str()).map(|b| b.clone()).collect();
 
-    
+
     // Trim media dir
     opt.media_dir = opt.media_dir.to_str().map(|v| v.trim_matches('/').trim_matches('\\').into()).unwrap_or(opt.media_dir);
-    
+
     // Media Directories
     if !&opt.media_dir.is_dir() {
         create_dir_all(&opt.media_dir)?;
     }
-    
+
     if !opt.asagi_mode {
         let tmp = fomat!( (&opt.media_dir.display())"/tmp" );
         if !std::path::Path::new(&tmp).is_dir() {
