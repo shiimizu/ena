@@ -209,6 +209,7 @@ Respecting the first rule will get you very far.
 * Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
 * More accurate `deleted` posts due to upserts
 * Cleaner sticky comments
+* Any new changes for posts made by this implementation will overwrite the entry in your database due to upserts. 
 
 
 

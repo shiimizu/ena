@@ -101,10 +101,14 @@ impl From<&yotsuba::Post> for Post {
             preview_w:         post.tn_w.unwrap_or_default(),
             preview_h:         post.tn_h.unwrap_or_default(),
             media_filename:    if let Some(filename) = post.filename.as_ref() {
-                if let Some(ext) = post.ext.as_ref() {
-                    Some(fomat!((filename)(ext)))
+                if !filename.is_empty() {
+                    if let Some(ext) = post.ext.as_ref() {
+                        Some(fomat!((filename)(ext)))
+                    } else {
+                        Some(filename.clone())
+                    }
                 } else {
-                    Some(fomat!((filename)))
+                    None
                 }
             } else {
                 None
