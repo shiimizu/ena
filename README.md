@@ -48,6 +48,21 @@ Low resource and high performance archiver to save posts, images and all relevan
 
 **This development branch is currently undergoing active breaking changes towards ena v0.8.0. Do not use in production. See the current [status](#Status).**
 
+## Changes in v0.8.0 from v0.7.x
+* Better last modified detection
+* Ability to use `-tail json`
+* Fix the correct number of `replies` and `images`
+* 🚧 Fix getting all 4 variants of thumbnails 🚧
+* Faster CTRL+C
+* Actual Asagi support (support for legacy mysql)
+* More options, flags, and customization
+* Lives up to the description by being able to get threads and/or boards in a oneshot fashion
+* Reduce postgres min version. Probably >= `9` now.
+* **Database schema changes. Now one big `posts` table instead of seperated by board.**
+* Media fetching is no longer done in a background thread
+* Now relying on md5 check before downloading media, which means no sha256sum collision detection
+* Introduction of `unsafe` to clean post comments for Asagi.
+
 ## Usage
 
 ```
