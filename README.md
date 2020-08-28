@@ -49,10 +49,10 @@ Low resource and high performance archiver to save posts, images and all relevan
 **This development branch is currently undergoing active breaking changes towards ena v0.8.0. Do not use in production. See the current [status](#Status).**
 
 ## Changes in v0.8.0 from v0.7.x
+<!-- * 🚧 Fix getting all 4 variants of thumbnails 🚧 -->
 * Better last modified detection
-* Ability to use `-tail json`
+* Ability to use `-tail` json
 * Fix the correct number of `replies` and `images`
-* 🚧 Fix getting all 4 variants of thumbnails 🚧
 * Faster CTRL+C
 * Actual Asagi support (support for legacy mysql)
 * More options, flags, and customization
@@ -62,6 +62,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 * Media fetching is no longer done in a background thread
 * Now relying on md5 check before downloading media, which means no sha256sum collision detection
 * Introduction of `unsafe` to clean post comments for Asagi.
+
 
 ## Usage
 
@@ -177,3 +178,38 @@ Core functionality works. There are things that could be improved on:
 * Posts deleted that are outputted to the screen will likely appear twice. Don't worry, it's just a displaying issue.
     Finding a way to incorporate `RETURNING *` for `mysql|mariadb` would fix this.
 * `NEW` & `UPSERTED` doesn't display the amount like the postgres version. Same issue and fix as above.
+
+
+Please repsect the ch API guidelines to the best of your ability.
+1. Use `Last-Modified` and `If-Modified-Since`
+1. Ratelimit of atleast 1 second
+Respecting the first rule will get you very far.
+
+# Architecture flow
+1. Boards are fetched sequentially since doing so concurrently requires quite a bit of memory.
+
+1. The list of threads are fetched from `threads.json` or `archive.json` and stored in the database.
+   * The `Last-Modified` from the HTTP header is then stored in the database as a timestamp. Before fetching the threads list, this is checked so to not download the list again if it's not modified.
+
+1. On startup of the program, threads are combined between in-db (if any) and received so as to get the **union** of both. After the initial startup, all subsequent list of threads are the result of a **symmetric difference** between in-db and recieved threads, e.g only the modified threads such as deleted/updated/added/modified, resulting in a lower amount of threads to be processed.
+
+1. Then each thread is fetched concurrently (based on `limit` setting).
+    1. In each thread, every media file & thumbnail is fetched concurrently (based on `limit_media` setting) and its entry is upserted to the database.
+    2. The thread is upserted to the database after media is done (if any), and then the `Last-Modified` from the HTTP header is stored in the `last_modified` column of the thread.
+        * Before fetching a thread this is checked so to not download the thread again if it's not modified.
+
+1. Once a board is finished (all its threads are fetched), the next one is fetched and the whole process starts all over again.
+
+
+# Asagi
+* Add `archivedOn` to `exif`
+* Fixed updating `sticky` and `locked` for threads in triggers
+* Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
+* More accurate `deleted` posts due to upserts
+
+
+
+
+# FAQ
+##### Why not use `catalog.json`?
+I've found it to be inaccurate.

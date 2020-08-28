@@ -2,8 +2,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::borrow::{Borrow, Cow};
 
-// https://stackoverflow.com/a/49588741
-// https://stackoverflow.com/a/55670581
 /// Trait to clean comments
 pub trait Clean {
     fn clean(&self) -> Cow<str>;
@@ -12,9 +10,11 @@ pub trait Clean {
 
 impl Clean for &str {
     fn clean(&self) -> Cow<str> {
-        html_escape::decode_html_entities(self.trim())
+        html_escape::decode_html_entities(self)
     }
 
+    // https://stackoverflow.com/a/49588741
+    // https://stackoverflow.com/a/55670581
     fn clean_full(&self) -> Cow<str> {
         // This doesn't work
         // let mut s = Cow::from(*self);
@@ -100,6 +100,51 @@ impl Clean for &str {
     }
 }
 
+static REPLACEMENTS: Lazy<[(Regex, &str); 23]> = Lazy::new(|| {
+    [
+        // Admin-Mod-Dev quotelinks
+        (Regex::new("<span class=\"capcodeReplies\"><span style=\"font-size: smaller;\"><span style=\"font-weight: bold;\">(?:Administrator|Moderator|Developer) Repl(?:y|ies):</span>.*?</span><br></span>").unwrap(), ""),
+        // Non-public tags
+        (Regex::new("\\[(/?(banned|moot|spoiler|code))]").unwrap(), "[$1:lit]"),
+        // Comment too long, also EXIF tag toggle
+        (Regex::new("<span class=\"abbr\">.*?</span>").unwrap(), ""),
+        // EXIF data
+        (Regex::new("<table class=\"exif\"[^>]*>.*?</table>").unwrap(), ""),
+        // DRAW data
+        (Regex::new("<br><br><small><b>Oekaki Post</b>.*?</small>").unwrap(), ""),
+        // Banned/Warned text
+        (Regex::new("<(?:b|strong) style=\"color:\\s*red;\">(.*?)</(?:b|strong)>").unwrap(), "[banned]$1[/banned]"),
+        // moot text
+        (Regex::new("<div style=\"padding: 5px;margin-left: \\.5em;border-color: #faa;border: 2px dashed rgba\\(255,0,0,\\.1\\),border-radius: 2px\">(.*?)</div>").unwrap(), "[moot]$1[/moot]"),
+        // fortune text
+        (Regex::new("<span class=\"fortune\" style=\"color:(.*?)\"><br><br><b>(.*?)</b></span>").unwrap(), "\n\n[fortune color=\"$1\"]$2[/fortune]"),
+        // bold text
+        (Regex::new("<(?:b|strong)>(.*?)</(?:b|strong)>").unwrap(), "[b]$1[/b]"),
+        // code tags
+        (Regex::new("<pre[^>]*>").unwrap(), "[code]"),
+        (Regex::new("</pre>").unwrap(), "[/code]"),
+        // math tags
+        (Regex::new("<span class=\"math\">(.*?)</span>").unwrap(), "[math]$1[/math]"),
+        (Regex::new("<div class=\"math\">(.*?)</div>").unwrap(), "[eqn]$1[/eqn]"),
+        // > implying I'm quoting someone
+        (Regex::new("<font class=\"unkfunc\">(.*?)</font>").unwrap(), "$1"),
+        (Regex::new("<span class=\"quote\">(.*?)</span>").unwrap(), "$1"),
+        (Regex::new("<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>").unwrap(), "$1"),
+        // Links
+        (Regex::new("<a[^>]*>(.*?)</a>").unwrap(), "$1"),
+        // old spoilers
+        (Regex::new("<span class=\"spoiler\"[^>]*>(.*?)</span>").unwrap(), "[spoiler]$1[/spoiler]"),
+        // ShiftJIS
+        (Regex::new("<span class=\"sjis\">(.*?)</span>").unwrap(), "[shiftjis]$1[/shiftjis]"),
+        // new spoilers
+        (Regex::new("<s>").unwrap(), "[spoiler]"),
+        (Regex::new("</s>").unwrap(), "[/spoiler]"),
+        // new line/wbr
+        (Regex::new("<br\\s*/?>").unwrap(), "\n"),
+        (Regex::new("<wbr>").unwrap(), ""),
+    ]
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,48 +190,3 @@ mod tests {
         assert_eq!(&s, target);
     }
 }
-
-static REPLACEMENTS: Lazy<[(Regex, &str); 23]> = Lazy::new(|| {
-    [
-        // Admin-Mod-Dev quotelinks
-        (Regex::new("<span class=\"capcodeReplies\"><span style=\"font-size: smaller;\"><span style=\"font-weight: bold;\">(?:Administrator|Moderator|Developer) Repl(?:y|ies):</span>.*?</span><br></span>").unwrap(), ""),
-        // Non-public tags
-        (Regex::new("\\[(/?(banned|moot|spoiler|code))]").unwrap(), "[$1:lit]"),
-        // Comment too long, also EXIF tag toggle
-        (Regex::new("<span class=\"abbr\">.*?</span>").unwrap(), ""),
-        // EXIF data
-        (Regex::new("<table class=\"exif\"[^>]*>.*?</table>").unwrap(), ""),
-        // DRAW data
-        (Regex::new("<br><br><small><b>Oekaki Post</b>.*?</small>").unwrap(), ""),
-        // Banned/Warned text
-        (Regex::new("<(?:b|strong) style=\"color:\\s*red;\">(.*?)</(?:b|strong)>").unwrap(), "[banned]$1[/banned]"),
-        // moot text
-        (Regex::new("<div style=\"padding: 5px;margin-left: \\.5em;border-color: #faa;border: 2px dashed rgba\\(255,0,0,\\.1\\),border-radius: 2px\">(.*?)</div>").unwrap(), "[moot]$1[/moot]"),
-        // fortune text
-        (Regex::new("<span class=\"fortune\" style=\"color:(.*?)\"><br><br><b>(.*?)</b></span>").unwrap(), "\n\n[fortune color=\"$1\"]$2[/fortune]"),
-        // bold text
-        (Regex::new("<(?:b|strong)>(.*?)</(?:b|strong)>").unwrap(), "[b]$1[/b]"),
-        // code tags
-        (Regex::new("<pre[^>]*>").unwrap(), "[code]"),
-        (Regex::new("</pre>").unwrap(), "[/code]"),
-        // math tags
-        (Regex::new("<span class=\"math\">(.*?)</span>").unwrap(), "[math]$1[/math]"),
-        (Regex::new("<div class=\"math\">(.*?)</div>").unwrap(), "[eqn]$1[/eqn]"),
-        // > implying I'm quoting someone
-        (Regex::new("<font class=\"unkfunc\">(.*?)</font>").unwrap(), "$1"),
-        (Regex::new("<span class=\"quote\">(.*?)</span>").unwrap(), "$1"),
-        (Regex::new("<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>").unwrap(), "$1"),
-        // Links
-        (Regex::new("<a[^>]*>(.*?)</a>").unwrap(), "$1"),
-        // old spoilers
-        (Regex::new("<span class=\"spoiler\"[^>]*>(.*?)</span>").unwrap(), "[spoiler]$1[/spoiler]"),
-        // ShiftJIS
-        (Regex::new("<span class=\"sjis\">(.*?)</span>").unwrap(), "[shiftjis]$1[/shiftjis]"),
-        // new spoilers
-        (Regex::new("<s>").unwrap(), "[spoiler]"),
-        (Regex::new("</s>").unwrap(), "[/spoiler]"),
-        // new line/wbr
-        (Regex::new("<br\\s*/?>").unwrap(), "\n"),
-        (Regex::new("<wbr>").unwrap(), ""),
-    ]
-});
