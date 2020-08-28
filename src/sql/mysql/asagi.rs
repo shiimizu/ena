@@ -83,6 +83,9 @@ impl Default for Post {
 }
 
 impl From<&yotsuba::Post> for Post {
+    /// Convert a 4chan `Post` to an Asagi `Post`
+    ///
+    /// 4chan sometimes has a `\` character in their `md5`.
     fn from(post: &yotsuba::Post) -> Self {
         Self {
             doc_id:            0,
@@ -167,7 +170,7 @@ impl From<&yotsuba::Post> for Post {
                             // let mut extra_json_mut = extra_json.clone();
                             if let Some(unique_ips) = post.unique_ips {
                                 if unique_ips > 0 {
-                                    _exif.insert(String::from("uniqueIps"), unique_ips.into());
+                                    _exif.insert(String::from("uniqueIps"), fomat!((unique_ips)).into());
                                 }
                             }
                             if let Some(since4pass) = post.since4pass {
@@ -182,7 +185,7 @@ impl From<&yotsuba::Post> for Post {
                             }
                             if let Some(archived_on) = &post.archived_on {
                                 if *archived_on > 0 {
-                                    _exif.insert(String::from("archivedOn"), (*archived_on).into());
+                                    _exif.insert(String::from("archivedOn"), fomat!((archived_on)).into());
                                 }
                             }
                             let extra_string: String = serde_json::to_string(&extra_json_mut).unwrap();
@@ -200,7 +203,7 @@ impl From<&yotsuba::Post> for Post {
                         let mut _exif = serde_json::Map::new();
                         if let Some(unique_ips) = post.unique_ips {
                             if unique_ips > 0 {
-                                _exif.insert(String::from("uniqueIps"), unique_ips.into());
+                                _exif.insert(String::from("uniqueIps"), fomat!((unique_ips)).into());
                             }
                         }
                         if let Some(since4pass) = post.since4pass {
@@ -215,7 +218,7 @@ impl From<&yotsuba::Post> for Post {
                         }
                         if let Some(archived_on) = &post.archived_on {
                             if *archived_on > 0 {
-                                _exif.insert(String::from("archivedOn"), (*archived_on).into());
+                                _exif.insert(String::from("archivedOn"), fomat!((archived_on)).into());
                             }
                         }
                         let extra_string: String = serde_json::to_string(&_exif).unwrap();
