@@ -92,7 +92,7 @@ impl From<&yotsuba::Post> for Post {
             subnum:            0,
             thread_num:        if post.resto == 0 { post.no } else { post.resto },
             op:                (post.resto == 0),
-            timestamp:         post.time.into(),
+            timestamp:         post.time,
             timestamp_expired: 0,
             preview_orig:      post.tim.map(|tim| fomat!((tim)"s.jpg")),
             preview_w:         post.tn_w.unwrap_or_default(),
@@ -121,7 +121,16 @@ impl From<&yotsuba::Post> for Post {
             },
             spoiler:           post.spoiler.map_or_else(|| false, |v| v == 1),
             deleted:           false,
-            capcode:           "N".into(),
+            capcode:           {
+                fomat!(
+                    if let Some(cap) = &post.capcode {
+                        if cap=="manager"||cap=="Manager" { "G" } else {
+                            if let Some(c) = cap.chars().nth(0) { (c.to_uppercase()) } else { "N" } 
+                        }
+                    }
+                    else { "N" }
+                )
+            },
             email:             None,
             name:              post.name.as_ref().map(|s| s.as_str().clean().to_string()),
             trip:              post.trip.clone(),
