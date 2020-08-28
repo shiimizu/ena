@@ -16,7 +16,7 @@ Ena</h1><p align="center">An imageboard archiver written in Rust</p><h4 align="c
 [license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue&style=flat-square
 [license-url]: LICENSE
 [doc-badge]: https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square
-[doc-url]: https://shiimizu.github.io/ena.docs
+[doc-url]: https://shiimizu.github.io/ena.docs/doc/ena/pgsql/core/struct.Post.html
 [build-badge]: https://img.shields.io/github/workflow/status/shiimizu/ena/Rust?logo=github&style=flat-square
 [build-url]: https://github.com/shiimizu/ena/actions?query=workflow%3ARust
 [safety-badge]: https://img.shields.io/badge/unsafe-forbidden-green.svg?style=flat-square
@@ -43,7 +43,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 ## Features
 
 * **Memory efficient**<br>
- Using less than 5mb for a single board and less than 30mb for all 72 boards
+ Using less than 5mb for a single board and less than 30mb for all 72 boards<sup>*</sup>
  
 * **Bandwidth efficient**<br>
  Minimal [API](https://github.com/4chan/4chan-API) requests by using `threads.json` and `archive.json` instead of continuously polling every thread for updates
@@ -60,6 +60,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 * **Asagi compatible**<br>
  Capable as a [drop-in replacement](https://github.com/shiimizu/ena/wiki/Asagi)
 
+<sup>\* Without full media & thumbnails</sup>
 
 ## Runtime dependencies
 * [PostgreSQL](https://www.postgresql.org/download/) >= 11.0
@@ -67,7 +68,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 ## Getting Started
 Download the [latest release][latest-link] or build from source.  
 
-Set your environment variable to `ENA_LOG=ena=info` for console output. 
+Set your `ENA_LOG` environment variable to `ena=info` for console output. 
 
 Edit the `ena_config.json` file and put in your database connection details, media directory, what boards you want to archive, and tweak any of the other settings that look interesting. Don't go below 0.12s or so for the ratelimit or you'll get banned. Follow the API rules and keep it at or above 1 unless you really need to (If you're not sure whether you need to, you probably don't need to). For more information, see the [configuration page](https://github.com/shiimizu/ena/wiki/Configuration).
 
@@ -110,10 +111,10 @@ OPTIONS:
 ```
 
 ## Why do this?
-Much of my personal time and research went into 4chan for *educational purposes* and self development. I value the things I've learned there and have a plethora of threads saved. Archival sites have been crumbling down due to requiring several tens of gigabytes to keep Asagi archiving every board. At the time there wasn't any avaliable practical solutions nor were they production ready, so I decided to help out.
+Much of my personal time and research went into 4chan for *educational purposes* and self development. I value the things I've learned there and have a plethora of threads saved. Although there are available archivers, I wanted a better, more efficient, and robust way to do this.
 
 ## Why Rust?
-I wanted something fast, durable, and ideally able to withstand long-term usage. Rust has memory safety guarantee, no GC, speed like C, and an ecosystem like Python's. Paying upfront in development time in return for less debugging and runtime errors is a small price to pay. Generally, if it compiles, you can be rest assured there won't be any low level hiccups as would be in other languages. For more reasons, see the [Why Rust? page](https://github.com/shiimizu/ena/wiki/Why-Rust%3F).
+I wanted something fast with a focus on durability, stability, reliabiility, and longevity. Rust has memory safety guarantee, no GC, speed on par with C, and an ecosystem like Python's. Paying upfront in development time in return for less debugging and runtime errors is a small price to pay. If it compiles, it just werks. For more reasons, see the [Why Rust? page](https://github.com/shiimizu/ena/wiki/Why-Rust%3F).
 
 ## What's with the name?
 > Asagi is the eldest of the Ayase sisters. Fuuka is the middle sister. The Ayase family lives next door to Yotsuba. Get it?  
