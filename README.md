@@ -43,7 +43,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 ## Features
 
 * **Memory efficient**<br>
- Using less than 5mb for a single board and less than 30mb for all 72 boards<sup>*</sup>
+ Using less than 5mb for a single board and less than 30mb for all 76 boards<sup>*</sup>
  
 * **Bandwidth efficient**<br>
  Minimal [API](https://github.com/4chan/4chan-API) requests by using `threads.json` and `archive.json` instead of continuously polling every thread for updates
@@ -78,7 +78,7 @@ You should now be able to run `ena` and have it start archiving, and report stat
 Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
 
 ## Building
-Make sure [Rust](https://www.rust-lang.org/tools/install) installed. Then run:
+Make sure [Rust](https://www.rust-lang.org/tools/install) is installed. Then run:
 
 ```
 cargo install --git https://github.com/shiimizu/ena
@@ -91,7 +91,9 @@ cd ena
 cargo build --release
 # Grab the binary from: target/release/
 ```
-You can also append `-jN` to the `cargo` commands to speed up builds (where `N` is the number of CPU cores you have).   
+> You can also append `-jN` to the `cargo` commands to speed up builds  
+> (where `N` is the number of CPU cores you have).   
+
 For more information, see the [building guide](https://github.com/shiimizu/ena/wiki/Building). 
 
 ## Usage
