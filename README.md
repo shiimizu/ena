@@ -53,6 +53,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 * Better last modified detection
 * Ability to use `-tail` json
 * Fix the correct number of `replies` and `images`
+* Add ability to use proxies
 * Faster CTRL+C
 * Actual Asagi support (support for legacy mysql)
 * More options, flags, and customization
@@ -185,7 +186,7 @@ Please repsect the ch API guidelines to the best of your ability.
 1. Ratelimit of atleast 1 second
 Respecting the first rule will get you very far.
 
-# Architecture flow
+## Architecture flow
 1. Boards are fetched sequentially since doing so concurrently requires quite a bit of memory.
 
 1. The list of threads are fetched from `threads.json` or `archive.json` and stored in the database.
@@ -201,15 +202,17 @@ Respecting the first rule will get you very far.
 1. Once a board is finished (all its threads are fetched), the next one is fetched and the whole process starts all over again.
 
 
-# Asagi
+## Asagi
+* Add any future extra columns to `exif`
 * Add `archivedOn` to `exif`
 * Fixed updating `sticky` and `locked` for threads in triggers
 * Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
 * More accurate `deleted` posts due to upserts
+* Cleaner sticky comments
 
 
 
 
-# FAQ
+## FAQ
 ##### Why not use `catalog.json`?
 I've found it to be inaccurate.
