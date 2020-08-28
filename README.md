@@ -78,7 +78,7 @@ You should now be able to run `ena` and have it start archiving, and report stat
 Ctrl-C will stop Ena. To leave Ena running long term, you can use screen (or byobu or any such tool).
 
 ## Building
-Make sure you have [OpenSSL](https://www.openssl.org/source/) and [Rust](https://www.rust-lang.org/tools/install) installed. Then run:
+Make sure [Rust](https://www.rust-lang.org/tools/install) installed. Then run:
 
 ```
 cargo install --git https://github.com/shiimizu/ena
@@ -91,6 +91,7 @@ cd ena
 cargo build --release
 # Grab the binary from: target/release/
 ```
+You can also append `-jN` to the `cargo` commands to speed up builds (where `N` is the number of CPU cores you have).   
 For more information, see the [building guide](https://github.com/shiimizu/ena/wiki/Building). 
 
 ## Usage

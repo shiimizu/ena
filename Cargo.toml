@@ -27,6 +27,9 @@ path = "src/lib.rs"
 lto = true
 codegen-units = 1
 
+[features]
+default = ["native-tls/vendored"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
@@ -39,6 +42,7 @@ sha2 = "0.9"
 enum-iterator = "0.6"
 percent-encoding = "2.1"
 once_cell = "1.4"
+native-tls = "0.2"
 
 # Async
 async-trait = "0.1"
