@@ -656,7 +656,8 @@ pub fn get_opt() -> Result<Opt> {
     }
 
     // Patch concurrency limit
-    SEMAPHORE_AMOUNT_THREADS.fetch_add(if opt.strict { 1 } else { opt.limit }, Ordering::SeqCst);
+    if opt.strict { opt.limit = 1; }
+    SEMAPHORE_AMOUNT_THREADS.fetch_add(opt.limit, Ordering::SeqCst);
     SEMAPHORE_AMOUNT_MEDIA.fetch_add(opt.limit_media, Ordering::SeqCst);
 
     // &opt.threads.dedup();

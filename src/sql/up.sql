@@ -374,7 +374,7 @@
                             excluded.name,
                             excluded.sub,
                             excluded.com,
-                            -- excluded.filedeleted,
+                            excluded.filedeleted,
                             -- excluded.spoiler,
                             -- excluded.custom_spoiler,
                             -- excluded.filename,
