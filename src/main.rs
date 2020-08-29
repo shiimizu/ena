@@ -692,7 +692,6 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                 }
                             };
 
-                            let thread_limit = SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst);
                             match either {
                                 Either::Right(rows) =>
                                     if let Some(mut rows) = rows {
@@ -700,7 +699,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                             let r = rows.into_iter().map(|no| self.download_thread(board_info, no, thread_type)).collect::<Vec<_>>();
                                             let mut stream_of_futures = stream::iter(r);
 
-                                            let mut fut = stream_of_futures.buffer_unordered(thread_limit as usize);
+                                            let mut fut = stream_of_futures.buffer_unordered(self.opt.limit as usize);
                                             while let Some(res) = fut.next().await {
                                                 res.unwrap();
                                             }
@@ -719,7 +718,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 
                                         if r.len() > 0 {
                                             let mut stream_of_futures = stream::iter(r);
-                                            let mut fut = stream_of_futures.buffer_unordered(thread_limit as usize);
+                                            let mut fut = stream_of_futures.buffer_unordered(self.opt.limit as usize);
                                             while let Some(res) = fut.next().await {
                                                 res.unwrap();
                                             }
@@ -971,13 +970,17 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 
                                                 if media_list.len() > 0 {
                                                     if board_info.with_thumbnails && board_info.board != "f" {
-                                                        let mut fut = media_list
+                                                        let r = media_list
                                                             .iter()
                                                             .map(|&details| {
                                                                 let (resto, no, md5, tim, ext, filename) = details;
                                                                 self.download_media(board_info, (resto, no, Some(md5.into()), None, tim, ext.into(), filename.into(), None, None), MediaType::Thumbnail)
                                                             })
-                                                            .collect::<FuturesUnordered<_>>();
+                                                            .collect::<Vec<_>>();
+
+                                                        let mut stream_of_futures = stream::iter(r);
+
+                                                        let mut fut = stream_of_futures.buffer_unordered(self.opt.limit_media as usize);
                                                         while let Some(res) = fut.next().await {
                                                             res.unwrap();
                                                         }
@@ -986,13 +989,17 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                         break;
                                                     }
                                                     if board_info.with_full_media {
-                                                        let mut fut = media_list
+                                                        let r = media_list
                                                             .iter()
                                                             .map(|&details| {
                                                                 let (resto, no, md5, tim, ext, filename) = details;
                                                                 self.download_media(board_info, (resto, no, Some(md5.into()), None, tim, ext.into(), filename.into(), None, None), MediaType::Full)
                                                             })
-                                                            .collect::<FuturesUnordered<_>>();
+                                                            .collect::<Vec<_>>();
+
+                                                        let mut stream_of_futures = stream::iter(r);
+
+                                                        let mut fut = stream_of_futures.buffer_unordered(self.opt.limit_media as usize);
                                                         while let Some(res) = fut.next().await {
                                                             res.unwrap();
                                                         }
@@ -1044,17 +1051,14 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                                 {
                                                                     // Downlaod Thumbnails
                                                                     if board_info.with_thumbnails && board_info.board != "f" {
-                                                                        let mut fut_thumbs = mm
-                                                                            .clone()
-                                                                            .into_iter()
-                                                                            .map(| v|
-                                                            //  v.map(| details| {
-                                                            //     self.download_media(board_info, details,  true)
-                                                            //  })
-                                                            self.download_media(board_info, v,  MediaType::Thumbnail))
-                                                                            .collect::<FuturesUnordered<_>>();
-                                                                        while let Some(res) = fut_thumbs.next().await {
-                                                                            res.unwrap()
+                                                                        let r =
+                                                                            mm.clone().into_iter().map(|details| self.download_media(board_info, details, MediaType::Thumbnail)).collect::<Vec<_>>();
+
+                                                                        let mut stream_of_futures = stream::iter(r);
+
+                                                                        let mut fut = stream_of_futures.buffer_unordered(self.opt.limit_media as usize);
+                                                                        while let Some(res) = fut.next().await {
+                                                                            res.unwrap();
                                                                         }
                                                                     }
                                                                 }
@@ -1065,16 +1069,13 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 
                                                                 // Downlaod full media
                                                                 if board_info.with_full_media {
-                                                                    let mut fut = mm
-                                                                        .into_iter()
-                                                                        .map(| v|
-                                                            // v.map(| details| {
-                                                            //    self.download_media(board_info, details,  true)
-                                                            // })
-                                                           self.download_media(board_info, v,  MediaType::Full))
-                                                                        .collect::<FuturesUnordered<_>>();
+                                                                    let r = mm.into_iter().map(|details| self.download_media(board_info, details, MediaType::Full)).collect::<Vec<_>>();
+
+                                                                    let mut stream_of_futures = stream::iter(r);
+
+                                                                    let mut fut = stream_of_futures.buffer_unordered(self.opt.limit_media as usize);
                                                                     while let Some(res) = fut.next().await {
-                                                                        res.unwrap()
+                                                                        res.unwrap();
                                                                     }
                                                                 }
                                                                 break; // exit the db loop
