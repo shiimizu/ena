@@ -1,6 +1,6 @@
 use super::clean::*;
 use crate::yotsuba;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::TimeZone;
 use chrono_tz::America::New_York;
 use fomat_macros::fomat;
 use format_sql_query::QuotedData;
@@ -232,9 +232,7 @@ impl Post {
     }
 
     pub fn timestamp_nyc(time: u64) -> u64 {
-        let dt = Utc.timestamp(time as i64, 0);
-        let ts = dt.with_timezone(&New_York).naive_local().timestamp();
-        ts as u64
+        chrono::Utc.timestamp(time as i64, 0).with_timezone(&New_York).naive_local().timestamp() as u64
     }
 }
 
@@ -329,6 +327,36 @@ mod tests {
     use super::*;
     use fomat_macros::{epintln, fomat, pintln};
     use pretty_assertions::{assert_eq, assert_ne};
+
+    #[test]
+    fn prev_dir_none() {
+        let pat = Regex::new("(\\d+?)(\\d{2})\\d{0,3}$").unwrap();
+        let thread = 1;
+        let tstr = thread.to_string();
+        let captures = pat.captures(&tstr);
+        if let Some(cap) = &captures {
+            let a = &cap[1];
+            let b = &cap[2];
+            println!("{:04?} {:02?}", a, b);
+            pintln!("a:"(a)" b: "(b));
+        }
+        assert_eq!(true, captures.is_none());
+    }
+
+    #[test]
+    fn prev_dir_some() {
+        let pat = Regex::new("(\\d+?)(\\d{2})\\d{0,3}$").unwrap();
+        let thread = 128008945;
+        let tstr = thread.to_string();
+        let captures = pat.captures(&tstr);
+        if let Some(cap) = &captures {
+            let a = &cap[1];
+            let b = &cap[2];
+            assert_eq!("1280", a);
+            assert_eq!("08", b);
+        }
+        assert_eq!(true, captures.is_some());
+    }
 
     #[test]
     fn time_nyc() {
