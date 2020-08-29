@@ -57,6 +57,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 * Faster CTRL+C
 * Actual Asagi support (support for legacy mysql)
 * More options, flags, and customization
+* Switch to YAML
 * Lives up to the description by being able to get threads and/or boards in a oneshot fashion
 * Reduce postgres min version. Probably >= `9` now.
 * **Database schema changes. Now one big `posts` table instead of seperated by board.**
@@ -181,9 +182,10 @@ Core functionality works. There are things that could be improved on:
 * `NEW` & `UPSERTED` doesn't display the amount like the postgres version. Same issue and fix as above.
 
 
-Please repsect the ch API guidelines to the best of your ability.
+## Please respect the 4chan API guidelines as best you can
 1. Use `Last-Modified` and `If-Modified-Since`
-1. Ratelimit of atleast 1 second
+1. Ratelimit of atleast 1 second  
+
 Respecting the first rule will get you very far.
 
 ## Architecture flow
@@ -192,19 +194,21 @@ Respecting the first rule will get you very far.
 1. The list of threads are fetched from `threads.json` or `archive.json` and stored in the database.
    * The `Last-Modified` from the HTTP header is then stored in the database as a timestamp. Before fetching the threads list, this is checked so to not download the list again if it's not modified.
 
-1. On startup of the program, threads are combined between in-db (if any) and received so as to get the **union** of both. After the initial startup, all subsequent list of threads are the result of a **symmetric difference** between in-db and recieved threads, e.g only the modified threads such as deleted/updated/added/modified, resulting in a lower amount of threads to be processed.
+1. On startup of the program, threads are combined between in-db (if any) and received so as to get the **union** of both.  
+   After the initial startup, all subsequent list of threads are the result of a **symmetric difference** between in-db and recieved threads,  
+   e.g only the modified threads such as deleted/updated/added/modified, resulting in a lower amount of threads to be processed.
 
-1. Then each thread is fetched concurrently (based on `limit` setting).
+2. Then each thread is fetched concurrently (based on `limit` setting).
     1. In each thread, every media file & thumbnail is fetched concurrently (based on `limit_media` setting) and its entry is upserted to the database.
     2. The thread is upserted to the database after media is done (if any), and then the `Last-Modified` from the HTTP header is stored in the `last_modified` column of the thread.
         * Before fetching a thread this is checked so to not download the thread again if it's not modified.
 
-1. Once a board is finished (all its threads are fetched), the next one is fetched and the whole process starts all over again.
+3. Once a board is finished (all its threads are fetched), the next one is fetched and the whole process starts all over again.
 
 
-## Asagi
-* Add any future extra columns to `exif`
-* Add `archivedOn` to `exif`
+## Asagi specific implementation changes
+* Added any future columns to `exif`
+* Added `archivedOn` to `exif`
 * Fixed updating `sticky` and `locked` for threads in triggers
 * Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
 * More accurate `deleted` posts due to upserts
