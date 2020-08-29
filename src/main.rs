@@ -19,6 +19,7 @@ use futures::{channel::oneshot, future, future::Either, stream::FuturesUnordered
 
 // use futures::stream::FuturesOrdered;
 use async_process::Command;
+use futures::stream::{self, StreamExt};
 use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -690,26 +691,38 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                     self.db_client.threads_get_combined(ThreadType::Archive, board_info.id, &body_json).await
                                 }
                             };
+
+                            let thread_limit = SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst);
                             match either {
                                 Either::Right(rows) =>
                                     if let Some(mut rows) = rows {
-                                        let mut fut = rows.map(|no| self.download_thread(board_info, no, thread_type)).collect::<FuturesUnordered<_>>().await;
-                                        while let Some(res) = fut.next().await {
-                                            res.unwrap();
+                                        if rows.len() > 0 {
+                                            let r = rows.into_iter().map(|no| self.download_thread(board_info, no, thread_type)).collect::<Vec<_>>();
+                                            let mut stream_of_futures = stream::iter(r);
+
+                                            let mut fut = stream_of_futures.buffer_unordered(thread_limit as usize);
+                                            while let Some(res) = fut.next().await {
+                                                res.unwrap();
+                                            }
                                         }
                                     },
                                 Either::Left(rowstream) => match rowstream {
                                     Ok(rows) => {
                                         futures::pin_mut!(rows);
-                                        let mut fut = rows
+                                        let mut r = rows
                                             .map(|row| {
                                                 let no: i64 = row.unwrap().get(0);
                                                 self.download_thread(board_info, no as u64, thread_type)
                                             })
-                                            .collect::<FuturesUnordered<_>>()
+                                            .collect::<Vec<_>>()
                                             .await;
-                                        while let Some(res) = fut.next().await {
-                                            res.unwrap();
+
+                                        if r.len() > 0 {
+                                            let mut stream_of_futures = stream::iter(r);
+                                            let mut fut = stream_of_futures.buffer_unordered(thread_limit as usize);
+                                            while let Some(res) = fut.next().await {
+                                                res.unwrap();
+                                            }
                                         }
                                     }
                                     Err(e) => {
@@ -776,6 +789,9 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
         let mut deleted = false;
 
         let sem = if thread_type.is_threads() { SEMAPHORE_THREADS.acquire(1).await } else { SEMAPHORE_THREADS_ARCHIVE.acquire(1).await };
+        if get_ctrlc() {
+            return Ok((thread_type, deleted));
+        }
         let mut with_tail = if thread_type.is_threads() { board_info.with_tail } else { false };
         let hz = Duration::from_millis(250);
         let mut interval = Duration::from_millis(board_info.interval_threads.into());
@@ -895,7 +911,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                             Either::Right(rows) => {
                                                 if let Some(mut rows) = rows {
                                                     // TODO get row, not u64
-                                                    while let Some(no) = rows.next().await {
+                                                    for no in rows {
                                                         pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)"#"(no)"\t[DELETED]");
                                                     }
                                                 }
@@ -1088,19 +1104,17 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                 // Display the deleted thread
                                 match either {
                                     Either::Right(rows) =>
-                                        if let Some(mut rows) = rows {
-                                            while let Some(no) = rows.next().await {
-                                                pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]");
-                                                // Ignore the below comments. If it's deleted, it won't matter what last-modified it is.
-                                                //
-                                                // Due to triggers, when a board is updated/deleted/inserted, the `time_last` is updated
-                                                // So I have to reset it to the correct value based on the HTTP response `Last-Modified`
-                                                //
-                                                //
-                                                // Just to be safe?...
-                                                if !lm.is_empty() {
-                                                    self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
-                                                }
+                                        if let Some(no) = rows {
+                                            pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]");
+                                            // Ignore the below comments. If it's deleted, it won't matter what last-modified it is.
+                                            //
+                                            // Due to triggers, when a board is updated/deleted/inserted, the `time_last` is updated
+                                            // So I have to reset it to the correct value based on the HTTP response `Last-Modified`
+                                            //
+                                            //
+                                            // Just to be safe?...
+                                            if !lm.is_empty() {
+                                                self.db_client.thread_update_last_modified(&lm, board_info.id, thread).await.unwrap();
                                             }
                                         },
 

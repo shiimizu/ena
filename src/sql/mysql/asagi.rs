@@ -340,7 +340,7 @@ mod tests {
     fn test_from_trait_into() {
         let asagi_post = Post::default();
         let post = yotsuba::Post::default();
-        
+
         let mut converted: Post = post.as_ref().into();
         converted.op = false;
         assert_eq!(asagi_post, converted);
@@ -349,7 +349,7 @@ mod tests {
     fn test_from_trait_from() {
         let asagi_post = Post::default();
         let post = yotsuba::Post::default();
-        
+
         let mut converted: Post = Post::from(&post);
         converted.op = false;
         assert_eq!(asagi_post, converted);
@@ -359,18 +359,18 @@ mod tests {
         let post = yotsuba::Post::default();
         let mut converted: Post = Post::from(&post);
         converted.op = false;
-        
+
         let converted_sql = converted.to_sql();
         let target = "(0,0,0,0,false,0,0,NULL,0,0,NULL,0,0,0,NULL,NULL,false,0,\'N\',NULL,NULL,NULL,NULL,NULL,NULL,false,false,NULL,NULL,NULL)";
         assert_eq!(target, &converted_sql);
     }
-    
+
     #[test]
     fn post_comment_clean() {
         let mut post = yotsuba::Post::default();
         post.com = Some(r##"<a href="#p271855389" class="quotelink">>>271855389</a><br><span class="quote">>present day cowboys</span><br>No, the present day cowboys are still out there on ranches doing actual cowboy work."##.to_string());
         let mut converted: Post = Post::from(&post);
-        let comment  = converted.comment.as_ref().map(|com| com.as_str());
+        let comment = converted.comment.as_ref().map(|com| com.as_str());
         let target = Some(">>271855389\n>present day cowboys\nNo, the present day cowboys are still out there on ranches doing actual cowboy work.");
         assert_eq!(target, comment);
     }

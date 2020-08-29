@@ -8,7 +8,7 @@ use crate::{
 use async_rwlock::RwLock;
 use async_trait::async_trait;
 use color_eyre::eyre::{eyre, Result};
-use futures::{future::Either, stream::Iter};
+use futures::future::Either;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
@@ -128,7 +128,7 @@ impl QueryExecutor for tokio_postgres::Client {
         self.execute(statement, &[&last_modified, &(board_id as i16), &(thread as i64)]).await.map_err(|e| eyre!(e))
     }
 
-    async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<u64>> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadUpdateDeleted).unwrap();
         let b = &(board_id as i16);
@@ -138,7 +138,7 @@ impl QueryExecutor for tokio_postgres::Client {
         Either::Left(res)
     }
 
-    async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadUpdateDeleteds).unwrap();
         let b = &(board_info.id as i16);
@@ -148,7 +148,7 @@ impl QueryExecutor for tokio_postgres::Client {
         Either::Left(res)
     }
 
-    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadsGetCombined).unwrap();
         let b = &(board_id as i16);
@@ -158,7 +158,7 @@ impl QueryExecutor for tokio_postgres::Client {
         Either::Left(res)
     }
 
-    async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadsGetModified).unwrap();
         // let params = vec![&(board_id as i16  as (dyn ToSql+Sync)), &(thread as i64 as (dyn ToSql+Sync))];

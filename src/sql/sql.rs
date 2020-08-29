@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
 use crate::config::{Board, Opt};
 use async_trait::async_trait;
-use futures::{future::Either, stream::Iter};
+use futures::future::Either;
 // use std::{collections::HashSet, fmt::Debug};
 use crate::ThreadType;
 use color_eyre::eyre::Result;
@@ -95,10 +95,10 @@ pub trait QueryExecutor {
     async fn thread_get_last_modified(&self, board_id: u16, thread: u64) -> Option<String>;
     async fn thread_upsert(&self, board_info: &Board, thread_json: &serde_json::Value) -> u64;
     async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64>;
-    async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
-    async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
-    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
-    async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>>;
+    async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<u64>>;
+    async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>>;
+    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>>;
+    async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>>;
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> bool;
     async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Option<mysql_async::Row>>;

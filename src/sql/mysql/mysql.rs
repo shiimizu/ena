@@ -339,7 +339,7 @@ impl QueryExecutor for mysql_async::Pool {
         res.map(|_| 0).map_err(|e| eyre!(e))
     }
 
-    async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<u64>> {
         // TODO the return of this function should just be u64 or bool
         let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
@@ -356,7 +356,7 @@ impl QueryExecutor for mysql_async::Pool {
             let del = row.get::<Option<u8>, &str>("deleted").flatten();
             if let Some(_del) = del {
                 if _del == 1 {
-                    Either::Right(Some(futures::stream::iter(vec![thread])))
+                    Either::Right(Some(thread))
                 } else {
                     Either::Right(None)
                 }
@@ -368,7 +368,7 @@ impl QueryExecutor for mysql_async::Pool {
         }
     }
 
-    async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>> {
         // let posts: Vec<yotsuba::Post> = serde_json::from_value(json["posts"].clone()).unwrap();
         let posts = json["posts"].as_array().unwrap();
 
@@ -433,7 +433,7 @@ impl QueryExecutor for mysql_async::Pool {
                         sleep(Duration::from_millis(500)).await;
                     }
 
-                    Either::Right(Some(futures::stream::iter(diff)))
+                    Either::Right(Some(diff))
                 } else {
                     Either::Right(None)
                 }
@@ -445,7 +445,7 @@ impl QueryExecutor for mysql_async::Pool {
         }
     }
 
-    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>> {
         let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
@@ -461,12 +461,12 @@ impl QueryExecutor for mysql_async::Pool {
                 let b: HashSet<_> = new.into_iter().flat_map(|page| page.threads).collect();
                 let diff: Vec<_> = a.union(&b).map(|thread| thread.no).unique().collect();
                 // pintln!([a]"-----------\n"[diff]"-----------\n"[b]);
-                Either::Right(Some(futures::stream::iter(diff)))
+                Either::Right(Some(diff))
             } else {
                 let mut prev: Vec<u64> = serde_json::from_str(&res).unwrap();
                 let mut new: Vec<u64> = serde_json::from_value(json.clone()).unwrap();
                 let diff: Vec<u64> = prev.into_iter().chain(new.into_iter()).unique().collect();
-                Either::Right(Some(futures::stream::iter(diff)))
+                Either::Right(Some(diff))
             }
         } else {
             // If an entry does not exist in the database just use the json received
@@ -474,10 +474,10 @@ impl QueryExecutor for mysql_async::Pool {
             if thread_type.is_threads() {
                 let mut received: Vec<Page> = serde_json::from_value(json.clone()).unwrap();
                 let res: Vec<u64> = received.into_iter().flat_map(|page| page.threads.into_iter().map(|thread| thread.no)).unique().collect();
-                Either::Right(Some(futures::stream::iter(res)))
+                Either::Right(Some(res))
             } else {
                 let mut res: Vec<u64> = serde_json::from_value(json.clone()).unwrap();
-                Either::Right(Some(futures::stream::iter(res)))
+                Either::Right(Some(res))
             }
         }
 
@@ -490,7 +490,7 @@ impl QueryExecutor for mysql_async::Pool {
         Either::Right(futures::stream::iter(diff))*/
     }
 
-    async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Iter<std::vec::IntoIter<u64>>>> {
+    async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>> {
         let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = (*store).get(&board_id).unwrap();
@@ -503,7 +503,7 @@ impl QueryExecutor for mysql_async::Pool {
             let a: HashSet<_> = prev.into_iter().flat_map(|page| page.threads).collect();
             let b: HashSet<_> = new.into_iter().flat_map(|page| page.threads).collect();
             let diff: Vec<_> = a.symmetric_difference(&b).map(|thread| thread.no).unique().collect();
-            Either::Right(Some(futures::stream::iter(diff)))
+            Either::Right(Some(diff))
         } else {
             Either::Right(None)
         }
