@@ -348,24 +348,13 @@ impl QueryExecutor for mysql_async::Pool {
 
         let get_single_statement = map.get(&Query::PostGetSingle).unwrap();
 
-        let res = conn.exec_drop(statement.as_str(), (thread,)).await.unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        let res = conn.exec_drop(statement.as_str(), (Post::timestamp_nyc(now), thread)).await.unwrap();
         let mut single_res: Option<mysql_async::Row> = conn.exec_first(get_single_statement.as_str(), (thread, thread)).await.ok().flatten();
 
         // Get the post afterwards to see if it was deleted
-        if let Some(mut row) = single_res {
-            let del = row.get::<Option<u8>, &str>("deleted").flatten();
-            if let Some(_del) = del {
-                if _del == 1 {
-                    Either::Right(Some(thread))
-                } else {
-                    Either::Right(None)
-                }
-            } else {
-                Either::Right(None)
-            }
-        } else {
-            Either::Right(None)
-        }
+        let status = single_res.and_then(|row| row.get::<Option<u8>, &str>("deleted").flatten()).map_or_else(|| None, |deleted| if deleted == 1 { Some(thread) } else { None });
+        Either::Right(status)
     }
 
     async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Either<Result<tokio_postgres::RowStream>, Option<Vec<u64>>> {
@@ -398,16 +387,10 @@ impl QueryExecutor for mysql_async::Pool {
 
                 // latest posts (v_latest) can include OP post since we're taking the difference. should not filter
                 // it out (diff = values in self, but not in other).
-                let v_latest = posts.iter().map(|v| v.get("no").unwrap().as_i64().unwrap() as u64).collect();
-                // let v_latest :HashSet<u64>= posts.iter().filter(|post| post.time != 0 && post.no !=
-                // 0).map(|post|post.no).collect();
-                let v_previous: HashSet<u64> = rows.into_iter().map(|row| row.get("num")).map(|v: Option<u64>| v.unwrap()).collect();
-                let diff: Vec<u64> = v_previous.difference(&v_latest).map(|&v| v).unique().collect();
+                let v_latest: HashSet<_> = posts.iter().map(|v| v.get("no").unwrap().as_u64().unwrap()).collect();
+                let v_previous: HashSet<_> = rows.into_iter().map(|row| row.get("num").unwrap()).collect();
+                let diff: Vec<_> = v_previous.difference(&v_latest).unique().copied().collect();
                 if diff.len() > 0 {
-                    // let tmp = json["posts"].as_array().unwrap().iter().map(|v| v.get("no").unwrap().as_i64().unwrap()
-                    // as u64).collect::<Vec<_>>(); pintln!("\ntmp: " [tmp]"\nv_previous: "
-                    // [v_previous] "\ndiff: "[diff]);
-
                     let mut list_no_iter = diff.iter().enumerate();
 
                     // Manually stitch the query together so we can have multiple values
@@ -418,13 +401,13 @@ impl QueryExecutor for mysql_async::Pool {
                 VALUES
                     "#
                     for (i, no) in list_no_iter {
-                        "\n(" (no) ", 0, 1, UNIX_TIMESTAMP(), UNIX_TIMESTAMP())"
+                        "\n(" (no) ", 0, 1, UNIX_TIMESTAMP(), " ((asagi::Post::timestamp_nyc(chrono::Utc::now().timestamp() as u64))) ")"
                         if i < diff.len()-1 { "," } else { "" }
                     }
                     r#"
                 ON DUPLICATE KEY UPDATE
-                deleted=1,
-                timestamp_expired=UNIX_TIMESTAMP();"#
+                deleted=VALUES(`deleted`),
+                timestamp_expired=VALUES(`timestamp_expired`);"#
                     );
                     while let Err(e) = conn.query_drop(query.as_str()).await {
                         if get_ctrlc() {
@@ -751,23 +734,14 @@ pub mod queries {
             r#"
         UPDATE `{board}`
         SET deleted             = 1,
-            timestamp_expired   = UNIX_TIMESTAMP()
+            timestamp_expired   = ?
         WHERE
             op=1 AND thread_num = ? AND subnum = 0;
     "#,
             board = board
         )
     }
-
-    /// Mark down any post found in the thread that was deleted
-    ///
-    /// ```sql
-    ///     UPDATE `{board}`
-    ///     SET deleted             = 1,
-    ///         timestamp_expired   = UNIX_TIMESTAMP()
-    ///     WHERE
-    ///         thread_num = ? AND num = ? AND subnum = 0
-    /// ```
+    // Unused
     pub fn thread_update_deleteds(board: &str) -> String {
         // unused
         format!(
