@@ -11,8 +11,8 @@
 // use futures::io::AsyncWriteExt;
 // use async_std::sync::RwLock;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
+use anyhow::Result;
 use async_trait::async_trait;
-use color_eyre::eyre::{eyre, Result};
 use ctrlc;
 use fomat_macros::{epintln, fomat, pintln};
 use futures::{channel::oneshot, future, future::Either, stream::FuturesUnordered};
@@ -147,7 +147,6 @@ fn main() -> Result<()> {
         }
     }
 
-    color_eyre::install()?;
     let num_threads = num_cpus::get().max(1);
 
     // Run the thread-local and work-stealing executor on a thread pool.
@@ -550,7 +549,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 
         // Startup is to determine whether to get combined or modified threads
         let mut startup = true;
-        let mut res = Err(eyre!("Temporary for download_board!"));
+        let mut res = Err(anyhow::anyhow!("Temporary for download_board!"));
         loop {
             let now = Instant::now();
 

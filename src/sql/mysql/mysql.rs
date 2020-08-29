@@ -4,9 +4,9 @@ use crate::{
     config::{Board, Opt},
     yotsuba, ThreadType,
 };
+use anyhow::{anyhow, Result};
 use async_rwlock::RwLock;
 use async_trait::async_trait;
-use color_eyre::eyre::{eyre, Result};
 use fomat_macros::{epintln, fomat, pintln};
 use format_sql_query::*;
 use futures::{
@@ -64,7 +64,7 @@ struct Threade {
 #[async_trait]
 impl DropExecutor for mysql_async::Pool {
     async fn disconnect_pool(self) -> Result<()> {
-        self.disconnect().await.map_err(|e| eyre!(e))
+        self.disconnect().await.map_err(|e| anyhow!(e))
     }
 }
 
@@ -92,7 +92,7 @@ impl QueryExecutor for mysql_async::Pool {
         let statement = map.get(&Query::BoardsIndexUpsert).unwrap();
         let json = serde_json::to_string(json).unwrap();
         let res = conn.exec_drop(statement.as_str(), (json, last_modified)).await;
-        res.map(|_| 0).map_err(|e| eyre!(e))
+        res.map(|_| 0).map_err(|e| anyhow!(e))
     }
 
     async fn board_is_valid(&self, board: &str) -> bool {
@@ -123,7 +123,7 @@ impl QueryExecutor for mysql_async::Pool {
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardUpsert).unwrap();
         let res = conn.exec_drop(statement.as_str(), params! { "board" => board }).await;
-        res.map(|_| 0).map_err(|e| eyre!(e))
+        res.map(|_| 0).map_err(|e| anyhow!(e))
     }
 
     async fn board_table_exists(&self, board: &str, opt: &Opt) -> Option<String> {
@@ -166,7 +166,7 @@ impl QueryExecutor for mysql_async::Pool {
         let store = STATEMENTS.read().await;
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardGet).unwrap();
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board,)).await.map_err(|e| eyre!(e));
+        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board,)).await.map_err(|e| anyhow!(e));
         res.map(|opt| opt.unwrap().get("id").unwrap())
     }
 
@@ -189,7 +189,7 @@ impl QueryExecutor for mysql_async::Pool {
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardUpsertThreads).unwrap();
         let json = serde_json::to_string(json).unwrap();
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| eyre!(e));
+        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| anyhow!(e));
         Ok(0)
     }
 
@@ -199,19 +199,19 @@ impl QueryExecutor for mysql_async::Pool {
         let map = (*store).get(&1).unwrap();
         let statement = map.get(&Query::BoardUpsertArchive).unwrap();
         let json = serde_json::to_string(json).unwrap();
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| eyre!(e));
+        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| anyhow!(e));
         Ok(0)
     }
 
     async fn thread_get(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
         let mut conn = self.get_conn().await;
         match conn {
-            Err(e) => Either::Right(Err(eyre!(e))),
+            Err(e) => Either::Right(Err(anyhow!(e))),
             Ok(mut conn) => {
                 let store = STATEMENTS.read().await;
                 let map = (*store).get(&board_info.id).unwrap();
                 let statement = map.get(&Query::ThreadGet).unwrap();
-                let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| eyre!(e));
+                let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| anyhow!(e));
                 Either::Right(res)
             }
         }
@@ -222,12 +222,12 @@ impl QueryExecutor for mysql_async::Pool {
         let mut conn = self.get_conn().await;
 
         match conn {
-            Err(e) => Either::Right(Err(eyre!(e))),
+            Err(e) => Either::Right(Err(anyhow!(e))),
             Ok(mut conn) => {
                 let store = STATEMENTS.read().await;
                 let map = (*store).get(&board_info.id).unwrap();
                 let statement = map.get(&Query::ThreadGet).unwrap();
-                let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| eyre!(e));
+                let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| anyhow!(e));
                 Either::Right(res)
             }
         }
@@ -336,7 +336,7 @@ impl QueryExecutor for mysql_async::Pool {
         let map = (*store).get(&board_id).unwrap();
         let statement = map.get(&Query::ThreadUpdateLastModified).unwrap();
         let res = conn.exec_drop(statement.as_str(), (last_modified, thread)).await;
-        res.map(|_| 0).map_err(|e| eyre!(e))
+        res.map(|_| 0).map_err(|e| anyhow!(e))
     }
 
     async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<u64>> {

@@ -1,4 +1,5 @@
 // use fomat_macros::{epintln, fomat, pintln};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 // use futures::io::AsyncReadExt;
@@ -9,7 +10,6 @@ use async_trait::async_trait;
 use futures::future::Either;
 // use std::{collections::HashSet, fmt::Debug};
 use crate::ThreadType;
-use color_eyre::eyre::Result;
 use std::fmt::Debug;
 use strum_macros::EnumIter;
 

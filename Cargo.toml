@@ -16,9 +16,6 @@ categories = ["command-line-utilities"]
 lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce number of codegen units to increase optimizations.
 
-[profile.dev.package.backtrace]
-opt-level = 3
-
 # Temporary
 [features]
 default = ["native-tls/vendored"]
@@ -53,7 +50,7 @@ serde_yaml = "0.8"
 # Tools
 url = { version = "2", features = ["serde"] }
 fomat-macros = "0.3"
-color-eyre  = { git = "https://github.com/yaahc/color-eyre" }
+anyhow = "1"
 strum = "0.19"
 strum_macros = "0.19"
 itertools = "0.9"

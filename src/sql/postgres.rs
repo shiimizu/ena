@@ -5,9 +5,9 @@ use crate::{
     config::{Board, Opt},
     ThreadType,
 };
+use anyhow::{anyhow, Result};
 use async_rwlock::RwLock;
 use async_trait::async_trait;
-use color_eyre::eyre::{eyre, Result};
 use futures::future::Either;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ static STATEMENTS: Lazy<RwLock<StatementStore>> = Lazy::new(|| RwLock::new(HashM
 impl DropExecutor for tokio_postgres::Client {
     async fn disconnect_pool(self) -> Result<()> {
         Ok(())
-        // self.disconnect().await.map_err(|e| eyre!(e))
+        // self.disconnect().await.map_err(|e| anyhow!(e))
     }
 }
 
@@ -40,7 +40,7 @@ impl QueryExecutor for tokio_postgres::Client {
     async fn boards_index_upsert(&self, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::BoardsIndexUpsert).unwrap();
-        self.execute(statement, &[&json, &last_modified]).await.map_err(|e| eyre!(e))
+        self.execute(statement, &[&json, &last_modified]).await.map_err(|e| anyhow!(e))
     }
 
     async fn board_is_valid(&self, board: &str) -> bool {
@@ -52,7 +52,7 @@ impl QueryExecutor for tokio_postgres::Client {
     async fn board_upsert(&self, board: &str) -> Result<u64> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::BoardUpsert).unwrap();
-        self.execute(statement, &[&board]).await.map_err(|e| eyre!(e))
+        self.execute(statement, &[&board]).await.map_err(|e| anyhow!(e))
     }
 
     async fn board_table_exists(&self, board: &str, opt: &Opt) -> Option<String> {
@@ -62,7 +62,7 @@ impl QueryExecutor for tokio_postgres::Client {
     async fn board_get(&self, board: &str) -> Result<u16> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::BoardGet).unwrap();
-        let res = self.query_one(statement, &[&board]).await.map_err(|e| eyre!(e));
+        let res = self.query_one(statement, &[&board]).await.map_err(|e| anyhow!(e));
         res.map(|row| row.get("id")).map(|res: Option<i16>| res.map(|v| v as u16).unwrap())
     }
 
@@ -75,13 +75,13 @@ impl QueryExecutor for tokio_postgres::Client {
     async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::BoardUpsertThreads).unwrap();
-        self.execute(statement, &[&(board_id as i16), &board, &json, &last_modified]).await.map_err(|e| eyre!(e))
+        self.execute(statement, &[&(board_id as i16), &board, &json, &last_modified]).await.map_err(|e| anyhow!(e))
     }
 
     async fn board_upsert_archive(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::BoardUpsertArchive).unwrap();
-        self.execute(statement, &[&(board_id as i16), &board, &json, &last_modified]).await.map_err(|e| eyre!(e))
+        self.execute(statement, &[&(board_id as i16), &board, &json, &last_modified]).await.map_err(|e| anyhow!(e))
     }
 
     async fn thread_get(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
@@ -90,7 +90,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let b = &(board_info.id as i16);
         let t = &(thread as i64);
         let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync)];
-        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
+        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
         Either::Left(res)
     }
 
@@ -101,7 +101,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let t = &(thread as i64);
         let s = &(start as i64);
         let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync), s as &(dyn ToSql + Sync)];
-        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
+        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
         Either::Left(res)
     }
 
@@ -125,7 +125,7 @@ impl QueryExecutor for tokio_postgres::Client {
     async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::ThreadUpdateLastModified).unwrap();
-        self.execute(statement, &[&last_modified, &(board_id as i16), &(thread as i64)]).await.map_err(|e| eyre!(e))
+        self.execute(statement, &[&last_modified, &(board_id as i16), &(thread as i64)]).await.map_err(|e| anyhow!(e))
     }
 
     async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Option<u64>> {
@@ -134,7 +134,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let b = &(board_id as i16);
         let t = &(thread as i64);
         let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync)];
-        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
+        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
         Either::Left(res)
     }
 
@@ -144,7 +144,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let b = &(board_info.id as i16);
         let t = &(thread as i64);
         let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync), json as &(dyn ToSql + Sync)];
-        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
+        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
         Either::Left(res)
     }
 
@@ -154,7 +154,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let b = &(board_id as i16);
         let s = &thread_type.as_str();
         let params = vec![s as &(dyn ToSql + Sync), b as &(dyn ToSql + Sync), json as &(dyn ToSql + Sync)];
-        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
+        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
         Either::Left(res)
     }
 
@@ -164,28 +164,28 @@ impl QueryExecutor for tokio_postgres::Client {
         // let params = vec![&(board_id as i16  as (dyn ToSql+Sync)), &(thread as i64 as (dyn ToSql+Sync))];
         let b = &(board_id as i16);
         let params = vec![b as &(dyn ToSql + Sync), json as &(dyn ToSql + Sync)];
-        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| eyre!(e));
+        let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
         Either::Left(res)
     }
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> bool {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::PostGetSingle).unwrap();
-        let res = self.query_opt(statement, &[&(board_id as i16), &(thread as i64), &(no as i64)]).await.map_err(|e| eyre!(e));
+        let res = self.query_opt(statement, &[&(board_id as i16), &(thread as i64), &(no as i64)]).await.map_err(|e| anyhow!(e));
         res.map(|r| r.is_some()).unwrap()
     }
 
     async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Option<mysql_async::Row>> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::PostGetMedia).unwrap();
-        let res = self.query_opt(statement, &[&hash_thumb]).await.map_err(|e| eyre!(e));
+        let res = self.query_opt(statement, &[&hash_thumb]).await.map_err(|e| anyhow!(e));
         Either::Left(res)
     }
 
     async fn post_upsert_media(&self, md5: &[u8], hash_full: Option<&[u8]>, hash_thumb: Option<&[u8]>) -> Result<u64> {
         let store = STATEMENTS.read().await;
         let statement = (*store).get(&Query::PostUpsertMedia).unwrap();
-        let res = self.execute(statement, &[&md5, &Some(hash_full), &Some(hash_thumb)]).await.map_err(|e| eyre!(e));
+        let res = self.execute(statement, &[&md5, &Some(hash_full), &Some(hash_thumb)]).await.map_err(|e| anyhow!(e));
         res
     }
 

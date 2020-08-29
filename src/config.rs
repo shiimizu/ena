@@ -1,4 +1,4 @@
-use color_eyre::eyre::{eyre, Result};
+use anyhow::{anyhow, Result};
 use fomat_macros::fomat;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -123,7 +123,7 @@ fn boards_cli_string(board: &str) -> Result<Board> {
         b.board = board;
         Ok(b)
     } else {
-        Err(eyre!("Invalid board format `{}`", board))
+        Err(anyhow!("Invalid board format `{}`", board))
     }
 }
 
@@ -133,10 +133,10 @@ fn threads_cli_string(thread: &str) -> Result<String> {
         let no = split[1].parse::<u64>();
         match no {
             Ok(n) => Ok(thread.into()),
-            Err(e) => Err(eyre!("Invalid thread `{}` for `/{}/{}`", split[1], split[0], split[1])),
+            Err(e) => Err(anyhow!("Invalid thread `{}` for `/{}/{}`", split[1], split[0], split[1])),
         }
     } else {
-        Err(eyre!("Invalid thread format `{}`", thread))
+        Err(anyhow!("Invalid thread format `{}`", thread))
     }
 }
 
@@ -320,7 +320,7 @@ impl Default for MediaStorage {
 }
 
 impl std::str::FromStr for MediaStorage {
-    type Err = color_eyre::Report;
+    type Err = anyhow::Error;
 
     fn from_str(storage: &str) -> Result<Self, Self::Err> {
         if storage == &MediaStorage::FlatFiles.to_string() {
@@ -330,7 +330,7 @@ impl std::str::FromStr for MediaStorage {
         } else if storage == &MediaStorage::SeaweedFS.to_string() {
             Ok(MediaStorage::SeaweedFS)
         } else {
-            Err(eyre!("Unknown MediaStorage: {}", storage))
+            Err(anyhow!("Unknown MediaStorage: {}", storage))
         }
     }
 }
@@ -354,7 +354,7 @@ impl From<&str> for MediaStorage {
         } else if storage == &MediaStorage::SeaweedFS.to_string() {
             MediaStorage::SeaweedFS
         } else {
-            panic!(eyre!("Unkown MediaStorage: {}", storage))
+            panic!(anyhow!("Unkown MediaStorage: {}", storage))
         }
     }
 }
@@ -518,11 +518,11 @@ pub fn get_opt() -> Result<Opt> {
                 } else {
                     let res = std::fs::read_to_string(config_file);
                     match res {
-                        Err(e) => { return Err(eyre!("Error accessing config `{}` [{}]", &config_file, e)); },
+                        Err(e) => { return Err(anyhow!("Error accessing config `{}` [{}]", &config_file, e)); },
                         Ok(_res) => { _res },
                     }
                 };
-                let mut o = if !content.trim().is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|eyre!("Error parsing config `{}` [{}]", &config_file, e)) } else { Err(eyre!("Error `{}` is empty.", &config_file)) };
+                let mut o = if !content.trim().is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|anyhow!("Error parsing config `{}` [{}]", &config_file, e)) } else { Err(anyhow!("Error `{}` is empty.", &config_file)) };
                 match o {
                     Err(e) => {
                         return Err(e);
@@ -648,11 +648,11 @@ pub fn get_opt() -> Result<Opt> {
     }
 
     if opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("mysql") {
-        return Err(eyre!("Asagi mode must be used with a MySQL database. Did you mean to disable --asagi ?"));
+        return Err(anyhow!("Asagi mode must be used with a MySQL database. Did you mean to disable --asagi ?"));
     }
 
     if !opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("postgresql") {
-        return Err(eyre!("Ena must be used with a PostgreSQL database. Did you mean to enable --asagi ?"));
+        return Err(anyhow!("Ena must be used with a PostgreSQL database. Did you mean to enable --asagi ?"));
     }
 
     // Patch concurrency limit

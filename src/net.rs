@@ -1,6 +1,6 @@
 use crate::config::Opt;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use color_eyre::eyre::{eyre, Result};
 #[allow(unused_imports)]
 use fomat_macros::{epintln, fomat, pintln};
 use reqwest::{
@@ -106,12 +106,12 @@ pub async fn create_client(origin: &str, opt: &Opt) -> Result<reqwest::Client> {
             for proxy in proxies_list {
                 cb = cb.proxy(proxy);
             }
-            cb.build().map_err(|e| eyre!(e))
+            cb.build().map_err(|e| anyhow!(e))
         } else {
-            create_client_builder(headers, ua).no_proxy().build().map_err(|e| eyre!(e))
+            create_client_builder(headers, ua).no_proxy().build().map_err(|e| anyhow!(e))
         }
     } else {
         // same as above
-        create_client_builder(headers, ua).no_proxy().build().map_err(|e| eyre!(e))
+        create_client_builder(headers, ua).no_proxy().build().map_err(|e| anyhow!(e))
     }
 }
