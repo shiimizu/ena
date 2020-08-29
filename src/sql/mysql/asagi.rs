@@ -332,47 +332,47 @@ mod tests {
 
     #[test]
     fn time_nyc() {
-        assert_eq!(Post::timestamp_nyc(1451972609), 1451954609);
-        assert_eq!(Post::timestamp_nyc(1452121812), 1452103812);
+        assert_eq!(1451954609, Post::timestamp_nyc(1451972609));
+        assert_eq!(1452103812, Post::timestamp_nyc(1452121812));
     }
 
     #[test]
     fn test_from_trait_into() {
+        let asagi_post = Post::default();
         let post = yotsuba::Post::default();
-        let mut asagi_post: Post = post.as_ref().into();
-        let default = Post::default();
-        asagi_post.op = false;
-        assert_eq!(asagi_post, default);
+        
+        let mut converted: Post = post.as_ref().into();
+        converted.op = false;
+        assert_eq!(asagi_post, converted);
     }
     #[test]
     fn test_from_trait_from() {
+        let asagi_post = Post::default();
         let post = yotsuba::Post::default();
-        let mut asagi_post: Post = Post::from(&post);
-        let default = Post::default();
-        asagi_post.op = false;
-        assert_eq!(asagi_post, default);
+        
+        let mut converted: Post = Post::from(&post);
+        converted.op = false;
+        assert_eq!(asagi_post, converted);
     }
     #[test]
     fn to_sql() {
         let post = yotsuba::Post::default();
-        let mut asagi_post: Post = Post::from(&post);
-        let default = Post::default();
-        asagi_post.op = false;
-        let s = asagi_post.to_sql();
-        pintln!((s));
+        let mut converted: Post = Post::from(&post);
+        converted.op = false;
+        
+        let converted_sql = converted.to_sql();
         let target = "(0,0,0,0,false,0,0,NULL,0,0,NULL,0,0,0,NULL,NULL,false,0,\'N\',NULL,NULL,NULL,NULL,NULL,NULL,false,false,NULL,NULL,NULL)";
-        assert_eq!(s, target.to_string());
+        assert_eq!(target, &converted_sql);
     }
+    
     #[test]
     fn post_comment_clean() {
         let mut post = yotsuba::Post::default();
         post.com = Some(r##"<a href="#p271855389" class="quotelink">>>271855389</a><br><span class="quote">>present day cowboys</span><br>No, the present day cowboys are still out there on ranches doing actual cowboy work."##.to_string());
-        let mut asagi_post: Post = Post::from(&post);
-        let s = post.com.unwrap();
-        let ss = s.as_str().clean_full().to_string();
-        pintln!((ss));
-        let target = ">>271855389\n>present day cowboys\nNo, the present day cowboys are still out there on ranches doing actual cowboy work.";
-        assert_eq!(asagi_post.comment.as_ref().unwrap(), &target.to_string());
+        let mut converted: Post = Post::from(&post);
+        let comment  = converted.comment.as_ref().map(|com| com.as_str());
+        let target = Some(">>271855389\n>present day cowboys\nNo, the present day cowboys are still out there on ranches doing actual cowboy work.");
+        assert_eq!(target, comment);
     }
 }
 
