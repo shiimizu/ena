@@ -1,5 +1,7 @@
 use super::clean::*;
 use crate::yotsuba;
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono_tz::America::New_York;
 use fomat_macros::fomat;
 use format_sql_query::QuotedData;
 use serde::{Deserialize, Serialize};
@@ -95,7 +97,7 @@ impl From<&yotsuba::Post> for Post {
             subnum:            0,
             thread_num:        if post.resto == 0 { post.no } else { post.resto },
             op:                (post.resto == 0),
-            timestamp:         post.time,
+            timestamp:         if post.time == 0 { 0 } else { Self::timestamp_nyc(post.time) },
             timestamp_expired: 0,
             preview_orig:      post.tim.map(|tim| fomat!((tim)"s.jpg")),
             preview_w:         post.tn_w.unwrap_or_default(),
@@ -228,6 +230,12 @@ impl Post {
             ")"
         )
     }
+
+    pub fn timestamp_nyc(time: u64) -> u64 {
+        let dt = Utc.timestamp(time as i64, 0);
+        let ts = dt.with_timezone(&New_York).naive_local().timestamp();
+        ts as u64
+    }
 }
 
 use std::collections::HashMap;
@@ -321,6 +329,12 @@ mod tests {
     use super::*;
     use fomat_macros::{epintln, fomat, pintln};
     use pretty_assertions::{assert_eq, assert_ne};
+
+    #[test]
+    fn time_nyc() {
+        assert_eq!(Post::timestamp_nyc(1451972609), 1451954609);
+        assert_eq!(Post::timestamp_nyc(1452121812), 1452103812);
+    }
 
     #[test]
     fn test_from_trait_into() {
