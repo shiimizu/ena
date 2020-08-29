@@ -549,7 +549,8 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 
         // Startup is to determine whether to get combined or modified threads
         let mut startup = true;
-        let mut res = Err(anyhow::anyhow!("Temporary for download_board!"));
+        let mut res = None;
+
         loop {
             let now = Instant::now();
 
@@ -586,14 +587,14 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                     // }
 
                     let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
-                    res = threads;
+                    res = threads.ok();
                     // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
                     archive.unwrap();
                 } else {
                     if _board.with_threads {
-                        res = self.download_board(&_board, ThreadType::Threads, startup).await;
+                        res = self.download_board(&_board, ThreadType::Threads, startup).await.ok();
                     } else if _board.with_archives {
-                        res = self.download_board(&_board, ThreadType::Archive, startup).await;
+                        res = self.download_board(&_board, ThreadType::Archive, startup).await.ok();
                     } else {
                         unreachable!()
                     }
@@ -608,7 +609,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
             // FIXME: elpased() silent panics!
             let interval = {
                 if _board.interval_dynamic {
-                    if let Ok(st) = res {
+                    if let Some(st) = res {
                         if st == StatusCode::OK {
                             // reset
                             rate_ref = rate.by_ref();
