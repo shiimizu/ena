@@ -708,20 +708,14 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                 Either::Left(rowstream) => match rowstream {
                                     Ok(rows) => {
                                         futures::pin_mut!(rows);
-                                        let mut r = rows
+                                        let mut fut = rows
                                             .map(|row| {
                                                 let no: i64 = row.unwrap().get(0);
                                                 self.download_thread(board_info, no as u64, thread_type)
                                             })
-                                            .collect::<Vec<_>>()
-                                            .await;
-
-                                        if r.len() > 0 {
-                                            let mut stream_of_futures = stream::iter(r);
-                                            let mut fut = stream_of_futures.buffer_unordered(self.opt.limit as usize);
-                                            while let Some(res) = fut.next().await {
-                                                res.unwrap();
-                                            }
+                                            .buffer_unordered(self.opt.limit as usize);
+                                        while let Some(res) = fut.next().await {
+                                            res.unwrap();
                                         }
                                     }
                                     Err(e) => {
