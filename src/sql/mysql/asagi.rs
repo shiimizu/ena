@@ -129,19 +129,24 @@ impl From<&yotsuba::Post> for Post {
             spoiler:           post.spoiler.map_or_else(|| false, |v| v == 1),
             deleted:           false,
             capcode:           {
-                fomat!(
-                    if let Some(cap) = &post.capcode {
-                        if cap=="manager"||cap=="Manager" { "G" } else {
-                            if let Some(c) = cap.chars().nth(0) { (c.to_uppercase()) } else { "N" } 
+                fomat!(if let Some(cap) = &post.capcode {
+                    if cap == "manager" || cap == "Manager" {
+                        "G"
+                    } else {
+                        if let Some(c) = cap.chars().nth(0) {
+                            (c.to_uppercase())
+                        } else {
+                            "N"
                         }
                     }
-                    else { "N" }
-                )
+                } else {
+                    "N"
+                })
             },
             email:             None,
-            name:              post.name.as_ref().map(|s| s.as_str().clean().to_string()),
+            name:              post.name.as_ref().map(|s| s.as_str().clean().trim().to_string()),
             trip:              post.trip.clone(),
-            title:             post.sub.as_ref().map(|s| s.as_str().clean().to_string()),
+            title:             post.sub.as_ref().map(|s| s.as_str().clean().trim().to_string()),
             comment:           if post.sticky.unwrap_or_else(|| 0) == 1 && post.com.is_some() {
                 let com = post.com.as_ref().unwrap();
                 if !com.is_empty() {
@@ -165,71 +170,11 @@ impl From<&yotsuba::Post> for Post {
             poster_hash:       post.id.as_ref().map(|s| if s == "Developer" { "Dev".into() } else { s.clone() }),
             poster_country:    post.country.as_ref().filter(|&v| !(v == "XX" || v == "A1")).map(|s| s.into()),
             exif:              {
-                if let Some(extra_json) = post.extra.as_ref() {
-                    // Add to `exif`
-                    let mut extra_json_mut = extra_json.clone();
-                    let mut _exif = extra_json_mut.as_object_mut().unwrap();
-                    if _exif.len() > 0 {
-                        if post.unique_ips.is_some() || post.since4pass.is_some() || post.troll_country.is_some() || post.archived_on.is_some() {
-                            // let mut extra_json_mut = extra_json.clone();
-                            if let Some(unique_ips) = post.unique_ips {
-                                if unique_ips > 0 {
-                                    _exif.insert(String::from("uniqueIps"), fomat!((unique_ips)).into());
-                                }
-                            }
-                            if let Some(since4pass) = post.since4pass {
-                                if since4pass > 0 {
-                                    _exif.insert(String::from("since4pass"), since4pass.into());
-                                }
-                            }
-                            if let Some(troll_country) = &post.troll_country {
-                                if !troll_country.is_empty() {
-                                    _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
-                                }
-                            }
-                            if let Some(archived_on) = &post.archived_on {
-                                if *archived_on > 0 {
-                                    _exif.insert(String::from("archivedOn"), fomat!((archived_on)).into());
-                                }
-                            }
-                            let extra_string: String = serde_json::to_string(&extra_json_mut).unwrap();
-                            Some(extra_string)
-                        } else {
-                            let extra_string: String = serde_json::to_string(&extra_json_mut).unwrap();
-                            Some(extra_string)
-                        }
-                    } else {
-                        None
-                    }
+                let exif = Exif::parse(&post);
+                if exif.is_empty() {
+                    None
                 } else {
-                    // Go here if there's no extra keys
-                    if post.unique_ips.is_some() || post.since4pass.is_some() || post.troll_country.is_some() || post.archived_on.is_some() {
-                        let mut _exif = serde_json::Map::new();
-                        if let Some(unique_ips) = post.unique_ips {
-                            if unique_ips > 0 {
-                                _exif.insert(String::from("uniqueIps"), fomat!((unique_ips)).into());
-                            }
-                        }
-                        if let Some(since4pass) = post.since4pass {
-                            if since4pass > 0 {
-                                _exif.insert(String::from("since4pass"), since4pass.into());
-                            }
-                        }
-                        if let Some(troll_country) = &post.troll_country {
-                            if !troll_country.is_empty() {
-                                _exif.insert(String::from("trollCountry"), troll_country.as_str().into());
-                            }
-                        }
-                        if let Some(archived_on) = &post.archived_on {
-                            if *archived_on > 0 {
-                                _exif.insert(String::from("archivedOn"), fomat!((archived_on)).into());
-                            }
-                        }
-                        let extra_string: String = serde_json::to_string(&_exif).unwrap();
-                        Some(extra_string)
-                    } else {
-                        None
-                    }
+                    Some(serde_json::to_string(&exif).unwrap())
                 }
             },
         }
@@ -282,6 +227,92 @@ impl Post {
             if let Some(exif) = self.exif.as_ref() { (QuotedData(exif)) } else { "NULL" }
             ")"
         )
+    }
+}
+
+use std::collections::HashMap;
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct Exif {
+    #[serde(rename = "archivedOn", skip_serializing_if = "Option::is_none")]
+    archived_on:   Option<String>,
+    #[serde(rename = "uniqueIps", skip_serializing_if = "Option::is_none")]
+    unique_ips:    Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    since4pass:    Option<String>,
+    #[serde(rename = "trollCountry", skip_serializing_if = "Option::is_none")]
+    troll_country: Option<String>,
+    #[serde(rename = "Time", skip_serializing_if = "Option::is_none")]
+    time:          Option<String>,
+    #[serde(rename = "Painter", skip_serializing_if = "Option::is_none")]
+    painter:       Option<String>,
+    #[serde(rename = "Source", skip_serializing_if = "Option::is_none")]
+    source:        Option<String>,
+
+    #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+    exif_data: HashMap<String, String>,
+}
+
+use once_cell::sync::Lazy;
+use regex::{Regex, RegexBuilder};
+static DRAW_RE: Lazy<Regex> = Lazy::new(|| {
+    RegexBuilder::new("<small><b>Oekaki \\s Post</b> \\s \\(Time: \\s (.*?), \\s Painter: \\s (.*?)(?:, \\s Source: \\s (.*?))?(?:, \\s Animation: \\s (.*?))?\\)</small>")
+        .dot_matches_new_line(true)
+        .ignore_whitespace(true)
+        .build()
+        .unwrap()
+});
+static EXIF_RE: Lazy<Regex> = Lazy::new(|| RegexBuilder::new("<table \\s class=\"exif\"[^>]*>(.*)</table>").dot_matches_new_line(true).ignore_whitespace(true).build().unwrap());
+static EXIF_DATA_RE: Lazy<Regex> = Lazy::new(|| RegexBuilder::new("<tr><td>(.*?)</td><td>(.*?)</td></tr>").dot_matches_new_line(true).ignore_whitespace(true).build().unwrap());
+
+impl Exif {
+    fn parse(post: &yotsuba::Post) -> Self {
+        let mut exif_data = HashMap::new();
+        let mut time = None;
+        let mut painter = None;
+        let mut source = None;
+        if let Some(text) = post.com.as_ref() {
+            if let Some(exif) = EXIF_RE.captures(text.as_str()) {
+                let data = exif[1].replace("<tr><td colspan=\"2\"></td></tr><tr>", "");
+                for cap in EXIF_DATA_RE.captures_iter(&data) {
+                    exif_data.insert(String::from(&cap[1]), String::from(&cap[2]));
+                }
+            }
+            if let Some(draw) = DRAW_RE.captures(text.as_str()) {
+                time = Some(String::from(&draw[1]));
+                painter = Some(String::from(&draw[2]));
+                source = draw.get(3).map(|source| source.as_str().clean_full().to_string())
+            }
+        }
+
+        if let Some(_extra) = post.extra.as_ref().and_then(|v| v.as_object()) {
+            for (k, v) in _extra {
+                if let Ok(val_str) = serde_json::to_string(v) {
+                    exif_data.insert(k.clone(), val_str);
+                }
+            }
+        }
+
+        Self {
+            archived_on: post.archived_on.map(|timestamp| timestamp.to_string()),
+            unique_ips: post.unique_ips.and_then(|ips| if ips == 0 { None } else { Some(ips.to_string()) }),
+            since4pass: post.since4pass.and_then(|year| if year == 0 { None } else { Some(year.to_string()) }),
+            troll_country: post.troll_country.clone(),
+            time,
+            painter,
+            source,
+            exif_data,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.archived_on.is_none()
+            && self.unique_ips.is_none()
+            && self.since4pass.is_none()
+            && self.troll_country.is_none()
+            && self.time.is_none()
+            && self.painter.is_none()
+            && self.source.is_none()
+            && self.exif_data.is_empty()
     }
 }
 

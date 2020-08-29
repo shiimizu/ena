@@ -10,6 +10,7 @@ pub trait Clean {
 
 impl Clean for &str {
     fn clean(&self) -> Cow<str> {
+        // This gets trimmed by the caller
         html_escape::decode_html_entities(self)
     }
 
@@ -95,11 +96,12 @@ impl Clean for &str {
 
         let s = s.as_ref();
         let s = s.clean();
+        let s = s.trim();
 
-        if *self == s.as_ref() {
+        if *self == s {
             Cow::from(*self)
         } else {
-            Cow::from(s.into_owned())
+            Cow::from(s.to_string())
         }
     }
 }
@@ -152,17 +154,17 @@ static REPLACEMENTS: Lazy<[(Regex, &str); 23]> = Lazy::new(|| {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sql::mysql::asagi::Exif;
     use fomat_macros::{epintln, fomat, pintln};
     use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
     fn simple_clean() {
-        let s = "Test &amp; Clean";
+        let s = "  Test &amp; Clean  ";
         let ss = s.clean();
-        pintln!((ss));
-        assert_eq!(ss.as_ref(), "Test & Clean");
+        assert_eq!(ss.trim(), "Test & Clean");
     }
-    
+
     #[test]
     fn g_sticky() {
         let com = "This board is for the discussion of technology and related topics.<br> <br> \nReminder that instigating OR participating in flame/brand wars will result in a ban.<br>\nTech support threads should be posted to <a href=\"/wsr/\" class=\"quotelink\"><a href=\"//boards.4channel.org/wsr/\" class=\"quotelink\">&gt;&gt;&gt;/wsr/</a></a><br> \nCryptocurrency discussion belongs on <a href=\"/biz/\" class=\"quotelink\"><a href=\"//boards.4channel.org/biz/\" class=\"quotelink\">&gt;&gt;&gt;/biz/</a></a><br> <br> To use the Code tag, book-end your body of code with: [co\u{00ad}de] and [/co\u{00ad}de]<br> <br> The /g/ Wiki: <a href=\"https://wiki.installgentoo.com/\">https://wiki.installgentoo.com/</a>".to_string();
