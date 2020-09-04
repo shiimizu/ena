@@ -32,8 +32,8 @@ use std::iter::{Chain, Repeat, StepBy, Take};
 /// rate.next(); // 20
 /// ```
 pub fn refresh_rate(initial: u64, step_by: usize, take: usize) -> Chain<Take<StepBy<std::ops::RangeFrom<u64>>>, Repeat<u64>> {
-    let base = (initial..).step_by(step_by).take(take);
-    let repeat = std::iter::repeat(base.clone().last().unwrap());
+    let mut base = (initial..).step_by(step_by).take(take);
+    let repeat = std::iter::repeat(base.by_ref().last().unwrap());
     let ratelimit = base.chain(repeat);
     ratelimit
 }

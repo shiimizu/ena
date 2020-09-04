@@ -11,13 +11,13 @@ use std::fmt::Debug;
 
 #[async_trait]
 pub trait HttpClient: Sync + Send {
-    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: &Option<String>) -> Result<(StatusCode, String, Vec<u8>)>;
+    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: Option<&String>) -> Result<(StatusCode, String, Vec<u8>)>;
 }
 
 /// Implementation of `HttpClient` for `reqwest`.
 #[async_trait]
 impl HttpClient for Client {
-    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: &Option<String>) -> Result<(StatusCode, String, Vec<u8>)> {
+    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: Option<&String>) -> Result<(StatusCode, String, Vec<u8>)> {
         // let url: &str = url.into();
         // let _url = url.clone();
         let res = {

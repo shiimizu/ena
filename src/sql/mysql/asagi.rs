@@ -331,13 +331,13 @@ mod tests {
     #[test]
     fn prev_dir_none() {
         let pat = Regex::new("(\\d+?)(\\d{2})\\d{0,3}$").unwrap();
-        let thread = 1;
+        let thread = 2;
         let tstr = thread.to_string();
         let captures = pat.captures(&tstr);
         if let Some(cap) = &captures {
             let a = &cap[1];
             let b = &cap[2];
-            println!("{:04?} {:02?}", a, b);
+            println!("{:04?} {:02?}", a.parse::<u8>(), b.parse::<u8>());
             pintln!("a:"(a)" b: "(b));
         }
         assert_eq!(true, captures.is_none());
@@ -345,6 +345,22 @@ mod tests {
 
     #[test]
     fn prev_dir_some() {
+        let pat = Regex::new("(\\d+?)(\\d{2})\\d{0,3}$").unwrap();
+        let thread = 6791207;
+        let tstr = thread.to_string();
+        let captures = pat.captures(&tstr);
+        if let Some(cap) = &captures {
+            let a = &cap[1];
+            let b = &cap[2];
+            // println!("{:04?} {:02?}", a.parse::<u8>(), b.parse::<u8>());
+            assert_eq!("0067", format!("{:04}", a.parse::<u16>().unwrap()));
+            assert_eq!("91", format!("{:02}", b.parse::<u8>().unwrap()));
+        }
+        assert_eq!(true, captures.is_some());
+    }
+
+    #[test]
+    fn prev_dir_some2() {
         let pat = Regex::new("(\\d+?)(\\d{2})\\d{0,3}$").unwrap();
         let thread = 128008945;
         let tstr = thread.to_string();

@@ -106,48 +106,52 @@ impl Clean for &str {
     }
 }
 
+fn regex(re: &str) -> Regex {
+    Regex::new(re).unwrap()
+}
+
 static REPLACEMENTS: Lazy<[(Regex, &str); 23]> = Lazy::new(|| {
     [
         // Admin-Mod-Dev quotelinks
-        (Regex::new("<span class=\"capcodeReplies\"><span style=\"font-size: smaller;\"><span style=\"font-weight: bold;\">(?:Administrator|Moderator|Developer) Repl(?:y|ies):</span>.*?</span><br></span>").unwrap(), ""),
+        (regex("<span class=\"capcodeReplies\"><span style=\"font-size: smaller;\"><span style=\"font-weight: bold;\">(?:Administrator|Moderator|Developer) Repl(?:y|ies):</span>.*?</span><br></span>"), ""),
         // Non-public tags
-        (Regex::new("\\[(/?(banned|moot|spoiler|code))]").unwrap(), "[$1:lit]"),
+        (regex("\\[(/?(banned|moot|spoiler|code))]"), "[$1:lit]"),
         // Comment too long, also EXIF tag toggle
-        (Regex::new("<span class=\"abbr\">.*?</span>").unwrap(), ""),
+        (regex("<span class=\"abbr\">.*?</span>"), ""),
         // EXIF data
-        (Regex::new("<table class=\"exif\"[^>]*>.*?</table>").unwrap(), ""),
+        (regex("<table class=\"exif\"[^>]*>.*?</table>"), ""),
         // DRAW data
-        (Regex::new("<br><br><small><b>Oekaki Post</b>.*?</small>").unwrap(), ""),
+        (regex("<br><br><small><b>Oekaki Post</b>.*?</small>"), ""),
         // Banned/Warned text
-        (Regex::new("<(?:b|strong) style=\"color:\\s*red;\">(.*?)</(?:b|strong)>").unwrap(), "[banned]$1[/banned]"),
+        (regex("<(?:b|strong) style=\"color:\\s*red;\">(.*?)</(?:b|strong)>"), "[banned]$1[/banned]"),
         // moot text
-        (Regex::new("<div style=\"padding: 5px;margin-left: \\.5em;border-color: #faa;border: 2px dashed rgba\\(255,0,0,\\.1\\),border-radius: 2px\">(.*?)</div>").unwrap(), "[moot]$1[/moot]"),
+        (regex("<div style=\"padding: 5px;margin-left: \\.5em;border-color: #faa;border: 2px dashed rgba\\(255,0,0,\\.1\\),border-radius: 2px\">(.*?)</div>"), "[moot]$1[/moot]"),
         // fortune text
-        (Regex::new("<span class=\"fortune\" style=\"color:(.*?)\"><br><br><b>(.*?)</b></span>").unwrap(), "\n\n[fortune color=\"$1\"]$2[/fortune]"),
+        (regex("<span class=\"fortune\" style=\"color:(.*?)\"><br><br><b>(.*?)</b></span>"), "\n\n[fortune color=\"$1\"]$2[/fortune]"),
         // bold text
-        (Regex::new("<(?:b|strong)>(.*?)</(?:b|strong)>").unwrap(), "[b]$1[/b]"),
+        (regex("<(?:b|strong)>(.*?)</(?:b|strong)>"), "[b]$1[/b]"),
         // code tags
-        (Regex::new("<pre[^>]*>").unwrap(), "[code]"),
-        (Regex::new("</pre>").unwrap(), "[/code]"),
+        (regex("<pre[^>]*>"), "[code]"),
+        (regex("</pre>"), "[/code]"),
         // math tags
-        (Regex::new("<span class=\"math\">(.*?)</span>").unwrap(), "[math]$1[/math]"),
-        (Regex::new("<div class=\"math\">(.*?)</div>").unwrap(), "[eqn]$1[/eqn]"),
+        (regex("<span class=\"math\">(.*?)</span>"), "[math]$1[/math]"),
+        (regex("<div class=\"math\">(.*?)</div>"), "[eqn]$1[/eqn]"),
         // > implying I'm quoting someone
-        (Regex::new("<font class=\"unkfunc\">(.*?)</font>").unwrap(), "$1"),
-        (Regex::new("<span class=\"quote\">(.*?)</span>").unwrap(), "$1"),
-        (Regex::new("<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>").unwrap(), "$1"),
+        (regex("<font class=\"unkfunc\">(.*?)</font>"), "$1"),
+        (regex("<span class=\"quote\">(.*?)</span>"), "$1"),
+        (regex("<span class=\"(?:[^\"]*)?deadlink\">(.*?)</span>"), "$1"),
         // Links
-        (Regex::new("<a[^>]*>(.*?)</a>").unwrap(), "$1"),
+        (regex("<a[^>]*>(.*?)</a>"), "$1"),
         // old spoilers
-        (Regex::new("<span class=\"spoiler\"[^>]*>(.*?)</span>").unwrap(), "[spoiler]$1[/spoiler]"),
+        (regex("<span class=\"spoiler\"[^>]*>(.*?)</span>"), "[spoiler]$1[/spoiler]"),
         // ShiftJIS
-        (Regex::new("<span class=\"sjis\">(.*?)</span>").unwrap(), "[shiftjis]$1[/shiftjis]"),
+        (regex("<span class=\"sjis\">(.*?)</span>"), "[shiftjis]$1[/shiftjis]"),
         // new spoilers
-        (Regex::new("<s>").unwrap(), "[spoiler]"),
-        (Regex::new("</s>").unwrap(), "[/spoiler]"),
+        (regex("<s>"), "[spoiler]"),
+        (regex("</s>"), "[/spoiler]"),
         // new line/wbr
-        (Regex::new("<br\\s*/?>").unwrap(), "\n"),
-        (Regex::new("<wbr>").unwrap(), ""),
+        (regex("<br\\s*/?>"), "\n"),
+        (regex("<wbr>"), ""),
     ]
 });
 
