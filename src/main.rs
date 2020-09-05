@@ -40,7 +40,7 @@ pub mod config;
 pub mod log;
 pub mod net;
 pub mod yotsuba;
-use crate::log::try_init_timed_custom_env;
+// use crate::log::try_init_timed_custom_env;
 use config::*;
 use net::*;
 use yotsuba::update_post_with_extra;
@@ -154,11 +154,11 @@ fn main() -> Result<()> {
     //         std::env::set_var("RUST_BACKTRACE", "full");
     //     }
     // }
-    if std::env::var("ENA_LOG").is_err() {
-        std::env::set_var("ENA_LOG", format!("{}=info", env!("CARGO_PKG_NAME")));
-    }
-    try_init_timed_custom_env("ENA_LOG").unwrap();
-
+    // if std::env::var("ENA_LOG").is_err() {
+    //     std::env::set_var("ENA_LOG", format!("{}=info", env!("CARGO_PKG_NAME")));
+    // }
+    
+    log::init(::log::LevelFilter::Info).unwrap();
     let num_threads = num_cpus::get().max(1);
 
     // Run the thread-local and work-stealing executor on a thread pool.

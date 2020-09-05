@@ -1,92 +1,80 @@
-use fomat_macros::witeln;
-use std::{
-    fmt,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+//! Better Logging
+//!
+//! Supports color and redirection to stdout and stderr
 
-use env_logger::{
-    fmt::{Color, Style, StyledValue},
-    Builder,
-};
-use log::Level;
+use ansiform::ansi;
+use chrono::{SecondsFormat, Utc};
+#[allow(unused_imports)]
+use fomat_macros::{epintln, fomat, pintln};
+use log::{Level, Metadata, Record, SetLoggerError, LevelFilter};
 
-/// Initialized the global logger with a timed pretty env logger, with a custom variable name.
-///
-/// This should be called early in the execution of a Rust program, and the
-/// global logger may only be initialized once. Future initialization attempts
-/// will return an error.
-///
-/// # Errors
-///
-/// This function fails to set the global logger if one has already been set.
-pub fn try_init_timed_custom_env(environment_variable_name: &str) -> Result<(), log::SetLoggerError> {
-    let mut builder = formatted_timed_builder();
+static LOGGER: Logger =  Logger;
 
-    if let Ok(s) = ::std::env::var(environment_variable_name) {
-        builder.parse_filters(&s);
+pub fn init(level: LevelFilter) -> Result<(), SetLoggerError> {
+    log::set_logger(&LOGGER).map(|()| ::log::set_max_level(level))
+}
+
+pub struct Logger;
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= Level::Trace
     }
 
-    builder.try_init()
-}
-
-/// Returns a `env_logger::Builder` for further customization.
-///
-/// This method will return a colored and time formatted `env_logger::Builder`
-/// for further customization. Refer to env_logger::Build crate documentation
-/// for further details and usage.
-pub fn formatted_timed_builder() -> Builder {
-    let mut builder = Builder::new();
-
-    builder.format(|f, record| {
-        use std::io::Write;
-        let target = record.target();
-        let max_width = max_target_width(target);
-
-        let mut style = f.style();
-        let level = colored_level(&mut style, record.level());
-
-        let mut style = f.style();
-        let target = style.set_bold(true).value(Padded { value: target, width: max_width });
-
-        let time = f.timestamp_millis();
-
-        witeln!(
-            f,
-            " "(time)" "(level)" "(target)" > "(record.args())
-        )
-    });
-
-    builder
-}
-
-fn colored_level<'a>(style: &'a mut Style, level: Level) -> StyledValue<'a, &'static str> {
-    match level {
-        Level::Trace => style.set_color(Color::Magenta).value("TRACE"),
-        Level::Debug => style.set_color(Color::Blue).value("DEBUG"),
-        Level::Info => style.set_color(Color::Green).value("INFO "),
-        Level::Warn => style.set_color(Color::Yellow).value("WARN "),
-        Level::Error => style.set_color(Color::Red).value("ERROR"),
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            let level = record.level();
+            // let utc = Utc::now().to_rfc2822();
+            let utc = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+            match level {
+                Level::Warn => epintln!(
+                    {
+                    ansi!("{} {:;yellow}  {} > {}"),
+                    utc,
+                    level,
+                    record.module_path().unwrap(),
+                    record.args()
+                    }
+                ),
+                Level::Error => epintln!(
+                    {
+                    ansi!("{} {:;red} {} > {}"),
+                    utc,
+                    level,
+                    record.module_path().unwrap(),
+                    record.args()
+                    }
+                ),
+                Level::Info => pintln!(
+                    {
+                    ansi!("{} {:;blue}  {} > {}"),
+                    utc,
+                    level,
+                    record.module_path().unwrap(),
+                    record.args()
+                    }
+                ),
+                Level::Debug => pintln!(
+                    {
+                    ansi!("{} {:;green} {} > {}"),
+                    utc,
+                    level,
+                    record.module_path().unwrap(),
+                    record.args()
+                    }
+                ),
+                Level::Trace => pintln!(
+                    {
+                    ansi!("{} {:;magenta} {} > {}"),
+                    utc,
+                    level,
+                    record.module_path().unwrap(),
+                    record.args()
+                    }
+                ),
+            };
+        }
     }
-}
 
-struct Padded<T> {
-    value: T,
-    width: usize,
-}
-impl<T: fmt::Display> fmt::Display for Padded<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{: <width$}", self.value, width = self.width)
-    }
-}
-
-static MAX_MODULE_WIDTH: AtomicUsize = AtomicUsize::new(0);
-
-fn max_target_width(target: &str) -> usize {
-    let max_width = MAX_MODULE_WIDTH.load(Ordering::Relaxed);
-    if max_width < target.len() {
-        MAX_MODULE_WIDTH.store(target.len(), Ordering::Relaxed);
-        target.len()
-    } else {
-        max_width
-    }
+    fn flush(&self) {}
 }
