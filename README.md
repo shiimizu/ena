@@ -186,7 +186,7 @@ Respecting the first rule will get you very far.
    * The `Last-Modified` from the HTTP header is then stored in the database as a timestamp. Before fetching the threads list, this is checked so to not download the list again if it's not modified.
 
 1. On startup of the program, threads are combined between in-db (if any) and received so as to get the **union** of both.  
-   After the initial startup, all subsequent list of threads are the result of a **symmetric difference** between in-db and recieved threads,  
+   After the initial startup, all subsequent list of threads are the result of a **symmetric-difference** between in-db and received threads,  
    e.g only the modified threads such as deleted/updated/added/modified, resulting in a lower amount of threads to be processed.
 
 2. Then each thread is fetched concurrently (based on `limit` setting).
@@ -202,9 +202,9 @@ Respecting the first rule will get you very far.
 * Added `archivedOn` to `exif`
 * Added `boards` table to cache `threads.json`|`archive.json` for state save restore.
 * Fixed updating `sticky` and `locked` for threads in triggers
-* Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
 * More accurate `deleted` posts due to upserts
 * Cleaner sticky comments
+* Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
 * Any new changes for posts made by this implementation will overwrite the entry in your database due to upserts. 
 
 
