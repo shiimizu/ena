@@ -48,7 +48,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 
 **This development branch is currently undergoing active breaking changes towards ena v0.8.0. Do not use in production. See the current [status](#Status).**
 
-## Changes in v0.8.0 from v0.7.x
+## Tracking changes
 <!-- * 🚧 Fix getting all 4 variants of thumbnails 🚧 -->
 * Better last modified detection
 * Ability to use `-tail` json
@@ -57,15 +57,18 @@ Low resource and high performance archiver to save posts, images and all relevan
 * Faster CTRL+C
 * Actual Asagi support (support for legacy mysql)
 * More options, flags, and customization
+* Improved logging. Outputs to both `stdout` and `stderr`.
 * Switch to YAML
 * Lives up to the description by being able to get threads and/or boards in a oneshot fashion
 * Reduce postgres min version. Probably >= `9` now.
+* Now gets the correct number of thumbnails (op & reply) *
 * **Database schema changes. Now one big `posts` table instead of seperated by board.**
-* No longer reports the current position/total since things are fetched concurrently
+* No longer reports the current position/total while logging since things are fetched concurrently
 * Media fetching is no longer done in a background thread
 * Now relying on md5 check before downloading media, which means no sha256sum collision detection
-* Introduction of `unsafe` to clean post comments for Asagi.
+* Introduction of `unsafe` to clean post comments for Asagi.  
 
+<small>* in progress</small>
 
 ## Usage
 
@@ -117,12 +120,12 @@ OPTIONS:
 ```
 
 ## Features
-* `archive` threads
+* Ability to get `archive` threads
 * Save bandwidth. Uses `If-Modified-Since` and `Last-Modified`. 
 * Save even more bandwidth with the option of using `-tail.json`.
-* State save restore. Resume right where you left off.
+* State save restore. Resume right where you left off. No-frills updating to new releases.
 * Poll boards/threads or oneshot
-* Dynamic thread refresh rate
+* Dynamic (consecutively increasing) thread refresh rate
 * Retain `unique_ips` after archived
 * Proxies
 * TimescaleDB support
@@ -156,30 +159,17 @@ OPTIONS:
     ```  
     Build artifacts can be found in `target/release/`  
 
-## Reading the output
-Generally, the ouput looks something like:  
-
-```
-({function}): (threads|archive) /{board}/{thread} {Response-Last-Modified} | {In-Database-Last-Modified} | {NEW|UPSERTED|DELETED}
-```  
-
-If you see a line it means the thread/post was modified and reported back to the screen.  
-The two datetimes are used to compare the times of modification.
-
-
 ## Status  
 Core functionality works. There are things that could be improved on:  
 * Things are a bit fragile at the moment as the codebase is littered with `unwrap()` (for debugging) and can panic if any one of them sets off. (This will be cleaned up as things are finalized)
-  * Also panics on no network connection. Workaround currently is to set a really high `retry_attempts`.
-* Logging could be better
 * Postgres side
   * Currently not getting the correct amount of media files.  
         Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
 
 ## Asagi drop-in status
-Core functionality works.
+Core functionality works.  
 TODO:
-- [ ] Add `utc_timestamp`
+- [ ] Add optional `utc_timestamp`
 - [ ] Fix `prevDirStructure`
 - [ ] Use correct permissions when creating web-dirs
 
@@ -210,6 +200,7 @@ Respecting the first rule will get you very far.
 ## Asagi specific implementation changes
 * Added any future columns to `exif`
 * Added `archivedOn` to `exif`
+* Added `boards` table to cache `threads.json`|`archive.json` for state save restore.
 * Fixed updating `sticky` and `locked` for threads in triggers
 * Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
 * More accurate `deleted` posts due to upserts
