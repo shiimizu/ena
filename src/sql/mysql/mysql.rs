@@ -243,10 +243,28 @@ impl QueryExecutor for mysql_async::Pool {
     }
 
     async fn thread_upsert(&self, board_info: &Board, thread_json: &serde_json::Value) -> Result<u64> {
-        let posts: Vec<yotsuba::Post> = serde_json::from_value(thread_json["posts"].clone())?;
+        let mut posts: Vec<yotsuba::Post> = serde_json::from_value(thread_json["posts"].clone())?;
+        // TODO: This should never happen
         if posts.len() == 0 {
             return Ok(0);
         }
+        
+        // Preserve `unique_ips` when a thread is archived
+        if posts[0].unique_ips.is_none() {
+            let mut conn = self.get_conn().await?;
+            let store = STATEMENTS.read().await;
+            let stmt_post_get_single = store.get(&board_info.id).and_then(|queries| queries.get(&Query::PostGetSingle)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetSingle))?;
+            let thread = posts[0].no;
+            let mut single_res: Option<mysql_async::Row> = conn.exec_first(stmt_post_get_single.as_str(), (thread, thread)).await?;
+            let prev_unique_ips = single_res.and_then(|row| row.get::<Option<String>, &str>("exif").flatten())
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|j| j.as_object().cloned())
+                .and_then(|obj| obj.get("uniqueIps").cloned())
+                .and_then(|json| json.as_str().map(|s| s.parse::<u32>().ok()).flatten() );
+            posts[0].unique_ips = prev_unique_ips;
+        }
+        
+        
         // TODO If you want UPSERTED count, you have to convert 4chan post into Asagi, then compare that
         // with the fetched from the db Mapping those Post structs might be inneficent?
 
