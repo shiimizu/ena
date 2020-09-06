@@ -732,7 +732,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                                 "({endpoint})\t/{board}/\t\t{modified} threads: {length}",
                                                                 endpoint = thread_type,
                                                                 modified = if startup {
-                                                                    "Recieved"
+                                                                    "Received"
                                                                 } else {
                                                                     if last_modified.is_none() {
                                                                         "Total new"
@@ -748,7 +748,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                                 "({endpoint})\t/{board}/\t\t{modified} threads: {length}",
                                                                 endpoint = format!(ansi!("{;magenta}"), thread_type),
                                                                 modified = if startup {
-                                                                    "Recieved"
+                                                                    "Received"
                                                                 } else {
                                                                     if last_modified.is_none() {
                                                                         "Total new"
@@ -1006,18 +1006,20 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                         );*/
                                         if thread_type.is_threads() {
                                             info!(
-                                                "({endpoint})\t/{board}/{thread}\t\t{tail}",
+                                                "({endpoint})\t/{board}/{thread}\t\t{len} {tail}",
                                                 endpoint = thread_type,
                                                 board = &board_info.board,
                                                 thread = thread,
+                                                len = len,
                                                 tail = if with_tail { "[tail]" } else { "" }
                                             );
                                         } else {
                                             info!(
-                                                "({endpoint})\t/{board}/{thread}\t\t{tail}",
+                                                "({endpoint})\t/{board}/{thread}\t\t{len} {tail}",
                                                 endpoint = format!(ansi!("{;magenta}"), thread_type),
                                                 board = &board_info.board,
                                                 thread = thread,
+                                                len = len,
                                                 tail = if with_tail { "[tail]" } else { "" }
                                             );
                                         }
@@ -1157,7 +1159,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                 };
 
                                                 loop {
-                                                    // We basically want to get the same amount of posts from recieved from the json
+                                                    // We basically want to get the same amount of posts from received from the json
                                                     // i.e The posts from the live thread minus the bumped off posts (if any) that's recorded in the db
                                                     // (if any) But queried from the database since
                                                     // it has sha256 & sha256t

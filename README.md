@@ -61,6 +61,7 @@ Low resource and high performance archiver to save posts, images and all relevan
 * Lives up to the description by being able to get threads and/or boards in a oneshot fashion
 * Reduce postgres min version. Probably >= `9` now.
 * **Database schema changes. Now one big `posts` table instead of seperated by board.**
+* No longer reports the current position/total since things are fetched concurrently
 * Media fetching is no longer done in a background thread
 * Now relying on md5 check before downloading media, which means no sha256sum collision detection
 * Introduction of `unsafe` to clean post comments for Asagi.
@@ -176,11 +177,11 @@ Core functionality works. There are things that could be improved on:
         Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
 
 ## Asagi drop-in status
-Core functionality works. There are things that could be improved on:  
-* Posts deleted that are outputted to the screen will likely appear twice. Don't worry, it's just a displaying issue.
-    Finding a way to incorporate `RETURNING *` for `mysql|mariadb` would fix this.
-* `NEW` & `UPSERTED` doesn't display the amount like the postgres version. Same issue and fix as above.
-
+Core functionality works.
+TODO:
+- [ ] Add `utc_timestamp`
+- [ ] Fix `prevDirStructure`
+- [ ] Use correct permissions when creating web-dirs
 
 ## Please respect the 4chan API guidelines as best you can
 1. Use `Last-Modified` and `If-Modified-Since`

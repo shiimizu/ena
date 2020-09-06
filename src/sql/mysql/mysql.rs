@@ -265,8 +265,37 @@ impl QueryExecutor for mysql_async::Pool {
             posts[0].unique_ips = prev_unique_ips;
         }
 
-        // TODO If you want UPSERTED count, you have to convert 4chan post into Asagi, then compare that
-        // with the fetched from the db Mapping those Post structs might be inneficent?
+        let mut conn = self.get_conn().await?;
+
+        // Get the size of differences (upserted)
+        let res_diff_len = {
+            let start = posts[if posts.len() == 1 { 0 } else { 1 }].no;
+
+            // Select all posts from DB starting from new json post's first reply `no`
+            // (default to OP if noreplies).
+            let thread = posts[0].no;
+            let query = format!(
+                "select * from `{board}` where ((thread_num = {thread} and num >= {start}) or (thread_num = {thread} and op=1) ) and subnum = 0  order by num;",
+                board = &board_info.board,
+                start = start,
+                thread = thread
+            );
+            let res: Vec<mysql_async::Row> = conn.query(query.as_str()).await?;
+            let rows: HashSet<Post> = res
+                .into_iter()
+                .map(|row| {
+                    let mut p = Post::from(row);
+                    p.doc_id = 0;
+                    p.media_id = 0;
+                    p.poster_ip = 0.0;
+                    p
+                })
+                .collect();
+
+            let converted_posts: HashSet<Post> = posts.iter().filter(|post| post.time != 0 && post.no != 0).map(|p| Post::from(p)).collect();
+            let res = converted_posts.symmetric_difference(&rows).unique_by(|p| p.num).count();
+            res
+        };
 
         // This filter is for accomodating 4chan's side when a thread lingers (is still live) after deletion
         // without a `no` field and no replies, and also for tail json's OP
@@ -318,17 +347,16 @@ impl QueryExecutor for mysql_async::Pool {
         exif=VALUES(exif);"#
         );
         loop {
-            let mut conn = self.get_conn().await?;
             // TODO: Return rows affected
             if let Ok(_) = conn.query_drop(q.as_str()).await {
-                return Ok(0);
+                break;
             }
             if get_ctrlc() {
                 break;
             }
             sleep(Duration::from_millis(500)).await;
         }
-        Ok(0)
+        Ok(res_diff_len as u64)
     }
 
     async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64> {
@@ -365,78 +393,13 @@ impl QueryExecutor for mysql_async::Pool {
         }
         let start = posts[if posts.len() == 1 { 0 } else { 1 }]["no"].as_u64().unwrap_or_default();
         let mut conn = self.get_conn().await?;
-        // Select all posts from DB starting from new json post's first reply `no` (default to OP if no
-        // replies).
+
+        // Select all posts from DB starting from new json post's first reply `no`
+        // (default to OP if noreplies).
         let query = format!("select * from `{board}` where thread_num = {thread} and num >= {start} and subnum = 0;", board = &board_info.board, start = start, thread = thread);
         let res: Vec<mysql_async::Row> = conn.query(query.as_str()).await?;
         let rows: Vec<Post> = res.into_iter().map(|row| Post::from(row)).collect();
-        /*let loaded_payments = conn.exec_map(
-            query.as_str(),
-            (),
-            |(doc_id
-                ,media_id
-                ,poster_ip
-                ,num
-                ,subnum
-                ,thread_num
-                ,op
-                ,timestamp
-                ,timestamp_expired
-                ,preview_orig
-                ,preview_w
-                ,preview_h
-                ,media_filename
-                ,media_w
-                ,media_h
-                ,media_size
-                ,media_hash
-                ,media_orig
-                ,spoiler
-                ,deleted
-                ,capcode
-                ,email
-                ,name
-                ,trip
-                ,title
-                ,comment
-                ,delpass
-                ,sticky
-                ,locked
-                ,poster_hash
-                ,poster_country
-                ,exif)| Post { doc_id
-                    ,media_id
-                    ,poster_ip
-                    ,num
-                    ,subnum
-                    ,thread_num
-                    ,op
-                    ,timestamp
-                    ,timestamp_expired
-                    ,preview_orig
-                    ,preview_w
-                    ,preview_h
-                    ,media_filename
-                    ,media_w
-                    ,media_h
-                    ,media_size
-                    ,media_hash
-                    ,media_orig
-                    ,spoiler
-                    ,deleted
-                    ,capcode
-                    ,email
-                    ,name
-                    ,trip
-                    ,title
-                    ,comment
-                    ,delpass
-                    ,sticky
-                    ,locked
-                    ,poster_hash
-                    ,poster_country
-                    ,exif },
-        ).await?;*/
+
         // latest posts (v_latest) can include OP post since we're taking the difference. should not filter
         // it out (diff = values in self, but not in other).
         let v_latest: HashSet<_> = posts.iter().map(|v| v.get("no").and_then(|val| val.as_u64()).unwrap()).collect();

@@ -44,6 +44,46 @@ pub struct Post {
 }
 
 impl Eq for Post {}
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+impl Hash for Post {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.doc_id.hash(state);
+        self.media_id.hash(state);
+        // (self.poster_ip as u64).hash(state);
+        self.num.hash(state);
+        self.subnum.hash(state);
+        self.thread_num.hash(state);
+        self.op.hash(state);
+        self.timestamp.hash(state);
+        self.timestamp_expired.hash(state);
+        self.preview_orig.hash(state);
+        self.preview_w.hash(state);
+        self.preview_h.hash(state);
+        self.media_filename.hash(state);
+        self.media_w.hash(state);
+        self.media_h.hash(state);
+        self.media_size.hash(state);
+        self.media_hash.hash(state);
+        self.media_orig.hash(state);
+        self.spoiler.hash(state);
+        self.deleted.hash(state);
+        self.capcode.hash(state);
+        self.email.hash(state);
+        self.name.hash(state);
+        self.trip.hash(state);
+        self.title.hash(state);
+        self.comment.hash(state);
+        self.delpass.hash(state);
+        self.sticky.hash(state);
+        self.locked.hash(state);
+        self.poster_hash.hash(state);
+        self.poster_country.hash(state);
+        self.exif.hash(state);
+    }
+}
 
 impl Default for Post {
     fn default() -> Self {
