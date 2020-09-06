@@ -20,6 +20,7 @@ use futures::{channel::oneshot, future, future::Either, stream::FuturesUnordered
 // use futures::stream::FuturesOrdered;
 #[allow(unused_imports)]
 use ::log::*;
+use ansiform::ansi;
 use async_process::Command;
 use futures::stream::{self, StreamExt};
 use futures_lite::*;
@@ -35,7 +36,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-
 pub mod config;
 pub mod log;
 pub mod net;
@@ -157,7 +157,7 @@ fn main() -> Result<()> {
     // if std::env::var("ENA_LOG").is_err() {
     //     std::env::set_var("ENA_LOG", format!("{}=info", env!("CARGO_PKG_NAME")));
     // }
-    
+
     log::init(::log::LevelFilter::Info).unwrap();
     let num_threads = num_cpus::get().max(1);
 
@@ -363,6 +363,7 @@ async fn async_main() -> Result<()> {
         conn.query_drop("SET SESSION CHARACTER_SET_CLIENT = utf8mb4;").await?;
         conn.query_drop("SET SESSION CHARACTER_SET_RESULTS = utf8mb4;").await?;
         conn.query_drop("SET SESSION COLLATION_CONNECTION = utf8mb4_unicode_ci;").await?;
+        conn.query_drop("SET SESSION COLLATION_SERVER = utf8mb4_unicode_ci;").await?;
         drop(conn);
         let fchan = FourChan::new(create_client(origin, &opt).await?, pool, opt).await;
         fchan.run().await?;
@@ -378,7 +379,7 @@ pub trait Archiver {
     async fn download_board_and_thread(&self, board: Board, thread: Option<u64>) -> Result<()>;
     async fn download_boards_index(&self) -> Result<()>;
     async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<StatusCode>;
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)>;
+    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType, startup: bool) -> Result<(ThreadType, bool)>;
     async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
 }
 
@@ -443,10 +444,12 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 
         if self.opt.asagi_mode {
             config::display_asagi();
+        // Make them see the asciiart
+        // sleep(Duration::from_millis(500)).await;
         } else {
             config::display();
         }
-        pintln!("Press CTRL+C to exit");
+        info!("Press CTRL+C to exit");
 
         while let Some(res) = fut.next().await {
             res.unwrap();
@@ -468,7 +471,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                     break;
                 }
                 Err(e) => {
-                    epintln!("download_boards_index: "(e));
+                    error!("download_boards_index: {}", e);
                 }
             }
             sleep(Duration::from_secs(1)).await;
@@ -568,7 +571,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
             if let Some(_thread) = thread {
                 // with_threads or with_archives don't apply here, since going here implies you want the
                 // thread/archive
-                let (thread_type, deleted) = self.download_thread(&_board, _thread, ThreadType::Threads).await.unwrap();
+                let (thread_type, deleted) = self.download_thread(&_board, _thread, ThreadType::Threads, startup).await.unwrap();
                 if !_board.watch_threads || get_ctrlc() || thread_type.is_archive() || deleted {
                     break;
                 }
@@ -654,8 +657,8 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
         if get_ctrlc() {
             return Ok(StatusCode::OK);
         }
-        let fun_name = "download_board";
-        let last_modified = self.db_client.board_get_last_modified(thread_type, board_info.id).await;
+        // let fun_name = "download_board";
+        let last_modified = self.db_client.board_get_last_modified(thread_type, board_info).await;
         let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
         for retry in 0..=board_info.retry_attempts {
             if get_ctrlc() {
@@ -667,12 +670,13 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
             let resp = self.client.gett(url.as_str(), last_modified.as_ref()).await;
             match resp {
                 Err(e) => {
-                    epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
-                    if board_info.board.len() <= 2 { "\t\t" } else {"\t "}
-                    if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
-                    " | ["
-                    (e)"]"
-                    );
+                    error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board_info.board, err = e,);
+                    // epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
+                    // if board_info.board.len() <= 2 { "\t\t" } else {"\t "}
+                    // if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
+                    // " | ["
+                    // (e)"]"
+                    // );
                     if retry == board_info.retry_attempts {
                         return Ok(StatusCode::SERVICE_UNAVAILABLE);
                     }
@@ -683,61 +687,147 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                             let body_json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
 
                             // "download_board: ({thread_type}) /{board}/{tab}{new_lm} | {prev_lm} | {retry_status}"
-                            pintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
+                            /*pintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
                             if board_info.board.len() <= 2 { "\t\t" } else {"\t "}
                             (&lm)
                             " | "
                             if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
                             " | "
                             if retry > 0 { " Retry #"(retry)" [RESOLVED]" } else { "" }
-                            );
-
-                            let res = if startup {
-                                self.db_client.threads_get_combined(thread_type, board_info.id, &body_json).await
-                            } else {
-                                if thread_type.is_threads() {
-                                    self.db_client.threads_get_modified(board_info.id, &body_json).await
+                            );*/
+                            loop {
+                                let res = if startup {
+                                    self.db_client.threads_get_combined(thread_type, board_info.id, &body_json).await
                                 } else {
-                                    self.db_client.threads_get_combined(ThreadType::Archive, board_info.id, &body_json).await
-                                }
-                            };
+                                    if thread_type.is_threads() {
+                                        self.db_client.threads_get_modified(board_info.id, &body_json).await
+                                    } else {
+                                        self.db_client.threads_get_combined(ThreadType::Archive, board_info.id, &body_json).await
+                                    }
+                                };
 
-                            // FIXME: Loop on db call here
-                            match res {
-                                Err(e) => {
-                                    epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
-                                    if board_info.board.len() <= 2 { "\t\t" } else {"\t"}
-                                    (&lm)
-                                    " | ["
-                                    (e)"]"
-                                    );
-                                }
-                                Ok(either) => match either {
-                                    Either::Right(rows) =>
-                                        if let Some(mut rows) = rows {
-                                            if rows.len() > 0 {
-                                                let r = rows.into_iter().map(|no| self.download_thread(board_info, no, thread_type)).collect::<Vec<_>>();
-                                                let mut stream_of_futures = stream::iter(r);
+                                // FIXME: Loop on db call here
+                                match res {
+                                    Err(e) => {
+                                        error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board_info.board, err = e,);
+                                        // error!(
+                                        //     "{}",
+                                        //     fomat!((fun_name) ":  (" (thread_type) ") /"
+                                        // (&board_info.board) "/"
+                                        //     if board_info.board.len() <= 2 { "\t\t" } else {"\t"}
+                                        //     (&lm)
+                                        //     " | ["
+                                        //     (e)"]"
+                                        //     )
+                                        // );
+                                    }
+                                    Ok(either) => {
+                                        match either {
+                                            Either::Right(rows) =>
+                                                if let Some(mut rows) = rows {
+                                                    let total = rows.len();
+                                                    if total > 0 {
+                                                        if thread_type.is_threads() {
+                                                            info!(
+                                                                "({endpoint})\t/{board}/\t\t{modified} threads: {length}",
+                                                                endpoint = thread_type,
+                                                                modified = if startup {
+                                                                    "Recieved"
+                                                                } else {
+                                                                    if last_modified.is_none() {
+                                                                        "Total new"
+                                                                    } else {
+                                                                        "Total new/modified"
+                                                                    }
+                                                                },
+                                                                board = &board_info.board,
+                                                                length = total
+                                                            );
+                                                        } else {
+                                                            info!(
+                                                                "({endpoint})\t/{board}/\t\t{modified} threads: {length}",
+                                                                endpoint = format!(ansi!("{;magenta}"), thread_type),
+                                                                modified = if startup {
+                                                                    "Recieved"
+                                                                } else {
+                                                                    if last_modified.is_none() {
+                                                                        "Total new"
+                                                                    } else {
+                                                                        "Total new/modified"
+                                                                    }
+                                                                },
+                                                                board = &board_info.board,
+                                                                length = total
+                                                            );
+                                                        }
+                                                        let r = rows.into_iter().map(|no| self.download_thread(board_info, no, thread_type, startup)).collect::<Vec<_>>();
+                                                        let mut stream_of_futures = stream::iter(r);
 
-                                                let mut fut = stream_of_futures.buffer_unordered(self.opt.limit as usize);
-                                                while let Some(res) = fut.next().await {
-                                                    res.unwrap();
+                                                        // buffered ordered or unordered makes no difference since it's run concurrently
+                                                        let mut fut = stream_of_futures.buffer_unordered(self.opt.limit as usize);
+
+                                                        // fut
+                                                        // .for_each(|res| async {
+                                                        //     match res {
+                                                        //         Ok(b) => (),
+                                                        //         Err(e) => error!("{}", e),
+                                                        //     }
+                                                        // })
+                                                        // .await;
+                                                        while let Some(res) = fut.next().await {
+                                                            res.unwrap();
+                                                        }
+                                                    } else {
+                                                        if thread_type.is_threads() {
+                                                            info!("({endpoint})\t/{board}/\t\t[Not Modified]", endpoint = thread_type, board = &board_info.board,);
+                                                        } else {
+                                                            info!("({endpoint})\t/{board}/\t\t[Not Modified]", endpoint = format!(ansi!("{;magenta}"), thread_type), board = &board_info.board,);
+                                                        }
+                                                    }
+                                                },
+                                            Either::Left(rows) => {
+                                                futures::pin_mut!(rows);
+                                                let total: usize = rows.by_ref().fold(0, |acc, _| async move { acc + 1 }).await;
+                                                if total > 0 {
+                                                    if thread_type.is_threads() {
+                                                        info!(
+                                                            "({endpoint})\t/{board}/\t\tTotal {modified} threads: {length}",
+                                                            endpoint = thread_type,
+                                                            modified = if last_modified.is_none() { "new" } else { "modified" },
+                                                            board = &board_info.board,
+                                                            length = total
+                                                        );
+                                                    } else {
+                                                        info!(
+                                                            "({endpoint})\t/{board}/\t\tTotal {modified} threads: {length}",
+                                                            endpoint = format!(ansi!("{;magenta}"), thread_type),
+                                                            modified = if last_modified.is_none() { "new" } else { "modified" },
+                                                            board = &board_info.board,
+                                                            length = total
+                                                        );
+                                                    }
+                                                    let mut fut = rows
+                                                        .map(|row| {
+                                                            let no: i64 = row.unwrap().get(0);
+                                                            self.download_thread(board_info, no as u64, thread_type, startup)
+                                                        })
+                                                        .buffer_unordered(self.opt.limit as usize);
+                                                    while let Some(res) = fut.next().await {
+                                                        res.unwrap();
+                                                    }
+                                                } else {
+                                                    if thread_type.is_threads() {
+                                                        info!("({endpoint})\t/{board}/\t\t[Not Modified]", endpoint = thread_type, board = &board_info.board,);
+                                                    } else {
+                                                        info!("({endpoint})\t/{board}/\t\t[Not Modified]", endpoint = format!(ansi!("{;magenta}"), thread_type), board = &board_info.board,);
+                                                    }
                                                 }
                                             }
-                                        },
-                                    Either::Left(rows) => {
-                                        futures::pin_mut!(rows);
-                                        let mut fut = rows
-                                            .map(|row| {
-                                                let no: i64 = row.unwrap().get(0);
-                                                self.download_thread(board_info, no as u64, thread_type)
-                                            })
-                                            .buffer_unordered(self.opt.limit as usize);
-                                        while let Some(res) = fut.next().await {
-                                            res.unwrap();
                                         }
+                                        break;
                                     }
-                                },
+                                }
+                                db_retry().await;
                             }
 
                             if get_ctrlc() {
@@ -752,31 +842,18 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                             }
                             break; // exit the retry loop
                         }
-                        StatusCode::NOT_FOUND => {
-                            epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
-                            if board_info.board.len() <= 2 { "\t\t" } else {"\t"}
-                            (&lm)
-                            " | ["
-                            (status)"]"
-                            );
-                            return Ok(status);
-                        }
                         StatusCode::NOT_MODIFIED => {
-                            epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
-                            if board_info.board.len() <= 2 { "\t\t" } else {"\t"}
-                            (&lm)
-                            " | ["
-                            (status)"]"
-                            );
+                            warn!("({endpoint})\t/{board}/\t\t{status}", endpoint = thread_type, board = &board_info.board, status = status,);
                             return Ok(status);
                         }
                         _ => {
-                            epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
-                            if board_info.board.len() <= 2 { "\t\t" } else {"\t"}
-                            (&lm)
-                            " | ["
-                            (status)"]"
-                            );
+                            // epintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
+                            // if board_info.board.len() <= 2 { "\t\t" } else {"\t"}
+                            // (&lm)
+                            // " | ["
+                            // (status)"]"
+                            // );
+                            error!("({endpoint})\t/{board}/\t\t{status}", endpoint = thread_type, board = &board_info.board, status = status,);
                             if retry == board_info.retry_attempts {
                                 return Ok(status);
                             }
@@ -788,7 +865,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
         Ok(StatusCode::OK)
     }
 
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType) -> Result<(ThreadType, bool)> {
+    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType, startup: bool) -> Result<(ThreadType, bool)> {
         let mut thread_type = thread_type;
         let mut deleted = false;
 
@@ -813,8 +890,22 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
 
             for retry in 0..=board_info.retry_attempts {
                 let now = Instant::now();
+
+                // TODO: The 4chan server doesn't always update `Last-Modified` immediately in conformance with the
+                // modified threads we get from our diff This is ok I guess since we eventually get
+                // the thread after waiting the for ratelimit amount (interval_board)
                 let resp = self.client.gett(url.as_str(), last_modified.as_ref()).await;
                 match resp {
+                    Err(e) => {
+                        error!(
+                            "{}",
+                            fomat!(
+                                "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
+                                if with_tail { "-tail" } else { "" }
+                                "\t["(e)"]"
+                            )
+                        );
+                    }
                     Ok((status, lm, body)) => {
                         if body.len() > 0 {
                             let j = serde_json::from_slice::<serde_json::Value>(body.as_slice());
@@ -824,6 +915,13 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                 let archived_on = op.and_then(|v| v.get("archived")).and_then(|v| v.as_u64());
                                 if archived || archived_on.is_some() {
                                     thread_type = ThreadType::Archive;
+
+                                    // Tail json doesn't include archived_on. Plus we filter the first post upon `thread_upsert`
+                                    // The easiest way to fix this is to fetch the thread without tail and upsert it.
+                                    if with_tail {
+                                        with_tail = false;
+                                        continue 'outer;
+                                    }
                                 }
                             }
                         }
@@ -844,9 +942,12 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                 // ignore if err, it means it's empty or incomplete
                                 match serde_json::from_slice::<serde_json::Value>(&body) {
                                     Err(e) => {
-                                        epintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
+                                        error!(
+                                            "{}",
+                                            fomat!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
                                         if with_tail { "-tail " } else { " " }
-                                        "["(e)"] " [&last_modified]);
+                                        "["(e)"] " [&last_modified])
+                                        );
                                     }
                                     Ok(mut thread_json) => {
                                         if !with_tail {
@@ -888,7 +989,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                         // Display
                                         // "download_thread: ({thread_type}) /{board}/{thread}{tail}{retry_status} {new_lm} | {prev_lm} |
                                         // {len}"
-                                        pintln!("download_thread: (" (thread_type) ") /" (&board_info.board) "/" (thread)
+                                        /*pintln!("download_thread: (" (thread_type) ") /" (&board_info.board) "/" (thread)
                                             if with_tail { "-tail" } else { "" }
                                             if retry > 0 { " Retry #"(retry)" [RESOLVED]" }
                                             " "
@@ -902,8 +1003,24 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                 "NEW" if len == 0 { "" } else { ": "(len) }
                                             }
                                             if len == 0 && !self.opt.asagi_mode { " | WARNING EMPTY SET" }
-
-                                        );
+                                        );*/
+                                        if thread_type.is_threads() {
+                                            info!(
+                                                "({endpoint})\t/{board}/{thread}\t\t{tail}",
+                                                endpoint = thread_type,
+                                                board = &board_info.board,
+                                                thread = thread,
+                                                tail = if with_tail { "[tail]" } else { "" }
+                                            );
+                                        } else {
+                                            info!(
+                                                "({endpoint})\t/{board}/{thread}\t\t{tail}",
+                                                endpoint = format!(ansi!("{;magenta}"), thread_type),
+                                                board = &board_info.board,
+                                                thread = thread,
+                                                tail = if with_tail { "[tail]" } else { "" }
+                                            );
+                                        }
 
                                         // Update thread's deleteds
                                         // FIXME Loop here
@@ -914,7 +1031,15 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                 Either::Right(rows) =>
                                                     if let Some(mut rows) = rows {
                                                         for no in rows {
-                                                            pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)"#"(no)"\t[DELETED]");
+                                                            warn!(
+                                                                "({endpoint})\t/{board}/{thread}#{no}\t{deleted}",
+                                                                endpoint = thread_type,
+                                                                board = &board_info.board,
+                                                                thread = thread,
+                                                                no = no,
+                                                                deleted = format!(ansi!("{;yellow}"), "DELETED"),
+                                                            );
+                                                            // pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)"#"(no)"\t[DELETED]");
                                                         }
                                                     },
                                                 Either::Left(rows) => {
@@ -924,9 +1049,19 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                         let resto: Option<i64> = row.get("resto");
                                                         if let Some(no) = no {
                                                             if let Some(resto) = resto {
-                                                                pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"
-                                                                    if resto == 0 { (no) } else { (resto) }
-                                                                    "#"(no)"\t[DELETED]");
+                                                                warn!(
+                                                                    "({endpoint})\t/{board}/{thread}#{no}\t[DELETED]",
+                                                                    endpoint = thread_type,
+                                                                    board = &board_info.board,
+                                                                    thread = if resto == 0 { (no) } else { (resto) },
+                                                                    no = no,
+                                                                );
+                                                                // pintln!("download_thread:
+                                                                // ("(thread_type)")
+                                                                // /"(&board_info.board)"/"
+                                                                //     if resto == 0 { (no) } else {
+                                                                // (resto) }
+                                                                //     "#"(no)"\t[DELETED]");
                                                             }
                                                         }
                                                     }
@@ -1100,6 +1235,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                     with_tail = false;
                                     continue 'outer;
                                 }
+                                drop(sem);
                                 deleted = true;
                                 let tail = if with_tail { "-tail" } else { "" };
                                 loop {
@@ -1117,7 +1253,17 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                             match res {
                                                 Either::Right(rows) =>
                                                     if let Some(no) = rows {
-                                                        pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]");
+                                                        warn!(
+                                                            "({endpoint})\t/{board}/{thread}\t\t{deleted}{tail}",
+                                                            endpoint = thread_type,
+                                                            board = &board_info.board,
+                                                            thread = no,
+                                                            deleted = format!(ansi!("{;yellow}"), "DELETED"),
+                                                            tail = if with_tail { " [tail]" } else { "" },
+                                                        );
+                                                        // pintln!("download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"]
+                                                        // [DELETED]");
+
                                                         // Ignore the below comments. If it's deleted, it won't matter what last-modified it is.
                                                         //
                                                         // Due to triggers, when a board is updated/deleted/inserted, the `time_last` is updated
@@ -1145,9 +1291,21 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                             Ok(row) => {
                                                                 let no: Option<i64> = row.get("no");
                                                                 if let Some(no) = no {
-                                                                    pintln!(
-                                                                        "download_thread: ("(thread_type)") /"(&board_info.board)"/"(no)(tail)"\t["(status)"] [DELETED]"
+                                                                    warn!(
+                                                                        "({endpoint})\t/{board}/{thread}\t\t{deleted}{tail}",
+                                                                        endpoint = thread_type,
+                                                                        board = &board_info.board,
+                                                                        thread = no,
+                                                                        deleted = ansi!("{;yellow}", "DELETED"),
+                                                                        tail = if with_tail { " [tail]" } else { "" },
                                                                     );
+                                                                // pintln!(
+                                                                //     "download_thread:
+                                                                // ("(thread_type)")
+                                                                // /"(&board_info.board)"/"
+                                                                // (no)(tail)"\t["(status)"]
+                                                                // [DELETED]"
+                                                                // );
                                                                 } else {
                                                                     epintln!(
                                                                         "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)(tail)"\t["(status)"] [`no` is empty]"
@@ -1168,27 +1326,26 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                     }
                                 }
 
-                                break;
-                            }
-                            StatusCode::NOT_MODIFIED => {
-                                // Don't output
-                                break;
+                                return Ok((thread_type, deleted));
                             }
                             _ => {
-                                epintln!(
-                                    "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
-                                    if with_tail { "-tail" } else { "" }
-                                    "\t["(status)"]"
-                                );
+                                // Don't output
+                                if !startup {
+                                    warn!(
+                                        "({endpoint})\t/{board}/{thread}\t\t{status}{tail}",
+                                        endpoint = thread_type,
+                                        board = &board_info.board,
+                                        thread = thread,
+                                        status = format!(ansi!("{;yellow}"), status),
+                                        tail = if with_tail { " [tail]" } else { "" },
+                                    );
+                                }
+                                if status == StatusCode::NOT_MODIFIED {
+                                    drop(sem);
+                                    return Ok((thread_type, deleted));
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        epintln!(
-                            "download_thread: ("(thread_type)") /"(&board_info.board)"/"(thread)
-                            if with_tail { "-tail" } else { "" }
-                            "\t["(e)"]"
-                        );
                     }
                 }
 

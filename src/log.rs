@@ -6,9 +6,9 @@ use ansiform::ansi;
 use chrono::{SecondsFormat, Utc};
 #[allow(unused_imports)]
 use fomat_macros::{epintln, fomat, pintln};
-use log::{Level, Metadata, Record, SetLoggerError, LevelFilter};
+use log::{Level, LevelFilter, Metadata, Record, SetLoggerError};
 
-static LOGGER: Logger =  Logger;
+static LOGGER: Logger = Logger;
 
 pub fn init(level: LevelFilter) -> Result<(), SetLoggerError> {
     log::set_logger(&LOGGER).map(|()| ::log::set_max_level(level))
@@ -23,56 +23,62 @@ impl log::Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let level = record.level();
-            // let utc = Utc::now().to_rfc2822();
-            let utc = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-            match level {
-                Level::Warn => epintln!(
-                    {
-                    ansi!("{} {:;yellow}  {} > {}"),
-                    utc,
-                    level,
-                    record.module_path().unwrap(),
-                    record.args()
-                    }
-                ),
-                Level::Error => epintln!(
-                    {
-                    ansi!("{} {:;red} {} > {}"),
-                    utc,
-                    level,
-                    record.module_path().unwrap(),
-                    record.args()
-                    }
-                ),
-                Level::Info => pintln!(
-                    {
-                    ansi!("{} {:;blue}  {} > {}"),
-                    utc,
-                    level,
-                    record.module_path().unwrap(),
-                    record.args()
-                    }
-                ),
-                Level::Debug => pintln!(
-                    {
-                    ansi!("{} {:;green} {} > {}"),
-                    utc,
-                    level,
-                    record.module_path().unwrap(),
-                    record.args()
-                    }
-                ),
-                Level::Trace => pintln!(
-                    {
-                    ansi!("{} {:;magenta} {} > {}"),
-                    utc,
-                    level,
-                    record.module_path().unwrap(),
-                    record.args()
-                    }
-                ),
-            };
+            if let Some(module) = record.module_path() {
+                // if module.starts_with(env!("CARGO_PKG_NAME")) {
+                // }
+                if !module.starts_with("hyper") {
+                    let level = record.level();
+                    // let utc = Utc::now().to_rfc2822();
+                    let utc = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+                    match level {
+                        Level::Warn => epintln!(
+                            {
+                            ansi!("{} {;yellow}  {} > {}"),
+                            utc,
+                            level,
+                            module,
+                            record.args()
+                            }
+                        ),
+                        Level::Error => epintln!(
+                            {
+                            ansi!("{} {;red} {} > {}"),
+                            utc,
+                            level,
+                            module,
+                            record.args()
+                            }
+                        ),
+                        Level::Info => pintln!(
+                            {
+                            ansi!("{} {;blue}  {} > {}"),
+                            utc,
+                            level,
+                            module,
+                            record.args()
+                            }
+                        ),
+                        Level::Debug => pintln!(
+                            {
+                            ansi!("{} {;green} {} > {}"),
+                            utc,
+                            level,
+                            module,
+                            record.args()
+                            }
+                        ),
+                        Level::Trace => pintln!(
+                            {
+                            ansi!("{} {;magenta} {} > {}"),
+                            utc,
+                            level,
+                            module,
+                            record.args()
+                            }
+                        ),
+                    };
+                }
+            }
         }
     }
 

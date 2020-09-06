@@ -66,10 +66,10 @@ impl QueryExecutor for tokio_postgres::Client {
         res.map(|row| row.get("id")).map(|res: Option<i16>| res.map(|v| v as u16))
     }
 
-    async fn board_get_last_modified(&self, thread_type: ThreadType, board_id: u16) -> Option<String> {
+    async fn board_get_last_modified(&self, thread_type: ThreadType, board_info: &Board) -> Option<String> {
         let store = STATEMENTS.read().await;
         let statement = store.get(&Query::BoardGetLastModified).unwrap();
-        self.query_one(statement, &[&thread_type.as_str(), &(board_id as i16)]).await.ok().map(|row| row.get("last_modified")).flatten()
+        self.query_one(statement, &[&thread_type.as_str(), &(board_info.id as i16)]).await.ok().map(|row| row.get("last_modified")).flatten()
     }
 
     async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {

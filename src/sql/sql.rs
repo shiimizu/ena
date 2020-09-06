@@ -86,7 +86,7 @@ pub trait QueryExecutor {
     async fn board_upsert(&self, board: &str) -> Result<u64>;
     async fn board_table_exists(&self, board: &str, opt: &Opt) -> Option<String>;
     async fn board_get(&self, board: &str) -> Result<Option<u16>>;
-    async fn board_get_last_modified(&self, thread_type: ThreadType, board_id: u16) -> Option<String>;
+    async fn board_get_last_modified(&self, thread_type: ThreadType, board_info: &Board) -> Option<String>;
     async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
     async fn board_upsert_archive(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
 

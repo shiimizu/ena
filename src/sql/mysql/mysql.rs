@@ -136,7 +136,7 @@ impl QueryExecutor for mysql_async::Pool {
         let map = store.get(&1)?;
         let statement = map.get(&Query::BoardTableExists)?;
         let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (&opt.database.name, board)).await;
-        let res = res.ok().flatten().flatten();
+        let res = res.unwrap().flatten();
         if res.is_none() {
             let boards = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/boards.sql"));
             let triggers = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/triggers.sql"));
@@ -155,13 +155,13 @@ impl QueryExecutor for mysql_async::Pool {
         res.map(|opt| opt.and_then(|row| row.get::<Option<u16>, &str>("id")).flatten())
     }
 
-    async fn board_get_last_modified(&self, thread_type: ThreadType, board_id: u16) -> Option<String> {
+    async fn board_get_last_modified(&self, thread_type: ThreadType, board_info: &Board) -> Option<String> {
         let mut conn = self.get_conn().await.ok()?;
         let store = STATEMENTS.read().await;
         let map = store.get(&1)?;
         let statement = map.get(&Query::BoardGetLastModified)?;
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (thread_type.as_str(), board_id)).await;
-        res.ok().flatten().flatten()
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (thread_type.is_threads(), board_info.id)).await;
+        res.unwrap().flatten()
     }
 
     async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
@@ -248,7 +248,7 @@ impl QueryExecutor for mysql_async::Pool {
         if posts.len() == 0 {
             return Ok(0);
         }
-        
+
         // Preserve `unique_ips` when a thread is archived
         if posts[0].unique_ips.is_none() {
             let mut conn = self.get_conn().await?;
@@ -256,15 +256,15 @@ impl QueryExecutor for mysql_async::Pool {
             let stmt_post_get_single = store.get(&board_info.id).and_then(|queries| queries.get(&Query::PostGetSingle)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetSingle))?;
             let thread = posts[0].no;
             let mut single_res: Option<mysql_async::Row> = conn.exec_first(stmt_post_get_single.as_str(), (thread, thread)).await?;
-            let prev_unique_ips = single_res.and_then(|row| row.get::<Option<String>, &str>("exif").flatten())
+            let prev_unique_ips = single_res
+                .and_then(|row| row.get::<Option<String>, &str>("exif").flatten())
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                 .and_then(|j| j.as_object().cloned())
                 .and_then(|obj| obj.get("uniqueIps").cloned())
-                .and_then(|json| json.as_str().map(|s| s.parse::<u32>().ok()).flatten() );
+                .and_then(|json| json.as_str().map(|s| s.parse::<u32>().ok()).flatten());
             posts[0].unique_ips = prev_unique_ips;
         }
-        
-        
+
         // TODO If you want UPSERTED count, you have to convert 4chan post into Asagi, then compare that
         // with the fetched from the db Mapping those Post structs might be inneficent?
 
@@ -349,7 +349,7 @@ impl QueryExecutor for mysql_async::Pool {
         let stmt_post_get_single = map.get(&Query::PostGetSingle).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetSingle))?;
 
         let res = conn.exec_drop(stmt_thread_update_deleted.as_str(), (Post::timestamp_nyc(unix_timestamp()), thread)).await?;
-        
+
         // Get the post afterwards to see if it was deleted
         let mut single_res: Option<mysql_async::Row> = conn.exec_first(stmt_post_get_single.as_str(), (thread, thread)).await?;
         let status = single_res.and_then(|row| row.get::<Option<u8>, &str>("deleted").flatten()).map_or_else(|| None, |deleted| if deleted == 1 { Some(thread) } else { None });
@@ -368,59 +368,117 @@ impl QueryExecutor for mysql_async::Pool {
         // Select all posts from DB starting from new json post's first reply `no` (default to OP if no
         // replies).
         let query = format!("select * from `{board}` where thread_num = {thread} and num >= {start} and subnum = 0;", board = &board_info.board, start = start, thread = thread);
-        let res: Result<Vec<mysql_async::Row>, _> = conn.query(query.as_str()).await;
+        let res: Vec<mysql_async::Row> = conn.query(query.as_str()).await?;
+        let rows: Vec<Post> = res.into_iter().map(|row| Post::from(row)).collect();
+        /*let loaded_payments = conn.exec_map(
+            query.as_str(),
+            (),
+            |(doc_id
+                ,media_id
+                ,poster_ip
+                ,num
+                ,subnum
+                ,thread_num
+                ,op
+                ,timestamp
+                ,timestamp_expired
+                ,preview_orig
+                ,preview_w
+                ,preview_h
+                ,media_filename
+                ,media_w
+                ,media_h
+                ,media_size
+                ,media_hash
+                ,media_orig
+                ,spoiler
+                ,deleted
+                ,capcode
+                ,email
+                ,name
+                ,trip
+                ,title
+                ,comment
+                ,delpass
+                ,sticky
+                ,locked
+                ,poster_hash
+                ,poster_country
+                ,exif)| Post { doc_id
+                    ,media_id
+                    ,poster_ip
+                    ,num
+                    ,subnum
+                    ,thread_num
+                    ,op
+                    ,timestamp
+                    ,timestamp_expired
+                    ,preview_orig
+                    ,preview_w
+                    ,preview_h
+                    ,media_filename
+                    ,media_w
+                    ,media_h
+                    ,media_size
+                    ,media_hash
+                    ,media_orig
+                    ,spoiler
+                    ,deleted
+                    ,capcode
+                    ,email
+                    ,name
+                    ,trip
+                    ,title
+                    ,comment
+                    ,delpass
+                    ,sticky
+                    ,locked
+                    ,poster_hash
+                    ,poster_country
+                    ,exif },
+        ).await?;*/
+        // latest posts (v_latest) can include OP post since we're taking the difference. should not filter
+        // it out (diff = values in self, but not in other).
+        let v_latest: HashSet<_> = posts.iter().map(|v| v.get("no").and_then(|val| val.as_u64()).unwrap()).collect();
+        let v_previous: HashSet<_> = rows.iter().filter(|post| !post.deleted).map(|post| post.num).collect();
+        let diff: Vec<_> = v_previous.difference(&v_latest).unique().copied().collect();
+        if diff.is_empty() {
+            return Ok(Either::Right(None));
+        }
+        let mut list_no_iter = diff.iter().enumerate();
 
-        match res {
-            Ok(rows) => {
-                // latest posts (v_latest) can include OP post since we're taking the difference. should not filter
-                // it out (diff = values in self, but not in other).
-                let v_latest: HashSet<_> = posts.iter().map(|v| v.get("no").and_then(|val| val.as_u64()).unwrap()).collect();
-                let v_previous: HashSet<_> = rows.into_iter().map(|row| row.get("num").unwrap()).collect();
-                let diff: Vec<_> = v_previous.difference(&v_latest).unique().copied().collect();
-                if diff.len() > 0 {
-                    let mut list_no_iter = diff.iter().enumerate();
-
-                    // Manually stitch the query together so we can have multiple values/batch upsert
-                    let query = fomat!(
-                    r#"
+        // Manually stitch the query together so we can have multiple values/batch upsert
+        let query = fomat!(
+        r#"
                 INSERT INTO `"# (&board_info.board) r#"`
                 (num, subnum, deleted, `timestamp`, `timestamp_expired`)
                 VALUES
                     "#
-                    for (i, no) in list_no_iter {
-                        "\n(" (no) ", 0, 1, UNIX_TIMESTAMP(), " ((Post::timestamp_nyc(unix_timestamp()))) ")"
-                        if i < diff.len()-1 { "," } else { "" }
-                    }
-                    r#"
+        for (i, no) in list_no_iter {
+            "\n(" (no) ", 0, 1, UNIX_TIMESTAMP(), " ((Post::timestamp_nyc(unix_timestamp()))) ")"
+            if i < diff.len()-1 { "," } else { "" }
+        }
+        r#"
                 ON DUPLICATE KEY UPDATE
                 deleted=VALUES(`deleted`),
                 timestamp_expired=VALUES(`timestamp_expired`);"#
-                    );
-                    while let Err(e) = conn.query_drop(query.as_str()).await {
-                        if get_ctrlc() {
-                            break;
-                        }
-                        sleep(Duration::from_millis(500)).await;
-                    }
-
-                    Ok(Either::Right(Some(diff)))
-                } else {
-                    Ok(Either::Right(None))
-                }
+        );
+        while let Err(e) = conn.query_drop(query.as_str()).await {
+            if get_ctrlc() {
+                break;
             }
-            Err(e) => {
-                epintln!("thread_update_deleteds:"(e));
-                Ok(Either::Right(None))
-            }
+            sleep(Duration::from_millis(500)).await;
         }
+
+        Ok(Either::Right(Some(diff)))
     }
 
     async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
         let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store.get(&board_id).and_then(|queries| queries.get(&Query::ThreadsGetCombined)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadsGetCombined))?;
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (thread_type.as_str(), board_id)).await;
-        let res = res.ok().flatten().flatten();
+        let res: Option<Option<String>> = conn.exec_first(statement.as_str(), (thread_type.is_threads(), board_id)).await?;
+        let res = res.flatten();
         if let Some(res) = res {
             // If an entry exists in the database we can apply a diff
             if thread_type.is_threads() {
@@ -455,8 +513,8 @@ impl QueryExecutor for mysql_async::Pool {
         let store = STATEMENTS.read().await;
         let statement = store.get(&board_id).and_then(|queries| queries.get(&Query::ThreadsGetModified)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadsGetModified))?;
 
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (board_id,)).await;
-        let res = res.ok().flatten().flatten();
+        let res: Option<Option<String>> = conn.exec_first(statement.as_str(), (board_id,)).await?;
+        let res = res.flatten();
         if let Some(res) = res {
             let mut prev: Vec<Page> = serde_json::from_str(&res)?;
             let mut new: Vec<Page> = serde_json::from_value(json.clone())?;
@@ -474,13 +532,14 @@ impl QueryExecutor for mysql_async::Pool {
         let store = STATEMENTS.read().await;
         let statement = store.get(&board_id).and_then(|queries| queries.get(&Query::PostGetSingle)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetSingle))?;
         let res: Result<Option<mysql_async::Row>, _> = conn.exec_first(statement.as_str(), (thread, no)).await;
-        res.ok()
-            .flatten()
-            .and_then(|row| {
+        res.map(|opt| {
+            opt.and_then(|row| {
                 let _tmp: Option<u64> = row.get("num");
                 _tmp
             })
             .map_or_else(|| Ok(false), |_| Ok(true))
+        })
+        .unwrap()
     }
 
     async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Result<Option<mysql_async::Row>>> {
@@ -593,7 +652,7 @@ pub mod queries {
         r#"
     SELECT
     DATE_FORMAT(FROM_UNIXTIME(
-        (CASE WHEN ?='threads' THEN last_modified_threads ELSE last_modified_archive END)
+        (CASE WHEN ? THEN last_modified_threads ELSE last_modified_archive END)
     ), '%a, %d %b %Y %T GMT')
     AS last_modified FROM boards WHERE id=?;
     "#
@@ -744,12 +803,12 @@ pub mod queries {
     /// It returns the cached `threads` or `archive` in the database for a specific board.
     ///
     /// ```sql
-    ///     SELECT (CASE WHEN ?='threads' THEN threads ELSE archive END) as `threads`
+    ///     SELECT (CASE WHEN ? THEN threads ELSE archive END) as `threads`
     ///     FROM boards WHERE id=?;
     /// ```
     pub fn threads_get_combined<'a>() -> &'a str {
         r#"
-        SELECT (CASE WHEN ?='threads' THEN threads ELSE archive END) as `threads` FROM boards WHERE id=?;
+        SELECT (CASE WHEN ? THEN threads ELSE archive END) as `threads` FROM boards WHERE id=?;
     "#
     }
 
