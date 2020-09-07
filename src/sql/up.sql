@@ -16,6 +16,67 @@ grant execute on functions to public;
 alter default privileges in schema extensions
 grant usage on types to public;
 
+
+CREATE TABLE IF NOT EXISTS "posts" (
+    "no"                INT8 NOT NULL,
+    "subnum"            INT8,
+    "tim"               INT8,
+    "resto"             INT8 NOT NULL,
+    "time"              INT8 NOT NULL,
+    "last_modified"     INT8,
+    "archived_on"       INT8,
+    "deleted_on"        INT8,
+    "fsize"             INT4,
+    "w"                 INT4,
+    "h"                 INT4,
+    "replies"           INT4,
+    "images"            INT4,
+    "unique_ips"        INT4,
+    "tn_w"              INT2,
+    "tn_h"              INT2,
+    "custom_spoiler"    INT2,
+    "since4pass"        INT2,
+    "sticky"            BOOL,
+    "closed"            BOOL,
+    "filedeleted"       BOOL,
+    "spoiler"           BOOL,
+    "m_img"             BOOL,
+    "bumplimit"         BOOL,
+    "imagelimit"        BOOL,
+    "md5"               BYTEA,
+    "board"             TEXT NOT NULL,
+    "name"              TEXT,
+    "sub"               TEXT,
+    "com"               TEXT,
+    "filename"          TEXT,
+    "ext"               TEXT,
+    "trip"              TEXT,
+    "id"                TEXT,
+    "capcode"           TEXT,
+    "country"           TEXT,
+    "troll_country"     TEXT,
+    "country_name"      TEXT,
+    "semantic_url"      TEXT,
+    "tag"               TEXT,
+    "ip"                INET,
+    "extra"             JSONB
+);
+
+COMMENT ON COLUMN posts.last_modified   is 'Last modified time according to ''Last-Modified'' header in server response for OP, or modified/deleted/updated for replies';
+COMMENT ON COLUMN posts.deleted_on      is 'Whenever a post is deleted. This is only accurate if you are actively archiving. Therefore it should not be relied upon entirely.';
+COMMENT ON COLUMN posts.ip              is 'Gotta have a way to ban spammers ya''know';
+
+-- List of all boards
+CREATE TABLE IF NOT EXISTS "boards" (
+    "last_modified_threads"     INT8,
+    "last_modified_archive"     INT8,
+    "id"                        SMALLSERIAL NOT NULL UNIQUE PRIMARY KEY,
+    "board"                     TEXT        NOT NULL UNIQUE REFERENCES "posts" ("board"),
+    "title"                     TEXT,
+    "threads"                   JSONB,
+    "archive"                   JSONB
+);
+
 -- The media entry that a post has
 CREATE TABLE IF NOT EXISTS "posts_media" (
     "id"            BIGSERIAL,
@@ -79,86 +140,6 @@ COMMENT ON COLUMN media.sha256  is 'SHA256 hash of file';
 COMMENT ON COLUMN media.content is 'Optionally stored file';
 COMMENT ON COLUMN media.extra   is 'Sorage for any other columns';
 
-
-
-
-CREATE TABLE IF NOT EXISTS "media" (
-    "banned"        BOOL,
-    "id"            TEXT UNIQUE,
-    "md5"           BYTEA UNIQUE,
-    -- "md5t"          BYTEA UNIQUE GENERATED ALWAYS AS (decode(md5(content_thumb)::text, 'hex')) STORED,
-    -- "sha256"        BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content)) STORED,
-    -- "sha256t"       BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content_thumb)) STORED,
-    "sha256"        BYTEA UNIQUE,
-    -- Thumbnails aren't unique. 2 full medias can have the same thumbnail
-    "sha256t"       BYTEA,
-    "content"       BYTEA,
-    "content_thumb" BYTEA
-);
-
-CREATE UNIQUE   INDEX IF NOT EXISTS unq_idx_media_md5          ON "media" ("md5");
-CREATE          INDEX IF NOT EXISTS idx_media_sha256t          ON "media" ("sha256t");
-
-COMMENT ON COLUMN media.id is 'SeaweedFS fid';
-
-CREATE TABLE IF NOT EXISTS "boards" (
-    "last_modified_threads"     INT8,
-    "last_modified_archive"     INT8,
-    "id"                        SMALLSERIAL NOT NULL UNIQUE PRIMARY KEY,
-    "board"                     TEXT        NOT NULL UNIQUE,
-    "title"                     TEXT,
-    "threads"                   JSONB,
-    "archive"                   JSONB
-);
-
-CREATE TABLE IF NOT EXISTS "posts" (
-    "no"                INT8 NOT NULL,
-    "subnum"            INT8,
-    "tim"               INT8,
-    "resto"             INT8 NOT NULL,
-    "time"              INT8 NOT NULL,
-    "last_modified"     INT8,
-    "archived_on"       INT8,
-    "deleted_on"        INT8,
-    "fsize"             INT4,
-    "w"                 INT4,
-    "h"                 INT4,
-    "replies"           INT4,
-    "images"            INT4,
-    "unique_ips"        INT4,
-    "board"             INT2 NOT NULL REFERENCES "boards" ("id"),
-    "tn_w"              INT2,
-    "tn_h"              INT2,
-    "custom_spoiler"    INT2,
-    "since4pass"        INT2,
-    "sticky"            BOOL,
-    "closed"            BOOL,
-    "filedeleted"       BOOL,
-    "spoiler"           BOOL,
-    "m_img"             BOOL,
-    "bumplimit"         BOOL,
-    "imagelimit"        BOOL,
-    "md5"               BYTEA REFERENCES "media" ("md5"),
-    "name"              TEXT,
-    "sub"               TEXT,
-    "com"               TEXT,
-    "filename"          TEXT,
-    "ext"               TEXT,
-    "trip"              TEXT,
-    "id"                TEXT,
-    "capcode"           TEXT,
-    "country"           TEXT,
-    "troll_country"     TEXT,
-    "country_name"      TEXT,
-    "semantic_url"      TEXT,
-    "tag"               TEXT,
-    "ip"                INET,
-    "extra"             JSONB
-);
-
-COMMENT ON COLUMN posts.last_modified is 'Last modified time according to ''Last-Modified'' header in server response for OP, or modified/deleted/updated for replies';
-COMMENT ON COLUMN posts.deleted_on is 'Whenever a post is deleted. This is only accurate if you are actively archiving. Therefore it should not be relied upon entirely.';
-COMMENT ON COLUMN posts.ip is 'Gotta have a way to ban spammers ya''know';
 
 -- Optional TimescaleDB. It is recommended to partition on a huge table such as posts.
 CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;
