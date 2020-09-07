@@ -142,6 +142,28 @@ fn threads_cli_string(thread: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
+    #[allow(unused_imports)]
+    use pretty_assertions::{assert_eq, assert_ne};
+    #[test]
+    fn url() {
+        let u = Url::parse("mysql://username:@localhost:3306/db_name?pool_min=1&pool_max=3").unwrap();
+        let host = u.host_str();
+        let port = u.port();
+        let username = u.username();
+        let password = u.password();
+        let database = u.path();
+        let query = u.query();
+        let parsed = Url::parse(&format!("mysql://{username}:{password}@{host}:{port}/{database}?{query}",
+            username = username,
+            password = password.unwrap_or_default(),
+            host = host.unwrap_or_default(),
+            port = port.unwrap_or(3306),
+            database = database.trim_matches('/'),
+            query = query.unwrap_or_default(),
+        )).unwrap().to_string();
+        assert_eq!(parsed, u.to_string());
+    }
     #[ignore]
     #[test]
     fn cli_threads() {
@@ -631,20 +653,28 @@ pub fn get_opt() -> Result<Opt> {
     };
 
 
-    // TODO db_url is up-to-date, also update the individual fields (extract from db_url)
-    if opt.database.url.is_none() {
+    if let Some(db_url) = &opt.database.url {
+        // Parse the database url so it's correct
+        // Then update the indivual fields accordingly
+        let u = url::Url::parse(db_url).unwrap();
+        opt.database.username = u.username().to_string();
+        opt.database.password = u.password().unwrap_or_default().to_string();
+        opt.database.host = u.host_str().unwrap_or_default().to_string();
+        opt.database.port = u.port().unwrap_or(if &opt.database.engine.as_str().to_lowercase() != "postgresql" { 3306 } else { 5432 });
+        opt.database.name = u.path().trim_matches('/').to_string();
+        opt.database.url = Some(u.to_string())
+    } else {
         let db_url = format!(
             "{engine}://{user}:{password}@{host}:{port}/{database}",
-            // ?charset={charset}
             engine = if &opt.database.engine.as_str().to_lowercase() != "postgresql" { "mysql" } else { &opt.database.engine },
             user = &opt.database.username,
             password = &opt.database.password,
             host = &opt.database.host,
             port = &opt.database.port,
             database = &opt.database.name,
-            // charset = &opt.database.charset
         );
-        opt.database.url = Some(db_url);
+        let url = url::Url::parse(&db_url).unwrap().to_string();
+        opt.database.url = Some(url);
     }
 
     if opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("mysql") {

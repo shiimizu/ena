@@ -3,49 +3,62 @@ strict:         true                # if true, sets limit to 1
 limit:          151                 # limit concurrency getting threads
 limit_media:    151                 # limit concurrency getting media
 media_dir:      assets/media        # media path
-api_url:        https://a.4cdn.org
-media_url:      https://i.4cdn.org
+api_url:        https://a.4cdn.org  # API endpoint to get JSONs
+media_url:      https://i.4cdn.org  # API endpoint to get media
 user_agent:     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0"
+
 database:
-  url:          "mysql://ena@localhost/ena" # database connection url in the format `mysql://username:password@host:port/db_name`. If present, it's used instead of the connection fields below.
-  engine:       innodb
-  database:     asagi
-  host:         localhost
-  port:         3306
-  username:     root
-  password:     zxc
-  charset:      utf8mb4
-  collate:      utf8mb4_unicode_ci
+  charset:              utf8mb4
+  collate:              utf8mb4_unicode_ci
+  # database connection url in the format `mysql://username:password@host:port/db_name`
+  # See connection url options:
+  #  - https://docs.rs/mysql_async/*/mysql_async/struct.Opts.html
+  #  - https://docs.rs/mysql_async/*/mysql_async/struct.PoolOpts.html
+  # if present, it is used instead of the connection fields below.
+  url:                  "mysql://ena@localhost/ena" 
+  engine:               innodb
+  database:             asagi
+  host:                 localhost
+  port:                 3306
+  username:             root
+  password:             zxc
+
 asagi:
-  use:                          false   # use Ena as an Asagi drop-in replacement
-  with_utc_timestamps:          false   # will add and use `utc_timestamp_expired`, `utc_timestamp`, `utc_timestamp_archived` in board tables if it exists
-  with_future_columns:          false   # will add any extra future columns to `exif`
+  use:                  false   # use Ena as an Asagi drop-in replacement
+  with_utc_timestamps:  false   # add and use `utc_timestamp_expired`, `utc_timestamp`, `utc_timestamp_archived` in board tables if it exists
+  with_extra_columns:   false   # add any extra columns to `exif`
+
 proxies:
-  - url:        ""          # https or socks proxy url
-    username:   ""          # optional username
-    password:   ""          # optional password
+  - url:                ""      # https or socks proxy url. used if present and not empty
+    username:           ""      # optional username. used if present and not empty
+    password:           ""      # optional password. used if present and not empty
+
 board_settings:
-  retry_attempts:           3
-  interval_boards:          30000  # delay (in milliseconds) between fetching each board
-  interval_threads:         1000   # delay (in milliseconds) between fetching each thread
-  interval_dynamic:         false
-  with_threads:             true
-  with_archives:            false
-  with_tail:                false
-  with_full_media:          false
-  with_thumbnails:          false
-  watch_boards:             false
-  watch_threads:            false
-  skip_board_check:         false
-boards:                     # Boards inherit settings from `board_settings`
-  - board:                  a
-    with_full_media:        true
-    with_thumbnails:        true
-  - board:                  po
-    retry_attempts:         5
-    with_full_media:        false
-    with_thumbnails:        true
-threads:        # Optional getting threads. These have inherit settings from `board_settings`
+  retry_attempts:       3
+  interval_boards:      30000   # delay (in milliseconds) between fetching each board
+  interval_threads:     1000    # delay (in milliseconds) between fetching each thread
+  interval_dynamic:     false   # consecutively increase intervals by 5s on every not modified response. resetted to original interval on OK response 
+  with_threads:         true    # download threads from threads.json
+  with_archives:        false   # download threads from archive.json
+  with_tail:            false   # use -tail.json if available
+  with_full_media:      false   # download full media
+  with_thumbnails:      false   # download thumbnails
+  watch_boards:         false   # poll boards instead of getting them once
+  watch_threads:        false   # poll threads until archived or deleted instead of getting them once
+  skip_board_check:     false   # skip checking if a board is valid. useful if a new board was added but not yet in boards.json
+
+# Boards inherit settings from `board_settings`
+boards:
+  - board:              a
+    with_full_media:    true
+    with_thumbnails:    true
+  - board:              po
+    retry_attempts:     5
+    with_full_media:    false
+    with_thumbnails:    true
+
+# Optional getting individual threads. These inherit settings from `board_settings`
+threads:        
   - /e/2876453
   - /n/1786534
   - /a/2344536
