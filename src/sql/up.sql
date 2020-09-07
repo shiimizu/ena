@@ -16,55 +16,64 @@ grant execute on functions to public;
 alter default privileges in schema extensions
 grant usage on types to public;
 
-
+-- List of posts
 CREATE TABLE IF NOT EXISTS "posts" (
-    "no"                INT8 NOT NULL,
-    "subnum"            INT8,
-    "tim"               INT8,
-    "resto"             INT8 NOT NULL,
-    "time"              INT8 NOT NULL,
-    "last_modified"     INT8,
-    "archived_on"       INT8,
-    "deleted_on"        INT8,
-    "fsize"             INT4,
-    "w"                 INT4,
-    "h"                 INT4,
-    "replies"           INT4,
-    "images"            INT4,
-    "unique_ips"        INT4,
-    "tn_w"              INT2,
-    "tn_h"              INT2,
-    "custom_spoiler"    INT2,
-    "since4pass"        INT2,
-    "sticky"            BOOL,
-    "closed"            BOOL,
-    "filedeleted"       BOOL,
-    "spoiler"           BOOL,
-    "m_img"             BOOL,
-    "bumplimit"         BOOL,
-    "imagelimit"        BOOL,
-    "md5"               BYTEA,
-    "board"             TEXT NOT NULL,
-    "name"              TEXT,
-    "sub"               TEXT,
-    "com"               TEXT,
-    "filename"          TEXT,
-    "ext"               TEXT,
-    "trip"              TEXT,
-    "id"                TEXT,
-    "capcode"           TEXT,
-    "country"           TEXT,
-    "troll_country"     TEXT,
-    "country_name"      TEXT,
-    "semantic_url"      TEXT,
-    "tag"               TEXT,
-    "ip"                INET,
-    "extra"             JSONB
+    "id"            INT8        NOT NULL,
+    "thread_id"     INT8        NOT NULL,
+    "created_on"    TIMESTAMPTZ NOT NULL,
+    "updated_on"    TIMESTAMPTZ,
+    "archived_on"   TIMESTAMPTZ,
+    "deleted_on"    TIMESTAMPTZ,
+    "replies"       INT4,
+    "images"        INT4,
+    "unique_ips"    INT4,
+    "sticky"        BOOL,
+    "closed"        BOOL,
+    "bumplimit"     BOOL,
+    "imagelimit"    BOOL,
+    "md5"           BYTEA,
+    "board"         TEXT NOT NULL,
+    "name"          TEXT,
+    "subject"       TEXT,
+    "html"          TEXT,
+    "tripcode"      TEXT,
+    "ip_hash"       TEXT,
+    "country"       TEXT,
+    "ip"            INET,
+    "extra"         JSONB,
+    UNIQUE ("id", "board", "time")
 );
 
-COMMENT ON COLUMN posts.last_modified   is 'Last modified time according to ''Last-Modified'' header in server response for OP, or modified/deleted/updated for replies';
-COMMENT ON COLUMN posts.deleted_on      is 'Whenever a post is deleted. This is only accurate if you are actively archiving. Therefore it should not be relied upon entirely.';
-COMMENT ON COLUMN posts.ip              is 'Gotta have a way to ban spammers ya''know';
+COMMENT ON COLUMN posts.id          is 'The numeric post ID';
+COMMENT ON COLUMN posts.thread_id   is 'The numeric thread ID if reply or 0 if OP';
+COMMENT ON COLUMN posts.created_on  is 'UTC timestamp the post was created';
+COMMENT ON COLUMN posts.updated_on  is 'UTC timestamp from ''Last-Modified'' header in server response for OP, or when a post is modified/deleted/updated for replies';
+COMMENT ON COLUMN posts.archived_on is 'UTC timestamp the post was archived';
+COMMENT ON COLUMN posts.deleted_on  is 'UTC timestamp of system time of when the post was deleted, not serverside. Therefore it should not be relied upon entirely.';
+COMMENT ON COLUMN posts.replies     is 'Total number of replies to a thread';
+COMMENT ON COLUMN posts.images      is 'Total number of image replies to a thread';
+COMMENT ON COLUMN posts.unique_ips  is 'Number of unique posters in a thread';
+COMMENT ON COLUMN posts.sticky      is 'If the thread is being pinned to the top of the page';
+COMMENT ON COLUMN posts.closed      is 'If the thread is closed to replies';
+COMMENT ON COLUMN posts.imagelimit  is 'If an image has reached image limit, no more image replies can be made';
+COMMENT ON COLUMN posts.md5         is 'MD5 hash of file in binary';
+COMMENT ON COLUMN posts.board       is 'Board';
+COMMENT ON COLUMN posts.name        is 'Name user posted with';
+COMMENT ON COLUMN posts.subject     is 'OP Subject text';
+COMMENT ON COLUMN posts.html        is 'Comment (HTML escaped)';
+COMMENT ON COLUMN posts.tripcode    is 'The user''s tripcode, in format: !tripcode or !!securetripcode';
+COMMENT ON COLUMN posts.ip_hash     is 'The poster''s ID';
+COMMENT ON COLUMN posts.country     is 'Poster''s ISO 3166-1 alpha-2 country code';
+COMMENT ON COLUMN posts.ip          is 'Gotta have a way to ban spammers ya''know';
+COMMENT ON COLUMN posts.extra       is 'Storage for any other columns';
+
+
+CREATE          INDEX IF NOT EXISTS ix_no                         ON "posts" USING brin ("no") WITH (pages_per_range = 32, autosummarize = on);
+CREATE          INDEX IF NOT EXISTS ix_board                      ON "posts" USING brin ("board") WITH (pages_per_range = 32, autosummarize = on);
+CREATE          INDEX IF NOT EXISTS ix_time                       ON "posts" ("time") ;
+CREATE          INDEX IF NOT EXISTS ix_md5                        ON "posts" USING brin ("md5") WITH (pages_per_range = 32, autosummarize = on) WHERE "md5" is not null;
+CREATE INDEX IF NOT EXISTS ix_no_board   ON "posts" USING brin ("no", "board" ) WITH (pages_per_range = 32, autosummarize = on);
+CREATE INDEX IF NOT EXISTS ix_no_resto_board   ON "posts" USING brin ("no", "resto", "board" ) WITH (pages_per_range = 32, autosummarize = on);
 
 -- List of all boards
 CREATE TABLE IF NOT EXISTS "boards" (
@@ -81,13 +90,13 @@ CREATE TABLE IF NOT EXISTS "boards" (
 CREATE TABLE IF NOT EXISTS "posts_media" (
     "id"            BIGSERIAL,
     "post_id"       INT8,
-    "created_on"    INT8,
+    "created_on"    TIMESTAMPTZ,
     "site_deleted"  BOOL,
     "spoiler"       BOOL,
     "board"         TEXT,
     "filename"      TEXT,
     "md5"           BYTEA,
-    "sha256"        BYTEA UNIQUE,
+    "sha256"        BYTEA,
     "sha256t_op"    BYTEA,
     "sha256t_reply" BYTEA,
     "content_thumb" BYTEA
@@ -142,22 +151,8 @@ COMMENT ON COLUMN media.extra   is 'Sorage for any other columns';
 
 
 -- Optional TimescaleDB. It is recommended to partition on a huge table such as posts.
-CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;
-SELECT create_hypertable('posts', 'time', if_not_exists => true, chunk_time_interval => INTERVAL '2 weeks');
--- (the default value is 1 week)
--- other functions:
--- SELECT create_hypertable('posts', 'time', if_not_exists => true, chunk_time_interval => 1296000); -- 15 days
--- SELECT set_chunk_time_interval('posts', chunk_time_interval => INTERVAL '1 week');
-
-
-CREATE UNIQUE   INDEX IF NOT EXISTS unq_idx_boards_board          ON "boards" ("board");
-CREATE UNIQUE   INDEX IF NOT EXISTS unq_idx_no_subnum_board_time  ON "posts" ("no", COALESCE("subnum", 0), board, "time");
-CREATE          INDEX IF NOT EXISTS ix_no                         ON "posts" USING brin ("no") WITH (pages_per_range = 32, autosummarize = on);
-CREATE          INDEX IF NOT EXISTS ix_board                      ON "posts" USING brin ("board") WITH (pages_per_range = 32, autosummarize = on);
-CREATE          INDEX IF NOT EXISTS ix_time                       ON "posts" ("time") ;
-CREATE          INDEX IF NOT EXISTS ix_md5                        ON "posts" USING brin ("md5") WITH (pages_per_range = 32, autosummarize = on) WHERE "md5" is not null;
-CREATE INDEX IF NOT EXISTS ix_no_board   ON "posts" USING brin ("no", "board" ) WITH (pages_per_range = 32, autosummarize = on);
-CREATE INDEX IF NOT EXISTS ix_no_resto_board   ON "posts" USING brin ("no", "resto", "board" ) WITH (pages_per_range = 32, autosummarize = on);
+-- CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;
+-- SELECT create_hypertable('posts', 'created_on', if_not_exists => true, chunk_time_interval => INTERVAL '2 weeks');
 
 -- Create the 4chan schema as a type
 DO $$
@@ -435,8 +430,7 @@ RETURN query
                 RETURNING *;
 END;  
 $$ LANGUAGE plpgsql;
-	-- Should not mark this a PARALLEL SAFE since this program could run multiple processess of itself, in which they're all mutating fields in parallel.
-	-- This is probably not the case due to MVCC but I'll play it safe since I'd rather not lose data or have them incorrect.
+
 
 CREATE OR REPLACE FUNCTION function_trigger_update_replies_images()
 RETURNS trigger AS $$

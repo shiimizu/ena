@@ -38,6 +38,7 @@ build*
 *.json
 *.7z
 *.zip
+*backup*
 
 README_.md
 fun.sql

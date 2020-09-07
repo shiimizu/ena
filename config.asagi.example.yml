@@ -15,7 +15,7 @@ database:
   #  - https://docs.rs/mysql_async/*/mysql_async/struct.Opts.html
   #  - https://docs.rs/mysql_async/*/mysql_async/struct.PoolOpts.html
   # if present, it is used instead of the connection fields below.
-  url:                  "mysql://ena@localhost/ena" 
+  url:                  "mysql://asagi@localhost/asagi" 
   engine:               innodb
   database:             asagi
   host:                 localhost
@@ -25,7 +25,7 @@ database:
 
 asagi:
   use:                  false   # use Ena as an Asagi drop-in replacement
-  with_utc_timestamps:  false   # add and use `utc_timestamp_expired`, `utc_timestamp`, `utc_timestamp_archived` in board tables if it exists
+  with_utc_timestamps:  false   # add and use `utc_timestamp_expired`, `utc_timestamp`, in board tables and `utc_time_archived` in {board}_threads tables
   with_extra_columns:   false   # add any extra columns to `exif`
 
 proxies:
