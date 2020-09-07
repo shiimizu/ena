@@ -16,10 +16,86 @@ grant execute on functions to public;
 alter default privileges in schema extensions
 grant usage on types to public;
 
+-- Unique hashes of all media
+CREATE TABLE IF NOT EXISTS "media" (
+    "w"         INT4,
+    "h"         INT4,
+    "tn_w"      INT2,
+    "tn_h"      INT2,
+    "fsize"     INT4,
+    "banned"    BOOL,
+    "ext"       TEXT,
+    "fid"       TEXT,
+    "md5"       BYTEA,
+    "sha256"    BYTEA UNIQUE,
+    "content"   BYTEA,
+    "extra"     JSONB
+);
+
+COMMENT ON COLUMN media.w       is 'Image width dimension';
+COMMENT ON COLUMN media.h       is 'Image height dimension';
+COMMENT ON COLUMN media.tn_w    is 'Thumbnail image width dimension';
+COMMENT ON COLUMN media.tn_h    is 'Thumbnail image height dimension';
+COMMENT ON COLUMN media.fsize   is 'Size of uploaded file in bytes';
+COMMENT ON COLUMN media.banned  is 'If the file is banned';
+COMMENT ON COLUMN media.ext     is 'Filetype';
+COMMENT ON COLUMN media.md5     is 'MD5 hash of file';
+COMMENT ON COLUMN media.sha256  is 'SHA256 hash of file';
+COMMENT ON COLUMN media.content is 'Optionally stored file';
+COMMENT ON COLUMN media.extra   is 'Sorage for any other columns';
+
+-- The media entry that a post has
+CREATE TABLE IF NOT EXISTS "posts_media" (
+    "id"            BIGSERIAL,
+    "post_num"      INT8,
+    "thread_num"    INT8,
+    "created_on"    TIMESTAMPTZ,
+    "site_deleted"  BOOL,
+    "spoiler"       BOOL,
+    "board"         TEXT,
+    "filename"      TEXT,
+    "md5"           BYTEA,
+    "sha256"        BYTEA,
+    "sha256t_op"    BYTEA,
+    "sha256t_reply" BYTEA,
+    "content_thumb" BYTEA,
+    "fid"           TEXT,
+    "extra"         JSONB,
+    PRIMARY KEY(board, post_num, sha256, sha256t_op, sha256t_reply),
+    UNIQUE (board, post_num)
+);
+
+COMMENT ON COLUMN posts_media.id                is 'Monotonically increasing id';
+COMMENT ON COLUMN posts_media.post_num          is 'The numeric post ID';
+COMMENT ON COLUMN posts.media.thread_num        is 'The numeric thread ID if reply or NULL if OP';
+COMMENT ON COLUMN posts_media.created_on        is 'UTC timestamp + microtime that an image was uploaded';
+COMMENT ON COLUMN posts_media.site_deleted      is 'If the file was deleted at that website';
+COMMENT ON COLUMN posts_media.spoiler           is 'If the media was marked as spoiler';
+COMMENT ON COLUMN posts_media.board             is 'Board name';
+COMMENT ON COLUMN posts_media.filename          is 'Filename as it appeared on the poster''s device';
+COMMENT ON COLUMN posts_media.md5               is 'MD5 hash of file';
+COMMENT ON COLUMN posts_media.sha256            is 'SHA256 hash of file';
+COMMENT ON COLUMN posts_media.sha256t_op        is 'SHA256 hash of thumbnail when the post is OP';
+COMMENT ON COLUMN posts_media.sha256t_reply     is 'SHA256 hash of thumbnail when the post is a reply';
+COMMENT ON COLUMN posts_media.content_thumb     is 'Optionally stored thumbnail';
+COMMENT ON COLUMN posts_media.fid               is 'SeaweedFS fid for thumbnails';
+COMMENT ON COLUMN posts_media.extra             is 'Storage for any other columns';
+
+-- List of all boards
+CREATE TABLE IF NOT EXISTS "boards" (
+    "last_modified_threads"     INT8,
+    "last_modified_archive"     INT8,
+    "id"                        SERIAL  NOT NULL UNIQUE PRIMARY KEY,
+    "name"                      TEXT    NOT NULL UNIQUE,
+    "title"                     TEXT,
+    "threads"                   JSONB,
+    "archive"                   JSONB
+);
+
 -- List of posts
 CREATE TABLE IF NOT EXISTS "posts" (
-    "id"            INT8        NOT NULL,
-    "thread_id"     INT8        NOT NULL,
+    "num"            INT8        NOT NULL,
+    "thread_num"     INT8        ,
     "created_on"    TIMESTAMPTZ NOT NULL,
     "updated_on"    TIMESTAMPTZ,
     "archived_on"   TIMESTAMPTZ,
@@ -32,7 +108,8 @@ CREATE TABLE IF NOT EXISTS "posts" (
     "bumplimit"     BOOL,
     "imagelimit"    BOOL,
     "md5"           BYTEA,
-    "board"         TEXT NOT NULL,
+    "sha256"        BYTEA REFERENCES "media"("sha256"),
+    "board"         TEXT NOT NULL REFERENCES "boards"("name") ON UPDATE CASCADE ON DELETE CASCADE,
     "name"          TEXT,
     "subject"       TEXT,
     "html"          TEXT,
@@ -41,11 +118,11 @@ CREATE TABLE IF NOT EXISTS "posts" (
     "country"       TEXT,
     "ip"            INET,
     "extra"         JSONB,
-    UNIQUE ("id", "board", "time")
+    PRIMARY KEY("board", "num", "created_on")
 );
 
-COMMENT ON COLUMN posts.id          is 'The numeric post ID';
-COMMENT ON COLUMN posts.thread_id   is 'The numeric thread ID if reply or 0 if OP';
+COMMENT ON COLUMN posts.num         is 'The numeric post ID';
+COMMENT ON COLUMN posts.thread_num  is 'The numeric thread ID if reply or NULL if OP';
 COMMENT ON COLUMN posts.created_on  is 'UTC timestamp the post was created';
 COMMENT ON COLUMN posts.updated_on  is 'UTC timestamp from ''Last-Modified'' header in server response for OP, or when a post is modified/deleted/updated for replies';
 COMMENT ON COLUMN posts.archived_on is 'UTC timestamp the post was archived';
@@ -55,6 +132,7 @@ COMMENT ON COLUMN posts.images      is 'Total number of image replies to a threa
 COMMENT ON COLUMN posts.unique_ips  is 'Number of unique posters in a thread';
 COMMENT ON COLUMN posts.sticky      is 'If the thread is being pinned to the top of the page';
 COMMENT ON COLUMN posts.closed      is 'If the thread is closed to replies';
+COMMENT ON COLUMN posts.bumplimit   is 'If a thread has reached bumplimit, it will no longer bump';
 COMMENT ON COLUMN posts.imagelimit  is 'If an image has reached image limit, no more image replies can be made';
 COMMENT ON COLUMN posts.md5         is 'MD5 hash of file in binary';
 COMMENT ON COLUMN posts.board       is 'Board';
@@ -74,80 +152,6 @@ CREATE          INDEX IF NOT EXISTS ix_time                       ON "posts" ("t
 CREATE          INDEX IF NOT EXISTS ix_md5                        ON "posts" USING brin ("md5") WITH (pages_per_range = 32, autosummarize = on) WHERE "md5" is not null;
 CREATE INDEX IF NOT EXISTS ix_no_board   ON "posts" USING brin ("no", "board" ) WITH (pages_per_range = 32, autosummarize = on);
 CREATE INDEX IF NOT EXISTS ix_no_resto_board   ON "posts" USING brin ("no", "resto", "board" ) WITH (pages_per_range = 32, autosummarize = on);
-
--- List of all boards
-CREATE TABLE IF NOT EXISTS "boards" (
-    "last_modified_threads"     INT8,
-    "last_modified_archive"     INT8,
-    "id"                        SMALLSERIAL NOT NULL UNIQUE PRIMARY KEY,
-    "board"                     TEXT        NOT NULL UNIQUE REFERENCES "posts" ("board"),
-    "title"                     TEXT,
-    "threads"                   JSONB,
-    "archive"                   JSONB
-);
-
--- The media entry that a post has
-CREATE TABLE IF NOT EXISTS "posts_media" (
-    "id"            BIGSERIAL,
-    "post_id"       INT8,
-    "created_on"    TIMESTAMPTZ,
-    "site_deleted"  BOOL,
-    "spoiler"       BOOL,
-    "board"         TEXT,
-    "filename"      TEXT,
-    "md5"           BYTEA,
-    "sha256"        BYTEA,
-    "sha256t_op"    BYTEA,
-    "sha256t_reply" BYTEA,
-    "content_thumb" BYTEA
-    "fid"           TEXT,
-    "extra"         JSONB,
-    PRIMARY KEY(board, post_id, sha256, sha256t_op, sha256t_reply)
-    UNIQUE (board, post_id)
-)
-
-COMMENT ON COLUMN posts_media.id                is 'Monotonically increasing id';
-COMMENT ON COLUMN posts_media.post_id           is 'The numeric post ID';
-COMMENT ON COLUMN posts_media.created_on        is 'UTC timestamp + microtime that an image was uploaded';
-COMMENT ON COLUMN posts_media.site_deleted      is 'If the file was deleted at that website';
-COMMENT ON COLUMN posts_media.spoiler           is 'If the media was marked as spoiler';
-COMMENT ON COLUMN posts_media.board             is 'Board name';
-COMMENT ON COLUMN posts_media.filename          is 'Filename as it appeared on the poster''s device';
-COMMENT ON COLUMN posts_media.md5               is 'MD5 hash of file';
-COMMENT ON COLUMN posts_media.sha256            is 'SHA256 hash of file';
-COMMENT ON COLUMN posts_media.sha256t_op        is 'SHA256 hash of thumbnail when the post is OP';
-COMMENT ON COLUMN posts_media.sha256t_reply     is 'SHA256 hash of thumbnail when the post is a reply';
-COMMENT ON COLUMN posts_media.content_thumb     is 'Optionally stored thumbnail';
-COMMENT ON COLUMN posts_media.fid               is 'SeaweedFS fid for thumbnails';
-COMMENT ON COLUMN posts_media.extra             is 'Storage for any other columns';
-
--- Unique hashes of all media
-CREATE TABLE IF NOT EXISTS "media" (
-    "w"         INT4,
-    "h"         INT4,
-    "tn_w"      INT2,
-    "tn_h"      INT2,
-    "fsize"     INT4,
-    "banned"    BOOL,
-    "ext"       TEXT,
-    "fid"       TEXT,
-    "md5"       BYTEA,
-    "sha256"    BYTEA UNIQUE,
-    "content"   BYTEA,
-    "extra"     JSONB
-)
-
-COMMENT ON COLUMN media.w       is 'Image width dimension';
-COMMENT ON COLUMN media.h       is 'Image height dimension';
-COMMENT ON COLUMN media.tn_w    is 'Thumbnail image width dimension';
-COMMENT ON COLUMN media.tn_h    is 'Thumbnail image height dimension';
-COMMENT ON COLUMN media.fsize   is 'Size of uploaded file in bytes';
-COMMENT ON COLUMN media.banned  is 'If the file is banned';
-COMMENT ON COLUMN media.ext     is 'Filetype';
-COMMENT ON COLUMN media.md5     is 'MD5 hash of file';
-COMMENT ON COLUMN media.sha256  is 'SHA256 hash of file';
-COMMENT ON COLUMN media.content is 'Optionally stored file';
-COMMENT ON COLUMN media.extra   is 'Sorage for any other columns';
 
 
 -- Optional TimescaleDB. It is recommended to partition on a huge table such as posts.
