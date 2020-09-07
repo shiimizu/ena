@@ -373,7 +373,9 @@ impl Exif {
         if let Some(_extra) = post.extra.as_ref().and_then(|v| v.as_object()) {
             for (k, v) in _extra {
                 if let Ok(val_str) = serde_json::to_string(v) {
-                    exif_data.insert(k.clone(), val_str);
+                    if !val_str.is_empty() {
+                        exif_data.insert(k.clone(), val_str);
+                    }
                 }
             }
         }

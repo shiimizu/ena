@@ -12,7 +12,6 @@
 // use async_std::sync::RwLock;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
 use anyhow::Result;
-use async_trait::async_trait;
 use ctrlc;
 use fomat_macros::{epintln, fomat, pintln};
 use futures::{channel::oneshot, future, future::Either, stream::FuturesUnordered};
@@ -51,20 +50,6 @@ pub mod sql;
 
 static CTRLC: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static INIT: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
-struct FourChan<D>
-where D: sql::QueryExecutor + sql::DropExecutor {
-    client:    reqwest::Client,
-    db_client: D,
-    opt:       Opt,
-}
-
-impl<D> FourChan<D>
-where D: sql::QueryExecutor + sql::DropExecutor
-{
-    pub async fn new(client: reqwest::Client, db_client: D, opt: Opt) -> Self {
-        Self { client, db_client, opt }
-    }
-}
 
 fn get_ctrlc() -> bool {
     CTRLC.load(Ordering::SeqCst) >= 1
@@ -358,6 +343,7 @@ async fn async_main() -> Result<()> {
         let stmt_count = board_count * query_count;
         let pool = mysql_async::Pool::new(&fomat!( (opt.database.url.as_ref().unwrap()) "?stmt_cache_size=" (stmt_count) "&pool_min=1&pool_max=3"));
         let mut conn = pool.get_conn().await?;
+        // How effective is this?
         conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;").await?;
         conn.query_drop("SET SESSION CHARACTER_SET_CONNECTION = utf8mb4;").await?;
         conn.query_drop("SET SESSION CHARACTER_SET_CLIENT = utf8mb4;").await?;
@@ -373,20 +359,20 @@ async fn async_main() -> Result<()> {
     }
 }
 
-#[async_trait]
-pub trait Archiver {
-    async fn run(&self) -> Result<()>;
-    async fn download_board_and_thread(&self, board: Board, thread: Option<u64>) -> Result<()>;
-    async fn download_boards_index(&self) -> Result<()>;
-    async fn download_board(&self, board_info: &Board, thread_type: ThreadType, startup: bool) -> Result<StatusCode>;
-    async fn download_thread(&self, board_info: &Board, thread: u64, thread_type: ThreadType, startup: bool) -> Result<(ThreadType, bool)>;
-    async fn download_media(&self, board_info: &Board, details: MediaDetails, media_type: MediaType) -> Result<()>;
+struct FourChan<D>
+where D: sql::QueryExecutor + sql::DropExecutor {
+    client:    reqwest::Client,
+    db_client: D,
+    opt:       Opt,
 }
 
-#[async_trait]
-impl<D> Archiver for FourChan<D>
-where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
+impl<D> FourChan<D>
+where D: sql::QueryExecutor + sql::DropExecutor
 {
+    pub async fn new(client: reqwest::Client, db_client: D, opt: Opt) -> Self {
+        Self { client, db_client, opt }
+    }
+
     /// Archive 4chan based on --boards | --threads options
     async fn run(&self) -> Result<()> {
         // Init the `boards` table for MySQL
@@ -459,7 +445,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
     }
 
     async fn download_boards_index(&self) -> Result<()> {
-        let last_modified = self.db_client.boards_index_get_last_modified().await.unwrap();
+        let last_modified = self.db_client.boards_index_get_last_modified().await.ok().flatten();
         for retry in 0..=3u8 {
             let resp = self.client.gett(self.opt.api_url.join("boards.json")?, last_modified.as_ref()).await;
             match resp {
@@ -659,7 +645,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
         }
         // let fun_name = "download_board";
         let last_modified = self.db_client.board_get_last_modified(thread_type, board_info).await;
-        let url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
+        let mut url = self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join(&fomat!((thread_type)".json"))?;
         for retry in 0..=board_info.retry_attempts {
             if get_ctrlc() {
                 break;
@@ -685,7 +671,6 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                     match status {
                         StatusCode::OK => {
                             let body_json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
-
                             // "download_board: ({thread_type}) /{board}/{tab}{new_lm} | {prev_lm} | {retry_status}"
                             /*pintln!((fun_name) ":  (" (thread_type) ") /" (&board_info.board) "/"
                             if board_info.board.len() <= 2 { "\t\t" } else {"\t "}
@@ -707,6 +692,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                 };
 
                                 // FIXME: Loop on db call here
+
                                 match res {
                                     Err(e) => {
                                         error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board_info.board, err = e,);
@@ -785,41 +771,68 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                         }
                                                     }
                                                 },
-                                            Either::Left(rows) => {
+                                            Either::Left(mut rows) => {
                                                 futures::pin_mut!(rows);
-                                                let total: usize = rows.by_ref().fold(0, |acc, _| async move { acc + 1 }).await;
+
+                                                // Collecting here is OK since eventually doing a `rows.map` is basically the same thing
+                                                // This is done so I get the length
+                                                let list = rows.collect::<Vec<_>>().await;
+                                                let total = list.len();
                                                 if total > 0 {
                                                     if thread_type.is_threads() {
                                                         info!(
-                                                            "({endpoint})\t/{board}/\t\tTotal {modified} threads: {length}",
+                                                            "({endpoint})\t/{board}/\t\t{modified} threads: {length}",
                                                             endpoint = thread_type,
-                                                            modified = if last_modified.is_none() { "new" } else { "modified" },
+                                                            modified = if startup {
+                                                                "Received"
+                                                            } else {
+                                                                if last_modified.is_none() {
+                                                                    "Total new"
+                                                                } else {
+                                                                    "Total new/modified"
+                                                                }
+                                                            },
                                                             board = &board_info.board,
                                                             length = total
                                                         );
                                                     } else {
                                                         info!(
-                                                            "({endpoint})\t/{board}/\t\tTotal {modified} threads: {length}",
+                                                            "({endpoint})\t/{board}/\t\t{modified} threads: {length}",
                                                             endpoint = format!(ansi!("{;magenta}"), thread_type),
-                                                            modified = if last_modified.is_none() { "new" } else { "modified" },
+                                                            modified = if startup {
+                                                                "Received"
+                                                            } else {
+                                                                if last_modified.is_none() {
+                                                                    "Total new"
+                                                                } else {
+                                                                    "Total new/modified"
+                                                                }
+                                                            },
                                                             board = &board_info.board,
                                                             length = total
                                                         );
                                                     }
-                                                    let mut fut = rows
+                                                    let mut fut = stream::iter(list)
                                                         .map(|row| {
                                                             let no: i64 = row.unwrap().get(0);
                                                             self.download_thread(board_info, no as u64, thread_type, startup)
                                                         })
                                                         .buffer_unordered(self.opt.limit as usize);
+                                                    let mut total = 0usize;
                                                     while let Some(res) = fut.next().await {
                                                         res.unwrap();
                                                     }
                                                 } else {
                                                     if thread_type.is_threads() {
-                                                        info!("({endpoint})\t/{board}/\t\t[Not Modified]", endpoint = thread_type, board = &board_info.board,);
+                                                        warn!("({endpoint})\t/{board}/\t\t{status}", endpoint = thread_type, board = &board_info.board, status = status,);
+                                                    // info!("({endpoint})\t/{board}/\t\t[Not Modified]", endpoint = thread_type, board = &board_info.board,);
                                                     } else {
-                                                        info!("({endpoint})\t/{board}/\t\t[Not Modified]", endpoint = format!(ansi!("{;magenta}"), thread_type), board = &board_info.board,);
+                                                        warn!("({endpoint})\t/{board}/\t\t{status}", endpoint = format!(ansi!("{;magenta}"), thread_type), board = &board_info.board, status = status,);
+                                                        // info!("({endpoint})\t/{board}/\t\t[Not
+                                                        // Modified]", endpoint =
+                                                        // format!(ansi!("{;magenta}"),
+                                                        // thread_type), board =
+                                                        // &board_info.board,);
                                                     }
                                                 }
                                             }
@@ -885,9 +898,8 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                 return Ok((thread_type, deleted));
             }
             let last_modified = self.db_client.thread_get_last_modified(board_info.id, thread).await;
-            let url =
+            let mut url =
                 self.opt.api_url.join(fomat!((&board_info.board)"/").as_str())?.join("thread/")?.join(&format!("{thread}{tail}.json", thread = thread, tail = if with_tail { "-tail" } else { "" }))?;
-
             for retry in 0..=board_info.retry_attempts {
                 let now = Instant::now();
 
@@ -1055,7 +1067,7 @@ where D: sql::QueryExecutor + sql::DropExecutor + Sync + Send
                                                                     "({endpoint})\t/{board}/{thread}#{no}\t[DELETED]",
                                                                     endpoint = thread_type,
                                                                     board = &board_info.board,
-                                                                    thread = if resto == 0 { (no) } else { (resto) },
+                                                                    thread = if resto == 0 { no } else { resto },
                                                                     no = no,
                                                                 );
                                                                 // pintln!("download_thread:

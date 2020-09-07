@@ -110,7 +110,7 @@
         "extra"             JSONB
     );
     
-    COMMENT ON COLUMN posts.last_modified is 'Last modified time according to ''Last-Modified'' header in server response for OP, or modified/deleted/updated for posts';
+    COMMENT ON COLUMN posts.last_modified is 'Last modified time according to ''Last-Modified'' header in server response for OP, or modified/deleted/updated for replies';
     COMMENT ON COLUMN posts.deleted_on is 'Whenever a post is deleted. This is only accurate if you are actively archiving. Therefore it should not be relied upon entirely.';
     COMMENT ON COLUMN posts.ip is 'Gotta have a way to ban spammers ya''know';
     
@@ -313,15 +313,12 @@
                         semantic_url    = excluded.semantic_url,
                         -- replies         = excluded.replies,
                         -- images          = excluded.images,
-                        unique_ips      = COALESCE(posts.unique_ips, excluded.unique_ips),
+                        unique_ips      = GREATEST(excluded.unique_ips, posts.unique_ips),
                         tag             = excluded.tag,
                         since4pass      = excluded.since4pass,
                         extra           = posts.extra || excluded.extra
                         -- Only update if the following columns are different.
-            			-- Also, either OP or reply post, OP will always have unique_ips, replies will not. A whole row will not update if one or the other is null..!
-            			-- This won't happen since before inserting a new post, unique_ips is always default to 1 if null.
-            			-- The reason we do all this for unique_ips is because it becomes null on archived and doing all this retains it after it's archived.
-                        WHERE ((posts.unique_ips IS NULL AND excluded.unique_ips IS NULL) OR (posts.unique_ips IS NOT NULL AND excluded.unique_ips IS NOT NULL)) AND EXISTS (
+                        WHERE EXISTS (
                         SELECT
                             posts.no,
                             posts.sticky,
@@ -341,7 +338,7 @@
                             -- posts.tn_h,
                             -- posts.tim,
                             posts.time,
-                            posts.last_modified,
+                            -- posts.last_modified,
                             -- posts.md5,
                             -- posts.fsize,
                             -- posts.m_img,
@@ -385,7 +382,7 @@
                             -- excluded.tn_h,
                             -- excluded.tim,
                             excluded.time,
-                            excluded.last_modified,
+                            -- excluded.last_modified,
                             -- excluded.md5,
                             -- excluded.fsize,
                             -- excluded.m_img,
@@ -402,7 +399,7 @@
                             excluded.semantic_url,
                             -- excluded.replies,
                             -- excluded.images,
-                            excluded.unique_ips,
+                            GREATEST(excluded.unique_ips, posts.unique_ips) as unique_ips,
                             excluded.tag,
                             excluded.since4pass,
                             excluded.extra

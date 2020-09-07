@@ -42,6 +42,24 @@ fn get_sql_template(board: &str, engine: &str, charset: &str, collate: &str, que
     query.replace("%%ENGINE%%", engine).replace("%%BOARD%%", board).replace("%%CHARSET%%", charset).replace("%%COLLATE%%", collate)
 }
 
+use futures::prelude::*;
+struct AsagiInner {
+    t:              String,
+    direct_db_pool: mysql_async::Pool,
+}
+
+impl AsagiInner {
+    fn get_db_conn(&self) -> impl Future<Output = mysql_async::Result<mysql_async::Conn>> {
+        let b = true;
+        match b {
+            true => Either::Left(self.direct_db_pool.get_conn().and_then(|mut conn| async {
+                conn.query_drop("SET time_zone='+00:00';").await?;
+                Ok(conn)
+            })),
+            false => Either::Right(self.direct_db_pool.get_conn()),
+        }
+    }
+}
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default, Eq)]
 struct Page {
     page:    u8,

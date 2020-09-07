@@ -171,7 +171,9 @@ Core functionality works.
 TODO:
 - [ ] Add optional `utc_timestamp`
 - [ ] Fix `prevDirStructure`
-- [ ] Use correct permissions when creating web-dirs
+- [ ] Use the correct permissions when creating web-dirs
+- [ ] Make archivedOn optional
+- [ ] Make future columns optional
 
 ## Please respect the 4chan API guidelines as best you can
 1. Use `Last-Modified` and `If-Modified-Since`

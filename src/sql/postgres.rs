@@ -134,7 +134,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let t = &(thread as i64);
         let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync)];
         let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
-        Ok(Either::Left(res?))
+        res.map(|row_stream| Either::Left(row_stream))
     }
 
     async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
@@ -144,7 +144,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let t = &(thread as i64);
         let params = vec![b as &(dyn ToSql + Sync), t as &(dyn ToSql + Sync), json as &(dyn ToSql + Sync)];
         let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
-        Ok(Either::Left(res?))
+        res.map(|row_stream| Either::Left(row_stream))
     }
 
     async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
@@ -154,7 +154,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let s = &thread_type.as_str();
         let params = vec![s as &(dyn ToSql + Sync), b as &(dyn ToSql + Sync), json as &(dyn ToSql + Sync)];
         let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
-        Ok(Either::Left(res?))
+        res.map(|row_stream| Either::Left(row_stream))
     }
 
     async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
@@ -164,7 +164,7 @@ impl QueryExecutor for tokio_postgres::Client {
         let b = &(board_id as i16);
         let params = vec![b as &(dyn ToSql + Sync), json as &(dyn ToSql + Sync)];
         let res = self.query_raw(statement, params.into_iter().map(|p| p as &dyn ToSql)).await.map_err(|e| anyhow!(e));
-        Ok(Either::Left(res?))
+        res.map(|row_stream| Either::Left(row_stream))
     }
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> Result<bool> {
@@ -289,17 +289,20 @@ pub fn board_upsert_archive<'a>() -> &'a str {
     "#
 }
 
+// Unused
 pub fn thread_get<'a>() -> &'a str {
     r#"
-    SELECT * FROM posts WHERE board=$1 AND (no=$2 or resto=$2) ORDER BY no;
+    SELECT * FROM posts WHERE board=$1 AND (no=$2 or resto=$2) AND coalesce(subnum, 0)=0 ORDER BY no;
     "#
 }
+
 pub fn thread_get_media<'a>() -> &'a str {
     // SELECT * FROM posts WHERE board=$1 AND (no=$2 or resto=$2) AND md5 IS NOT NULL ORDER BY no;
     r#"
     SELECT posts.resto, posts.no, posts.tim, posts.ext, posts.filename, media.* FROM posts
     INNER JOIN media ON posts.md5 = media.md5
-    WHERE posts.board = $1  AND (posts.no = $2 OR (posts.no >= $3 AND posts.resto=$2 ))
+    WHERE posts.board = $1  AND coalesce(posts.subnum, 0)=0
+                            AND (posts.no = $2 OR (posts.no >= $3 AND posts.resto=$2 ))
                             AND posts.md5 IS NOT null
                             AND NOT (CASE WHEN posts.filedeleted is not null THEN posts.filedeleted = true ELSE false END);
     "#
@@ -310,12 +313,12 @@ pub fn thread_get_last_modified<'a>() -> &'a str {
         SELECT COALESCE(op.last_modified, latest_post.last_modified) as "last_modified" FROM
         (
             SELECT to_char(to_timestamp(max("time")) AT TIME ZONE 'UTC', 'Dy, DD Mon YYYY HH24:MI:SS GMT') AS "last_modified"
-            FROM posts WHERE board=$1 AND (no=$2 OR resto=$2)
+            FROM posts WHERE board=$1 AND (no=$2 OR resto=$2) AND coalesce(subnum, 0)=0
         ) latest_post
         LEFT JOIN
         (
             SELECT to_char(to_timestamp("last_modified") AT TIME ZONE 'UTC', 'Dy, DD Mon YYYY HH24:MI:SS GMT') AS "last_modified"
-            FROM posts WHERE board=$1 AND no=$2 AND resto=0
+            FROM posts WHERE board=$1 AND no=$2 AND resto=0 AND coalesce(subnum, 0)=0
         ) op
         ON true; 
     "#
@@ -348,10 +351,10 @@ pub fn thread_update_deleted<'a>() -> &'a str {
             
         FROM 
             (
-                SELECT MIN(board) AS board, MIN(resto) AS resto, MAX(deleted_on) AS deleted_on, COUNT(no) AS replies, COUNT(md5) AS "images" FROM posts WHERE board = $1 AND resto = $2
+                SELECT MIN(board) AS board, MIN(resto) AS resto, MAX(deleted_on) AS deleted_on, COUNT(no) AS replies, COUNT(md5) AS "images" FROM posts WHERE board = $1 AND resto = $2 AND coalesce(subnum, 0)=0
             ) as new_vals
         WHERE
-            posts.board = $1 AND posts.no = $2 AND
+            posts.board = $1 AND posts.no = $2 AND coalesce(posts.subnum, 0)=0 AND
             (posts.deleted_on is NULL or posts.deleted_on != new_vals.deleted_on or posts.replies != new_vals.replies or posts.images != new_vals.images)
         RETURNING *;
     "#
@@ -437,7 +440,7 @@ pub fn threads_get_modified<'a>() -> &'a str {
 }
 
 pub fn post_get_single<'a>() -> &'a str {
-    "SELECT * from posts where board=$1 and resto=$2 and no=$3 LIMIT 1;"
+    "SELECT * from posts where board=$1 and resto=$2 and no=$3 AND coalesce(subnum, 0)=0 LIMIT 1;"
 }
 
 pub fn post_get_media<'a>() -> &'a str {
