@@ -296,7 +296,6 @@ impl QueryExecutor for mysql_async::Pool {
                     log::error!("{}", e);
                     if get_ctrlc() {
                         return None;
-                        //break;
                     }
                     sleep(Duration::from_millis(500)).await;
                 }
@@ -417,21 +416,23 @@ impl QueryExecutor for mysql_async::Pool {
         );
         loop {
             match conn.query_drop(q.as_str()).await {
-                Err(e) => match e {
-                    mysql_async::Error::Server(se) => {
-                        // Don't display deadlocks as they are expected to occur
-                        if se.code != 1213 {
-                            log::error!("{}", se);
+                Err(e) => {
+                    match e {
+                        mysql_async::Error::Server(se) => {
+                            // Don't display deadlocks as they are expected to occur
+                            if se.code != 1213 {
+                                log::error!("thread_upsert: {}", se);
+                            }
                         }
+                        _e => log::error!("thread_upsert: {}", _e),
                     }
-                    _e => log::error!("{}", _e),
-                },
+                    if get_ctrlc() {
+                        break;
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
                 Ok(_) => break,
             }
-            if get_ctrlc() {
-                break;
-            }
-            sleep(Duration::from_millis(500)).await;
         }
 
         // Upsert archived
@@ -443,21 +444,23 @@ impl QueryExecutor for mysql_async::Pool {
                 WHERE thread_num=" (op_no) ";");
                 loop {
                     match conn.query_drop(query.as_str()).await {
-                        Err(e) => match e {
-                            mysql_async::Error::Server(se) => {
-                                // Don't display deadlocks as they are expected to occur
-                                if se.code != 1213 {
-                                    log::error!("{}", se);
+                        Err(e) => {
+                            match e {
+                                mysql_async::Error::Server(se) => {
+                                    // Don't display deadlocks as they are expected to occur
+                                    if se.code != 1213 {
+                                        log::error!("thread_upsert: (update utc_time_archived) {}", se);
+                                    }
                                 }
+                                _e => log::error!("thread_upsert: (update utc_time_archived) {}", _e),
                             }
-                            _e => log::error!("{}", _e),
-                        },
+                            if get_ctrlc() {
+                                break;
+                            }
+                            sleep(Duration::from_millis(500)).await;
+                        }
                         Ok(_) => break,
                     }
-                    if get_ctrlc() {
-                        break;
-                    }
-                    sleep(Duration::from_millis(500)).await;
                 }
             }
         }
@@ -525,10 +528,12 @@ impl QueryExecutor for mysql_async::Pool {
         let mut list_no_iter = diff.iter().enumerate();
 
         // Manually stitch the query together so we can have multiple values/batch upsert
+        // List the necessary fields
+        // We use an UPSERT rather UPDATE because it can have multiple values
         let query = fomat!(
             "
             INSERT INTO `" (&board.name) "`
-            (num, subnum, deleted, `timestamp_expired`
+            (num, subnum, deleted, `timestamp`, `timestamp_expired`
             "
             if board.with_utc_timestamps { ", `utc_timestamp_expired`" }
             "
@@ -536,6 +541,8 @@ impl QueryExecutor for mysql_async::Pool {
             VALUES"
         for (i, no) in list_no_iter {
             "\n(" (no) ", 0, 1, "
+            ((Post::timestamp_nyc(unix_timestamp())))
+            ", "
             ((Post::timestamp_nyc(unix_timestamp())))
             if board.with_utc_timestamps { ", FROM_UNIXTIME(" (unix_timestamp()) ")" }
 
@@ -550,11 +557,25 @@ impl QueryExecutor for mysql_async::Pool {
 
         ";"
         );
-        while let Err(e) = conn.query_drop(query.as_str()).await {
-            if get_ctrlc() {
-                break;
+        loop {
+            match conn.query_drop(query.as_str()).await {
+                Err(e) => {
+                    match e {
+                        mysql_async::Error::Server(se) => {
+                            // Don't display deadlocks as they are expected to occur
+                            if se.code != 1213 {
+                                log::error!("thread_update_deleteds: {}", se);
+                            }
+                        }
+                        _e => log::error!("thread_update_deleteds: {}", _e),
+                    }
+                    if get_ctrlc() {
+                        break;
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
+                Ok(_) => break,
             }
-            sleep(Duration::from_millis(500)).await;
         }
 
         Ok(Either::Right(Some(diff)))

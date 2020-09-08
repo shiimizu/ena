@@ -543,51 +543,32 @@ where D: sql::QueryExecutor + sql::DropExecutor
 
         loop {
             let now = Instant::now();
+            let mut thread_type = ThreadType::Threads;
 
             // Go here if this function was called for a thread
             if let Some(_thread) = thread {
                 // with_threads or with_archives don't apply here, since going here implies you want the
                 // thread/archive
-                let (thread_type, deleted) = self.download_thread(&_board, _thread, ThreadType::Threads, startup).await.unwrap();
-                if !_board.watch_threads || get_ctrlc() || thread_type.is_archive() || deleted {
+                let (_thread_type, deleted) = self.download_thread(&_board, _thread, ThreadType::Threads, startup).await.unwrap();
+                thread_type = _thread_type;
+                if !_board.watch_threads || get_ctrlc() || _thread_type.is_archive() || deleted {
                     break;
                 }
             } else {
                 // Go here if this function was called for a board
 
                 if _board.with_threads && _board.with_archives {
-                    // FIXME this will not poll together since SEMPAHORE_BOARDS is only 1. Prob better this way, reduce
-                    // memory
-                    // To fix this, have another SEMAPHORE for archive threads
-
-                    // res = self.download_board(&_board, ThreadType::Threads, startup).await;
-                    // let _ = self.download_board(&_board, ThreadType::Archive, startup).await;
-
-                    // For some reason this doesn't poll in order. I want threads to go first
-                    // let _vec = vec![self.download_board(&_board, ThreadType::Threads, startup),
-                    // self.download_board(&_board, ThreadType::Archive, startup)];
-                    // let mut _fut= _vec.into_iter()
-                    // .collect::<FuturesOrdered<_>>();
-                    // let mut i=0u8;
-                    // while let Some(_res) = _fut.next().await {
-                    //     if i == 0 {
-                    //         res = _res;
-                    //     }
-                    //     i = i+1;
-                    // }
-
                     let (threads, archive) = futures::join!(self.download_board(&_board, ThreadType::Threads, startup), self.download_board(&_board, ThreadType::Archive, startup));
                     res = threads.ok();
                     // Ignore since once done it'll hardly be updated, so use the threads' StatusCode
                     archive.unwrap();
                 } else {
                     if _board.with_threads {
-                        res = self.download_board(&_board, ThreadType::Threads, startup).await.ok();
-                    } else if _board.with_archives {
-                        res = self.download_board(&_board, ThreadType::Archive, startup).await.ok();
+                        thread_type = ThreadType::Threads;
                     } else {
-                        unreachable!()
+                        thread_type = ThreadType::Archive;
                     }
+                    res = self.download_board(&_board, thread_type, startup).await.ok();
                 }
 
                 // After getting the board once, see if we're archiving it or not
@@ -614,6 +595,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                     Duration::from_millis(if thread.is_some() { _board.interval_threads.into() } else { _board.interval_boards.into() })
                 }
             };
+            info!("({endpoint})\t/{board}/\t\t{wait}", endpoint = thread_type, board = &_board.name, wait = format!(ansi!("{;green}"), format!("Waiting {} ms", interval.as_millis())));
             while now.elapsed() < interval {
                 if get_ctrlc() {
                     break;
@@ -684,6 +666,9 @@ where D: sql::QueryExecutor + sql::DropExecutor
 
                                 match res {
                                     Err(e) => {
+                                        if get_ctrlc() {
+                                            break;
+                                        }
                                         error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board.name, err = e,);
                                         db_retry().await;
                                         // error!(
@@ -845,7 +830,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                             break; // exit the retry loop
                         }
                         StatusCode::NOT_MODIFIED => {
-                            warn!("({endpoint})\t/{board}/\t\t{status}", endpoint = thread_type, board = &board.name, status = status,);
+                            info!("({endpoint})\t/{board}/\t\t{status}", endpoint = thread_type, board = &board.name, status = format!(ansi!("{;green}"), status),);
                             return Ok(status);
                         }
                         _ => {
@@ -1036,6 +1021,9 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             let res = self.db_client.thread_update_deleteds(board, thread, &thread_json).await;
                                             match res {
                                                 Err(e) => {
+                                                    if get_ctrlc() {
+                                                        break;
+                                                    }
                                                     error!("{}", e);
                                                     db_retry().await;
                                                 }
@@ -1186,7 +1174,13 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                     let res = self.db_client.thread_get_media(board, thread, next_no).await;
 
                                                     match res {
-                                                        Err(e) => epintln!("download_media: "(e)),
+                                                        Err(e) => {
+                                                            if get_ctrlc() {
+                                                                break;
+                                                            }
+                                                            error!("download_media: {}", e);
+                                                            db_retry().await;
+                                                        }
                                                         Ok(either) => {
                                                             if let Either::Left(rows) = either {
                                                                 futures::pin_mut!(rows);
@@ -1241,10 +1235,11 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                             }
                                                         }
                                                     }
-
-                                                    sleep(Duration::from_millis(500)).await;
                                                 }
                                             }
+                                        }
+                                        if get_ctrlc() {
+                                            break;
                                         }
 
                                         // Update thread's last_modified
@@ -1267,13 +1262,16 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                     // Display the deleted thread
                                     match either {
                                         Err(e) => {
+                                            if get_ctrlc() {
+                                                break;
+                                            }
                                             error!(
                                                 "{}",
                                                 fomat!(
                                                     "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]" "["(e)"]"
                                                 )
                                             );
-                                            sleep(Duration::from_millis(500)).await;
+                                            db_retry().await;
                                         }
                                         Ok(res) => {
                                             match res {
@@ -1300,13 +1298,16 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                         if !lm.is_empty() {
                                                             loop {
                                                                 let res = self.db_client.thread_update_last_modified(&lm, board.id, thread).await;
-                                                                if let Ok(_) = res {
-                                                                    break;
+                                                                match res {
+                                                                    Err(e) => {
+                                                                        if get_ctrlc() {
+                                                                            break;
+                                                                        }
+                                                                        error!("thread_update_last_modified: {}", e);
+                                                                        db_retry().await;
+                                                                    }
+                                                                    Ok(_) => break,
                                                                 }
-                                                                if get_ctrlc() {
-                                                                    break;
-                                                                }
-                                                                db_retry().await;
                                                             }
                                                         }
                                                     },
