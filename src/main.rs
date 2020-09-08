@@ -532,7 +532,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
         }
 
         let mut rate = refresh::refresh_rate(if thread.is_some() { _board.interval_threads.into() } else { _board.interval_boards.into() }, 5 * 1000, 10);
-        let mut rate_ref = rate.by_ref();
 
         let hz = Duration::from_millis(250);
         let interval = Duration::from_millis(_board.interval_threads.into());
@@ -582,14 +581,11 @@ where D: sql::QueryExecutor + sql::DropExecutor
                 if _board.interval_dynamic {
                     if let Some(st) = res {
                         if st == StatusCode::OK {
-                            // reset
-                            rate_ref = rate.by_ref();
-                            Duration::from_millis(rate_ref.next().unwrap().into())
-                        } else {
-                            Duration::from_millis(rate_ref.next().unwrap().into())
+                            rate.reset();
                         }
+                        Duration::from_millis(rate.next().unwrap())
                     } else {
-                        Duration::from_millis(rate_ref.next().unwrap().into())
+                        Duration::from_millis(rate.next().unwrap())
                     }
                 } else {
                     Duration::from_millis(if thread.is_some() { _board.interval_threads.into() } else { _board.interval_boards.into() })
