@@ -1,4 +1,5 @@
 site:           4chan               # unused
+asagi:          true                # use Ena as an Asagi drop-in replacement
 strict:         true                # if true, sets limit to 1
 limit:          151                 # limit concurrency getting threads
 limit_media:    151                 # limit concurrency getting media
@@ -23,11 +24,6 @@ database:
   username:             root
   password:             zxc
 
-asagi:
-  use:                  false   # use Ena as an Asagi drop-in replacement
-  with_utc_timestamps:  false   # add and use `utc_timestamp_expired`, `utc_timestamp`, in board tables and `utc_time_archived` in {board}_threads tables
-  with_extra_columns:   false   # add any extra columns to `exif`
-
 proxies:
   - url:                ""      # https or socks proxy url. used if present and not empty
     username:           ""      # optional username. used if present and not empty
@@ -46,6 +42,8 @@ board_settings:
   watch_boards:         false   # poll boards instead of getting them once
   watch_threads:        false   # poll threads until archived or deleted instead of getting them once (threads from config, not threads from boards)
   skip_board_check:     false   # skip checking if a board is valid. useful if a new board was added but not yet in boards.json
+  with_utc_timestamps:  false   # add and use `utc_timestamp`, `utc_timestamp_expired` in board tables and `utc_time_archived` in {board}_threads tables. if enabled, alters the tables to add columns if they are not present
+  with_extra_columns:   false   # add any extra columns to `exif`
 
 # Boards inherit settings from `board_settings`
 boards:

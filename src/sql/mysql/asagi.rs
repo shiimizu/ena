@@ -276,7 +276,7 @@ impl Post {
     /// 4chan sometimes has a `\` character in their `md5`.
     pub fn to_sql(&self) -> String {
         fomat!(
-            "("
+
             (self.poster_ip) ","
             (self.num) ","
             (self.subnum) ","
@@ -307,7 +307,7 @@ impl Post {
             if let Some(poster_hash) = self.poster_hash.as_ref() { (QuotedData(poster_hash)) } else { "NULL" } ","
             if let Some(poster_country) = self.poster_country.as_ref() { (QuotedData(poster_country)) } else { "NULL" } ","
             if let Some(exif) = self.exif.as_ref() { (QuotedData(exif)) } else { "NULL" }
-            ")"
+
         )
     }
 
@@ -319,8 +319,8 @@ impl Post {
 use std::collections::HashMap;
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct Exif {
-    #[serde(rename = "archivedOn", skip_serializing_if = "Option::is_none")]
-    archived_on:   Option<String>,
+    // #[serde(rename = "archivedOn", skip_serializing_if = "Option::is_none")]
+    // archived_on:   Option<String>,
     #[serde(rename = "uniqueIps", skip_serializing_if = "Option::is_none")]
     unique_ips:    Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -381,7 +381,6 @@ impl Exif {
         }
 
         Self {
-            archived_on: post.archived_on.map(|timestamp| timestamp.to_string()),
             unique_ips: post.unique_ips.and_then(|ips| if ips == 0 { None } else { Some(ips.to_string()) }),
             since4pass: post.since4pass.and_then(|year| if year == 0 { None } else { Some(year.to_string()) }),
             troll_country: post.troll_country.clone(),
@@ -393,14 +392,7 @@ impl Exif {
     }
 
     fn is_empty(&self) -> bool {
-        self.archived_on.is_none()
-            && self.unique_ips.is_none()
-            && self.since4pass.is_none()
-            && self.troll_country.is_none()
-            && self.time.is_none()
-            && self.painter.is_none()
-            && self.source.is_none()
-            && self.exif_data.is_empty()
+        self.unique_ips.is_none() && self.since4pass.is_none() && self.troll_country.is_none() && self.time.is_none() && self.painter.is_none() && self.source.is_none() && self.exif_data.is_empty()
     }
 }
 
@@ -487,7 +479,7 @@ mod tests {
         converted.op = false;
 
         let converted_sql = converted.to_sql();
-        let target = "(0,0,0,0,false,0,0,NULL,0,0,NULL,0,0,0,NULL,NULL,false,0,\'N\',NULL,NULL,NULL,NULL,NULL,NULL,false,false,NULL,NULL,NULL)";
+        let target = "0,0,0,0,false,0,0,NULL,0,0,NULL,0,0,0,NULL,NULL,false,0,\'N\',NULL,NULL,NULL,NULL,NULL,NULL,false,false,NULL,NULL,NULL";
         assert_eq!(target, &converted_sql);
     }
 

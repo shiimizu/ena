@@ -157,7 +157,6 @@ pub fn update_post_with_extra(json: &mut serde_json::Value) {
             .iter_mut()
             .filter(|(key, _)| !(key.as_str() == "tail_size" || key.as_str() == "tail_id" || orig_keys.iter().any(|key_orig| key == key_orig)))
             .map(|(k, v)| {
-                // could be the culprit for using such large memory
                 extra_map.insert(k.clone(), v.clone());
                 k
             })

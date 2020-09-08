@@ -93,25 +93,36 @@ pub struct Board {
     // #[structopt(long, env, hide_env_values = true)]
     #[structopt(display_order(5), long)]
     pub watch_threads: bool,
+
+    /// Add and use `utc_timestamp_expired`, `utc_timestamp`, in board tables and
+    /// `utc_time_archived` in `{board}_threads` tables
+    #[structopt(hidden(true), display_order(5), long, env)]
+    pub with_utc_timestamps: bool,
+
+    /// Add any extra columns to `exif`
+    #[structopt(hidden(true), display_order(5), long, env)]
+    pub with_extra_columns: bool,
 }
 
 impl Default for Board {
     fn default() -> Self {
         Self {
-            id:               0,
-            name:             String::new(),
-            retry_attempts:   3,
-            interval_boards:  30000,
-            interval_threads: 1000,
-            interval_dynamic: false,
-            skip_board_check: false,
-            with_threads:     false,
-            with_archives:    false,
-            with_tail:        false,
-            with_full_media:  false,
-            with_thumbnails:  false,
-            watch_boards:     false,
-            watch_threads:    false,
+            id:                  0,
+            name:                String::new(),
+            retry_attempts:      3,
+            interval_boards:     30000,
+            interval_threads:    1000,
+            interval_dynamic:    false,
+            skip_board_check:    false,
+            with_threads:        false,
+            with_archives:       false,
+            with_tail:           false,
+            with_full_media:     false,
+            with_thumbnails:     false,
+            watch_boards:        false,
+            watch_threads:       false,
+            with_utc_timestamps: false,
+            with_extra_columns:  false,
         }
     }
 }
@@ -190,7 +201,7 @@ mod tests {
 #[serde(default)]
 // CLI Options
 pub struct Opt {
-    /// Activate debug mode
+    /// Dump config settings to screen
     #[structopt(short, long, hidden(true))]
     pub debug: bool,
 
@@ -198,9 +209,13 @@ pub struct Opt {
     #[structopt(long, display_order(5))]
     pub strict: bool,
 
+    /// Use Ena as an Asagi drop-in replacement
+    #[structopt(display_order(5), long("asagi"))]
+    #[serde(rename = "asagi")]
+    pub asagi_mode: bool,
+
     /// Download everything in the beginning with no limits and then throttle
-    // #[structopt(long, display_order(5))]
-    #[structopt(long, hidden(true))]
+    #[structopt(hidden(true), display_order(5), long)]
     pub quickstart: bool,
 
     /// Download from external archives in the beginning
@@ -280,9 +295,6 @@ pub struct Opt {
     #[structopt(flatten)]
     pub database: DatabaseOpt,
 
-    #[structopt(flatten)]
-    pub asagi: AsagiOpt,
-
     #[structopt(skip)]
     pub timescaledb: Option<TimescaleSettings>,
 
@@ -291,10 +303,6 @@ pub struct Opt {
 }
 
 impl Opt {
-    pub fn asagi(&self) -> bool {
-        self.asagi.r#use
-    }
-
     pub fn to_string(&mut self) -> Result<String> {
         let mut url = url::Url::parse(self.database.url.as_ref().unwrap())?;
         url.set_password(Some("*****")).unwrap();
@@ -309,6 +317,7 @@ impl Default for Opt {
         Self {
             debug:               false,
             strict:              false,
+            asagi_mode:          false,
             quickstart:          false,
             start_with_archives: false,
             config:              "config.yml".into(),
@@ -325,28 +334,10 @@ impl Default for Opt {
             media_url:           "https://i.4cdn.org".parse().unwrap(),
             board_settings:      Board::default(),
             database:            DatabaseOpt::default(),
-            asagi:               AsagiOpt::default(),
             timescaledb:         None,
             proxies:             None,
         }
     }
-}
-
-#[derive(Debug, StructOpt, Deserialize, Serialize, Clone, Default)]
-#[serde(default)]
-pub struct AsagiOpt {
-    /// Use Ena as an Asagi drop-in replacement
-    #[structopt(display_order(5), long("asagi"))]
-    pub r#use: bool,
-
-    /// Add and use `utc_timestamp_expired`, `utc_timestamp`, in board tables and
-    /// `utc_time_archived` in `{board}_threads` tables
-    #[structopt(hidden(true), long, env)]
-    pub with_utc_timestamps: bool,
-
-    /// Add any extra columns to `exif`
-    #[structopt(hidden(true), long, env)]
-    pub with_extra_columns: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -548,16 +539,18 @@ pub fn get_opt() -> Result<Opt> {
     let default = Board::default();
     for b in opt.boards.iter_mut() {
         // Patch CLI opt boards to use its board_settings
-        if b.retry_attempts     == default.retry_attempts   { b.retry_attempts      = opt.board_settings.retry_attempts; }
-        if b.interval_boards    == default.interval_boards  { b.interval_boards     = opt.board_settings.interval_boards; }
-        if b.interval_threads   == default.interval_threads { b.interval_threads    = opt.board_settings.interval_threads; }
-        if b.with_threads       == default.with_threads     { b.with_threads        = opt.board_settings.with_threads; }
-        if b.with_archives      == default.with_archives    { b.with_archives       = opt.board_settings.with_archives; }
-        if b.with_tail          == default.with_tail        { b.with_tail           = opt.board_settings.with_tail; }
-        if b.with_full_media    == default.with_full_media  { b.with_full_media     = opt.board_settings.with_full_media; }
-        if b.with_thumbnails    == default.with_thumbnails  { b.with_thumbnails     = opt.board_settings.with_thumbnails; }
-        if b.watch_boards       == default.watch_boards     { b.watch_boards        = opt.board_settings.watch_boards; }
-        if b.watch_threads      == default.watch_threads    { b.watch_threads       = opt.board_settings.watch_threads; }
+        if b.retry_attempts         == default.retry_attempts       { b.retry_attempts      = opt.board_settings.retry_attempts; }
+        if b.interval_boards        == default.interval_boards      { b.interval_boards     = opt.board_settings.interval_boards; }
+        if b.interval_threads       == default.interval_threads     { b.interval_threads    = opt.board_settings.interval_threads; }
+        if b.with_threads           == default.with_threads         { b.with_threads        = opt.board_settings.with_threads; }
+        if b.with_archives          == default.with_archives        { b.with_archives       = opt.board_settings.with_archives; }
+        if b.with_tail              == default.with_tail            { b.with_tail           = opt.board_settings.with_tail; }
+        if b.with_full_media        == default.with_full_media      { b.with_full_media     = opt.board_settings.with_full_media; }
+        if b.with_thumbnails        == default.with_thumbnails      { b.with_thumbnails     = opt.board_settings.with_thumbnails; }
+        if b.watch_boards           == default.watch_boards         { b.watch_boards        = opt.board_settings.watch_boards; }
+        if b.watch_threads          == default.watch_threads        { b.watch_threads       = opt.board_settings.watch_threads; }
+        if b.with_utc_timestamps    == default.with_utc_timestamps  { b.with_utc_timestamps = opt.board_settings.with_utc_timestamps; }
+        if b.with_extra_columns     == default.with_extra_columns   { b.with_extra_columns  = opt.board_settings.with_extra_columns; }
     }
     
     opt.boards = opt.boards.iter()
@@ -586,7 +579,6 @@ pub fn get_opt() -> Result<Opt> {
                 let default_opt = Opt::default();
                         let default = Board::default(); // This has to call Self::default(), not &default_opt.board_settings (to prevent incorrect values)
                         let default_database = DatabaseOpt::default();
-                        let default_asagi = AsagiOpt::default();
                         if opt.board_settings.retry_attempts    != default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
                         if opt.board_settings.interval_boards   != default.interval_boards  { q.board_settings.interval_boards = opt.board_settings.interval_boards; }
                         if opt.board_settings.interval_threads  != default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
@@ -599,6 +591,8 @@ pub fn get_opt() -> Result<Opt> {
                         if opt.board_settings.with_thumbnails   != default.with_thumbnails  { q.board_settings.with_thumbnails = opt.board_settings.with_thumbnails; }
                         if opt.board_settings.watch_boards      != default.watch_boards     { q.board_settings.watch_boards = opt.board_settings.watch_boards; }
                         if opt.board_settings.watch_threads     != default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; }
+                        if opt.board_settings.with_utc_timestamps   != default.with_utc_timestamps    { q.board_settings.with_utc_timestamps = opt.board_settings.with_utc_timestamps; }
+                        if opt.board_settings.with_extra_columns    != default.with_extra_columns    { q.board_settings.with_extra_columns = opt.board_settings.with_extra_columns; }
 
 
                         let boards_excluded_combined: Vec<Board>  = q.boards_excluded.iter().chain(opt.boards_excluded.iter()).cloned().collect();
@@ -623,12 +617,14 @@ pub fn get_opt() -> Result<Opt> {
                             if b.with_full_media    == default.with_full_media  { b.with_full_media = q.board_settings.with_full_media; }
                             if b.with_thumbnails    == default.with_thumbnails  { b.with_thumbnails = q.board_settings.with_thumbnails; }
                             if b.watch_boards       == default.watch_boards     { b.watch_boards = q.board_settings.watch_boards; }
-                            if b.watch_threads      == default.watch_threads    { b.watch_threads = q.board_settings.watch_threads; }
+                            if b.with_utc_timestamps    == default.with_utc_timestamps    { b.with_utc_timestamps = q.board_settings.with_utc_timestamps; }
+                            if b.with_extra_columns     == default.with_extra_columns    { b.with_extra_columns = q.board_settings.with_extra_columns; }
                         }
 
                         // Finally patch the yaml's board_settings with CLI opts
                         if q.debug                  == default_opt.debug                { q.debug = opt.debug;                                      }
                         if q.strict                 == default_opt.strict               { q.strict = opt.strict;                                    }
+                        if q.asagi_mode             == default_opt.asagi_mode           { q.asagi_mode               = opt.asagi_mode;               }
                         if q.quickstart             == default_opt.quickstart           { q.quickstart = opt.quickstart;                            }
                         if q.start_with_archives    == default_opt.start_with_archives  { q.start_with_archives = opt.start_with_archives;          }
                         if q.config                 == default_opt.config               { q.config = opt.config;                                    }
@@ -651,13 +647,6 @@ pub fn get_opt() -> Result<Opt> {
                         if q.database.password      == default_database.password        { q.database.password   = opt.database.password.clone();    }
                         if q.database.charset       == default_database.charset         { q.database.charset    = opt.database.charset.clone();     }
                         if q.database.collate       == default_database.collate         { q.database.collate    = opt.database.collate;             }
-                        
-                        // Asagi Options
-                        if q.asagi()                   == default_asagi.r#use               { q.asagi.r#use               = opt.asagi.r#use;               }
-                        if q.asagi.with_utc_timestamps == default_asagi.with_utc_timestamps { q.asagi.with_utc_timestamps = opt.asagi.with_utc_timestamps; }
-                        if q.asagi.with_extra_columns  == default_asagi.with_extra_columns  { q.asagi.with_extra_columns  = opt.asagi.with_extra_columns;  }
-                        
-
 
                         if q.board_settings.retry_attempts      == default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
                         if q.board_settings.interval_boards     == default.interval_boards  { q.board_settings.interval_boards  = opt.board_settings.interval_boards; };
@@ -671,6 +660,8 @@ pub fn get_opt() -> Result<Opt> {
                         if q.board_settings.with_thumbnails     == default.with_thumbnails  { q.board_settings.with_thumbnails  = opt.board_settings.with_thumbnails; }
                         if q.board_settings.watch_boards        == default.watch_boards     { q.board_settings.watch_boards = opt.board_settings.watch_boards; }
                         if q.board_settings.watch_threads       == default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; }
+                        if q.board_settings.with_utc_timestamps       == default.with_utc_timestamps    { q.board_settings.with_utc_timestamps = opt.board_settings.with_utc_timestamps; }
+                        if q.board_settings.with_extra_columns       == default.with_extra_columns    { q.board_settings.with_extra_columns = opt.board_settings.with_extra_columns; }
 
                         q.clone()
             }
@@ -689,7 +680,6 @@ pub fn get_opt() -> Result<Opt> {
         opt.database.host = u.host_str().unwrap_or_default().to_string();
         opt.database.port = u.port().unwrap_or(if &opt.database.engine.as_str().to_lowercase() != "postgresql" { 3306 } else { 5432 });
         opt.database.name = u.path().trim_matches('/').to_string();
-        opt.database.url = Some(u.to_string())
     } else {
         let db_url = format!(
             "{engine}://{user}:{password}@{host}:{port}/{database}",
@@ -704,11 +694,11 @@ pub fn get_opt() -> Result<Opt> {
         opt.database.url = Some(url);
     }
 
-    if opt.asagi() && !opt.database.url.as_ref().unwrap().contains("mysql") {
+    if opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("mysql") {
         return Err(anyhow!("Asagi mode must be used with a MySQL database. Did you mean to disable --asagi ?"));
     }
 
-    if !opt.asagi() && !opt.database.url.as_ref().unwrap().contains("postgresql") {
+    if !opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("postgresql") {
         return Err(anyhow!("Ena must be used with a PostgreSQL database. Did you mean to enable --asagi ?"));
     }
 
@@ -732,13 +722,14 @@ pub fn get_opt() -> Result<Opt> {
         create_dir_all(&opt.media_dir)?;
     }
 
-    if !opt.asagi() {
+    if !opt.asagi_mode {
         let tmp = fomat!( (&opt.media_dir.display())"/tmp" );
         if !std::path::Path::new(&tmp).is_dir() {
             create_dir_all(&tmp)?;
         }
     } else {
         let default_database = DatabaseOpt::default();
+        if opt.database.engine == "postgresql" { opt.database.engine = "innodb".into() }
         // If a user actually wanted the default (utf8), this would overwrite their setting to utf8mb4.. it's ok right?
         // Since utf8mb4 is actually the real UTF8.
         if opt.database.charset           == default_database.charset             { opt.database.charset        = "utf8mb4".into();         }

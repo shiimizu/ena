@@ -28,16 +28,18 @@ futures = "0.3"
 futures-lite = { git = "https://github.com/stjepang/futures-lite.git" }
 futures-intrusive = "0.3"
 async-trait = "0.1"
-smol = { git = "https://github.com/stjepang/smol", features = ["tokio02"] }
+smol = { git = "https://github.com/stjepang/smol" }
+async-compat = { git = "https://github.com/stjepang/async-compat" }
 reqwest = { version = "0.10", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli", "socks"] }
 async-rwlock = "1"
-async-process = "0.1"
+async-process = "1"
+# sqlx = { version = "0.3.5", default-features = false, features = [ "runtime-async-std", "mysql" ] }
 # async-std = { version = "1.6", default-features = false, features = ["std"] } # Literally only for RwLock
 
 # Database
 tokio-postgres = { version = "0.5", features = ["with-serde_json-1"] }
 postgres-types = { version = "0.1", features = [ "derive"] }
-# mysql_common = "0.22"
+# mysql_common = { git = "https://github.com/blackbeam/rust_mysql_common" }
 mysql_async = { git = "https://github.com/blackbeam/mysql_async" }
 native-tls = "0.2" # Temporary
 

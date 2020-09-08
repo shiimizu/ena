@@ -167,13 +167,7 @@ Core functionality works. There are things that could be improved on:
         Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
 
 ## Asagi drop-in status
-Core functionality works.  
-TODO:
-- [ ] Add optional `utc_timestamp`
-- [ ] Fix `prevDirStructure`
-- [ ] Use the correct permissions when creating web-dirs
-- [ ] Make archivedOn optional
-- [ ] Make future columns optional
+Core functionality works.
 
 ## Please respect the 4chan API guidelines as best you can
 1. Use `Last-Modified` and `If-Modified-Since`
@@ -200,8 +194,8 @@ Respecting the first rule will get you very far.
 
 
 ## Asagi specific implementation changes
-* Added any future columns to `exif`
-* Added `archivedOn` to `exif`
+* Added `with_utc_timestamps` as an option which adds `utc_timestamp`, `utc_timestamp_expired`, columns to boards and `utc_archived_on` to `{board}_threads` table
+* Added `with_extra_columns` as an option which adds any extra or future columns to `exif`
 * Added `boards` table to cache `threads.json`|`archive.json` for state save restore.
 * Fixed updating `sticky` and `locked` for threads in triggers
 * More accurate `deleted` posts due to upserts

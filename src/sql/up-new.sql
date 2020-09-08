@@ -11,102 +11,172 @@ grant execute on all functions in schema extensions to public;
 
 -- include future extensions
 alter default privileges in schema extensions
-   grant execute on functions to public;
+grant execute on functions to public;
 
 alter default privileges in schema extensions
-   grant usage on types to public;
+grant usage on types to public;
 
-
+-- Unique hashes of all media
 CREATE TABLE IF NOT EXISTS "media" (
-    "banned"        BOOL,
-    "id"            TEXT UNIQUE,
-    "md5"           BYTEA UNIQUE,
-    -- "md5t"          BYTEA UNIQUE GENERATED ALWAYS AS (decode(md5(content_thumb)::text, 'hex')) STORED,
-    -- "sha256"        BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content)) STORED,
-    -- "sha256t"       BYTEA UNIQUE GENERATED ALWAYS AS (sha256(content_thumb)) STORED,
-    "sha256"        BYTEA UNIQUE,
-    -- Thumbnails aren't unique. 2 full medias can have the same thumbnail
-    "sha256t"       BYTEA,
-    "content"       BYTEA,
-    "content_thumb" BYTEA
+    "w"         INT4,
+    "h"         INT4,
+    "tn_w"      INT2,
+    "tn_h"      INT2,
+    "fsize"     INT4,
+    "banned"    BOOL,
+    "ext"       TEXT,
+    "fid"       TEXT,
+    "md5"       BYTEA,
+    "sha256"    BYTEA UNIQUE,
+    "content"   BYTEA,
+    "extra"     JSONB
 );
 
-CREATE UNIQUE   INDEX IF NOT EXISTS unq_idx_media_md5          ON "media" ("md5");
-CREATE          INDEX IF NOT EXISTS idx_media_sha256t          ON "media" ("sha256t");
+COMMENT ON COLUMN media.w       is 'Image width dimension';
+COMMENT ON COLUMN media.h       is 'Image height dimension';
+COMMENT ON COLUMN media.tn_w    is 'Thumbnail image width dimension';
+COMMENT ON COLUMN media.tn_h    is 'Thumbnail image height dimension';
+COMMENT ON COLUMN media.fsize   is 'Size of uploaded file in bytes';
+COMMENT ON COLUMN media.banned  is 'If the file is banned';
+COMMENT ON COLUMN media.ext     is 'Filetype';
+COMMENT ON COLUMN media.md5     is 'MD5 hash of file';
+COMMENT ON COLUMN media.sha256  is 'SHA256 hash of file';
+COMMENT ON COLUMN media.content is 'Optionally stored file';
+COMMENT ON COLUMN media.extra   is 'Storage for any other columns';
 
-COMMENT ON COLUMN media.id is 'SeaweedFS fid';
+-- The media entry that a post has
+CREATE TABLE IF NOT EXISTS "posts_media" (
+    "id"            BIGSERIAL,
+    "post_num"      INT8,
+    "thread_num"    INT8,
+    "created_on"    TIMESTAMPTZ,
+    "site_deleted"  BOOL,
+    "spoiler"       BOOL,
+    "board"         TEXT,
+    "filename"      TEXT,
+    "md5"           BYTEA,
+    "sha256"        BYTEA,
+    "sha256t_op"    BYTEA,
+    "sha256t_reply" BYTEA,
+    "content_thumb" BYTEA,
+    "fid"           TEXT,
+    "extra"         JSONB,
+    PRIMARY KEY(board, post_num, sha256, sha256t_op, sha256t_reply),
+    UNIQUE (board, post_num)
+);
 
+COMMENT ON COLUMN posts_media.id                is 'Monotonically increasing id';
+COMMENT ON COLUMN posts_media.post_num          is 'The numeric post ID';
+COMMENT ON COLUMN posts.media.thread_num        is 'The numeric thread ID if reply or NULL if OP';
+COMMENT ON COLUMN posts_media.created_on        is 'UTC timestamp + microtime that an image was uploaded';
+COMMENT ON COLUMN posts_media.site_deleted      is 'If the file was deleted at that website';
+COMMENT ON COLUMN posts_media.spoiler           is 'If the media was marked as spoiler';
+COMMENT ON COLUMN posts_media.board             is 'Board name';
+COMMENT ON COLUMN posts_media.filename          is 'Filename as it appeared on the poster''s device';
+COMMENT ON COLUMN posts_media.md5               is 'MD5 hash of file';
+COMMENT ON COLUMN posts_media.sha256            is 'SHA256 hash of file';
+COMMENT ON COLUMN posts_media.sha256t_op        is 'SHA256 hash of thumbnail when the post is OP';
+COMMENT ON COLUMN posts_media.sha256t_reply     is 'SHA256 hash of thumbnail when the post is a reply';
+COMMENT ON COLUMN posts_media.content_thumb     is 'Optionally stored thumbnail';
+COMMENT ON COLUMN posts_media.fid               is 'SeaweedFS fid for thumbnails';
+COMMENT ON COLUMN posts_media.extra             is 'Storage for any other columns';
+
+-- List of all boards
 CREATE TABLE IF NOT EXISTS "boards" (
     "last_modified_threads"     INT8,
     "last_modified_archive"     INT8,
-    "id"                        SMALLSERIAL PRIMARY KEY,
-    "board"                     TEXT        NOT NULL UNIQUE,
+    "id"                        SERIAL  NOT NULL UNIQUE PRIMARY KEY,
+    "name"                      TEXT    NOT NULL UNIQUE,
     "title"                     TEXT,
     "threads"                   JSONB,
     "archive"                   JSONB
 );
 
+-- List of posts
 CREATE TABLE IF NOT EXISTS "posts" (
-    "no"                INT8 NOT NULL,
-    "subnum"            INT8,
-    "tim"               INT8,
-    "resto"             INT8 NOT NULL,
-    "time"              INT8 NOT NULL,
-    "last_modified"     INT8,
-    "archived_on"       INT8,
-    "deleted_on"        INT8,
-    "fsize"             INT4,
-    "w"                 INT4,
-    "h"                 INT4,
-    "replies"           INT4,
-    "images"            INT4,
-    "unique_ips"        INT4,
-    "board"             INT2 NOT NULL REFERENCES "boards" ("id"),
-    "tn_w"              INT2,
-    "tn_h"              INT2,
-    "custom_spoiler"    INT2,
-    "since4pass"        INT2,
-    "sticky"            BOOL,
-    "closed"            BOOL,
-    "filedeleted"       BOOL,
-    "spoiler"           BOOL,
-    "m_img"             BOOL,
-    "bumplimit"         BOOL,
-    "imagelimit"        BOOL,
-    "md5"               BYTEA REFERENCES "media" ("md5"),
-    "name"              TEXT,
-    "sub"               TEXT,
-    "com"               TEXT,
-    "filename"          TEXT,
-    "ext"               TEXT,
-    "trip"              TEXT,
-    "id"                TEXT,
-    "capcode"           TEXT,
-    "country"           TEXT,
-    "troll_country"     TEXT,
-    "country_name"      TEXT,
-    "semantic_url"      TEXT,
-    "tag"               TEXT,
-    "ip"                INET,
-    "extra"             JSONB,
-    UNIQUE("no", COALESCE("subnum", 0), board, "time")
+    "num"            INT8        NOT NULL,
+    -- "tim"               INT8,
+    "thread_num"     INT8        ,
+    "created_on"    TIMESTAMPTZ NOT NULL,
+    "updated_on"    TIMESTAMPTZ,
+    "archived_on"   TIMESTAMPTZ,
+    "deleted_on"    TIMESTAMPTZ,
+    -- "fsize"             INT4,
+    -- "w"                 INT4,
+    -- "h"                 INT4,
+    "replies"       INT4,
+    "images"        INT4,
+    "unique_ips"    INT4,
+    -- "tn_w"              INT2,
+    -- "tn_h"              INT2,
+    -- "custom_spoiler"    INT2,
+    -- "since4pass"        INT2,
+    "sticky"        BOOL,
+    "closed"        BOOL,
+    -- "filedeleted"       BOOL,
+    -- "spoiler"           BOOL,
+    -- "m_img"             BOOL,
+    "bumplimit"     BOOL,
+    "imagelimit"    BOOL,
+    "md5"           BYTEA,
+    "sha256"        BYTEA REFERENCES "media"("sha256"),
+    "board"         TEXT NOT NULL REFERENCES "boards"("name") ON UPDATE CASCADE ON DELETE CASCADE,
+    "name"          TEXT,
+    "subject"       TEXT,
+    "html"          TEXT,
+    -- "filename"          TEXT,
+    -- "ext"               TEXT,
+    "tripcode"      TEXT,
+    "ip_hash"       TEXT,
+    -- "capcode"           TEXT,
+    "country"       TEXT,
+    -- "troll_country"     TEXT,
+    -- "country_name"      TEXT,
+    -- "semantic_url"      TEXT,
+    -- "tag"               TEXT,
+    "ip"            INET,
+    "extra"         JSONB,
+    PRIMARY KEY("board", "num", "created_on")
 );
 
-COMMENT ON COLUMN posts.last_modified is 'Last modified time according to ''Last-Modified'' header in server response for OP, or modified/deleted/updated for replies';
-COMMENT ON COLUMN posts.deleted_on is 'Whenever a post is deleted. This is only accurate if you are actively archiving. Therefore it should not be relied upon entirely.';
-COMMENT ON COLUMN posts.ip is 'Gotta have a way to ban spammers ya''know';
+COMMENT ON COLUMN posts.num         is 'The numeric post ID';
+COMMENT ON COLUMN posts.thread_num  is 'The numeric thread ID if reply or NULL if OP';
+COMMENT ON COLUMN posts.created_on  is 'UTC timestamp the post was created';
+COMMENT ON COLUMN posts.updated_on  is 'UTC timestamp from ''Last-Modified'' header in server response for OP, or when a post is modified/deleted/updated for replies';
+COMMENT ON COLUMN posts.archived_on is 'UTC timestamp the post was archived';
+COMMENT ON COLUMN posts.deleted_on  is 'UTC timestamp of system time of when the post was deleted, not serverside. Therefore it should not be relied upon entirely.';
+COMMENT ON COLUMN posts.replies     is 'Total number of replies to a thread';
+COMMENT ON COLUMN posts.images      is 'Total number of image replies to a thread';
+COMMENT ON COLUMN posts.unique_ips  is 'Number of unique posters in a thread';
+COMMENT ON COLUMN posts.sticky      is 'If the thread is being pinned to the top of the page';
+COMMENT ON COLUMN posts.closed      is 'If the thread is closed to replies';
+COMMENT ON COLUMN posts.bumplimit   is 'If a thread has reached bumplimit, it will no longer bump';
+COMMENT ON COLUMN posts.imagelimit  is 'If an image has reached image limit, no more image replies can be made';
+COMMENT ON COLUMN posts.md5         is 'MD5 hash of file in binary';
+COMMENT ON COLUMN posts.board       is 'Board';
+COMMENT ON COLUMN posts.name        is 'Name user posted with';
+COMMENT ON COLUMN posts.subject     is 'OP Subject text';
+COMMENT ON COLUMN posts.html        is 'Comment (HTML escaped)';
+COMMENT ON COLUMN posts.tripcode    is 'The user''s tripcode, in format: !tripcode or !!securetripcode';
+COMMENT ON COLUMN posts.ip_hash     is 'The poster''s ID';
+COMMENT ON COLUMN posts.country     is 'Poster''s ISO 3166-1 alpha-2 country code';
+COMMENT ON COLUMN posts.ip          is 'Gotta have a way to ban spammers ya''know';
+COMMENT ON COLUMN posts.extra       is 'Storage for any other columns';
 
-CREATE INDEX IF NOT EXISTS ix_no             ON "posts" USING brin ("no") WITH (pages_per_range = 32, autosummarize = on);
-CREATE INDEX IF NOT EXISTS ix_board          ON "posts" USING brin ("board") WITH (pages_per_range = 32, autosummarize = on);
-CREATE INDEX IF NOT EXISTS ix_time           ON "posts" ("time") ;
-CREATE INDEX IF NOT EXISTS ix_md5            ON "posts" USING brin ("md5") WITH (pages_per_range = 32, autosummarize = on) WHERE "md5" is not null;
-CREATE INDEX IF NOT EXISTS ix_no_board       ON "posts" USING brin ("no", "board" ) WITH (pages_per_range = 32, autosummarize = on);
-CREATE INDEX IF NOT EXISTS ix_no_resto_board ON "posts" USING brin ("no", "resto", "board" ) WITH (pages_per_range = 32, autosummarize = on);
+
+CREATE          INDEX IF NOT EXISTS ix_no                         ON "posts" USING brin ("no") WITH (pages_per_range = 32, autosummarize = on);
+CREATE          INDEX IF NOT EXISTS ix_board                      ON "posts" USING brin ("board") WITH (pages_per_range = 32, autosummarize = on);
+CREATE          INDEX IF NOT EXISTS ix_time                       ON "posts" ("time") ;
+CREATE          INDEX IF NOT EXISTS ix_md5                        ON "posts" USING brin ("md5") WITH (pages_per_range = 32, autosummarize = on) WHERE "md5" is not null;
+CREATE INDEX IF NOT EXISTS ix_no_board   ON "posts" USING brin ("no", "board" ) WITH (pages_per_range = 32, autosummarize = on);
+CREATE INDEX IF NOT EXISTS ix_no_resto_board   ON "posts" USING brin ("no", "resto", "board" ) WITH (pages_per_range = 32, autosummarize = on);
+
 
 -- Optional TimescaleDB. It is recommended to partition on a huge table such as posts.
-CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;
-SELECT create_hypertable('posts', 'time', if_not_exists => true, chunk_time_interval => INTERVAL '2 weeks');
+-- CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;
+-- SELECT create_hypertable('posts', 'created_on', if_not_exists => true, chunk_time_interval => INTERVAL '2 weeks');
 
+-- Create the 4chan schema as a type
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT typname FROM pg_type WHERE typname = 'schema_4chan_with_extra') THEN
@@ -154,15 +224,15 @@ BEGIN
     END IF;
 END
 $$;
-        
+
+-- Upsert a thread function
 CREATE OR REPLACE FUNCTION thread_upsert(_board INT, json_posts JSONB)  
 RETURNS setof posts AS $$  
 declare    
 BEGIN
 RETURN query
-    -- My schema: Same as original schema but removed archived, added extra, last_modified, board + type changes + column tetris
-    -- Not including `ip` in this UPSERT since that's for frontends with an imageboard
     -- Manually select which columns to insert to
+    -- Not including `ip` in this UPSERT since that's used by imageboard frontends
     INSERT INTO posts (
     	board,
         no,
@@ -382,8 +452,7 @@ RETURN query
                 RETURNING *;
 END;  
 $$ LANGUAGE plpgsql;
-	-- Should not mark this a PARALLEL SAFE since this program could run multiple processess of itself, in which they're all mutating fields in parallel.
-	-- This is probably not the case due to MVCC but I'll play it safe since I'd rather not lose data or have them incorrect.
+
 
 CREATE OR REPLACE FUNCTION function_trigger_update_replies_images()
 RETURNS trigger AS $$

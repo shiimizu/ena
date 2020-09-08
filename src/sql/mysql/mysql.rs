@@ -136,16 +136,16 @@ impl QueryExecutor for mysql_async::Pool {
         res.map(|_| 0).map_err(|e| anyhow!(e))
     }
 
-    async fn board_table_exists(&self, board: &str, opt: &Opt) -> Option<String> {
-        let mut conn = self.get_conn().await.ok()?;
-
+    async fn board_table_exists(&self, board: &Board, opt: &Opt, db_name: &str) -> Option<String> {
+        let mut conn = self.get_conn().await.unwrap();
+        let board_name = board.name.as_str();
         // Init the `boards` table
-        if board == "boards" {
+        if board_name == "boards" {
             // pintln!("board_table_exists: Creating `boards` table");
-            let boards_table = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/boards_table.sql"));
-            let common = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/common.sql"));
-            conn.query_drop(&boards_table).await.ok()?;
-            conn.query_drop(&common).await.ok()?;
+            let boards_table = get_sql_template(board_name, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/boards_table.sql"));
+            let common = get_sql_template(board_name, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/common.sql"));
+            conn.query_drop(&boards_table).await.unwrap();
+            conn.query_drop(&common).await.unwrap();
             // No one checks the result of this function anyways so it's okay to return anything
             return None;
         }
@@ -153,14 +153,81 @@ impl QueryExecutor for mysql_async::Pool {
         let store = STATEMENTS.read().await;
         let map = store.get(&1)?;
         let statement = map.get(&Query::BoardTableExists)?;
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (&opt.database.name, board)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (&opt.database.name, board_name)).await;
         let res = res.unwrap().flatten();
         if res.is_none() {
-            let boards = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/boards.sql"));
-            let triggers = get_sql_template(board, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/triggers.sql"));
+            let mut boards = get_sql_template(board_name, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/boards.sql"));
+            let mut triggers = get_sql_template(board_name, &opt.database.engine, &opt.database.charset, &opt.database.collate, include_str!("templates/triggers.sql"));
+            if board.with_utc_timestamps {
+                boards = boards
+                    .replace(
+                        "`exif`                  text,",
+                        "`exif`                  text,
+                    `utc_timestamp`  timestamp NULL DEFAULT NULL,
+                    `utc_timestamp_expired`  timestamp  NULL DEFAULT NULL,
+                    ",
+                    )
+                    .replace(
+                        "INDEX timestamp_index (`timestamp`)",
+                        "INDEX timestamp_index (`timestamp`),
+                     INDEX utc_timestamp_index (`utc_timestamp`)",
+                    )
+                    .replace(
+                        "`locked`                bool         NOT NULL   DEFAULT '0',",
+                        "`locked`                bool         NOT NULL   DEFAULT '0',
+                     `utc_time_archived`    timestamp NULL DEFAULT NULL,",
+                    )
+                    .replace(
+                        "INDEX locked_index (`locked`)",
+                        "INDEX locked_index (`locked`),
+                    INDEX utc_time_archived_index (`utc_time_archived`)",
+                    );
+                triggers = triggers.replace("timestamp, NULL, NULL, timestamp, 0, 0, 0, 0);", "timestamp, NULL, NULL, timestamp, 0, 0, 0, 0, NULL);");
+            }
+
             let query = [boards, triggers].concat();
-            pintln!("Creating tables for /"(board)"/");
-            conn.query_drop(query).await.ok()?;
+            log::info!("/{}/ Creating tables..", board_name);
+            conn.query_drop(query).await.unwrap();
+        // log::info!("/{}/ Done creating tables", board_name);
+        } else {
+            if board.with_utc_timestamps {
+                let stmt = format!(
+                    "SELECT `COLUMN_NAME` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`= '{db_name}' AND (`TABLE_NAME`= '{board_name}' OR `TABLE_NAME` = '{board_name}_threads' ) AND (`COLUMN_NAME` = 'utc_timestamp' OR `COLUMN_NAME` = 'utc_timestamp_expired' OR `COLUMN_NAME` = 'utc_time_archived');",
+                    db_name= db_name,
+                    board_name=&board.name
+                    );
+                let col: Vec<Option<String>> = conn.query(stmt.as_str()).await.unwrap();
+                let col: Vec<String> = col.into_iter().filter(|o| o.is_some()).map(Option::unwrap).collect();
+                let cols = &["utc_timestamp", "utc_timestamp_expired", "utc_time_archived"];
+                for column in cols {
+                    if !col.iter().any(|s| s == column) {
+                        let q = fomat!(
+                            "ALTER TABLE `"
+                            if column == &"utc_time_archived" { (&board.name)"_threads" } else { (&board.name) }
+                            "`
+                            ADD COLUMN `"(column)"` TIMESTAMP NULL DEFAULT NULL;"
+                            "CREATE INDEX `"(column)"_index` ON `"
+                            if column == &"utc_time_archived" { (&board.name)"_threads" } else { (&board.name) }
+                            "`(`"(column)"`);"
+                        );
+                        log::info!("/{}/ Adding `{}` to existing table..", board_name, column);
+                        conn.query_drop(q.as_str()).await.unwrap();
+
+                        // Recreate triggers
+                        if column == &"utc_time_archived" {
+                            let trigger_q = "DROP PROCEDURE IF EXISTS `create_thread_%%BOARD%%`;
+
+                        CREATE PROCEDURE `create_thread_%%BOARD%%` (num INT, timestamp INT)
+                        BEGIN
+                          INSERT IGNORE INTO `%%BOARD%%_threads` VALUES (num, timestamp, timestamp,
+                            timestamp, NULL, NULL, timestamp, 0, 0, 0, 0, NULL);
+                        END;"
+                                .replace("%%BOARD%%", board_name);
+                            conn.query_drop(trigger_q.as_str()).await.unwrap();
+                        }
+                    }
+                }
+            }
         }
         res
     }
@@ -174,7 +241,7 @@ impl QueryExecutor for mysql_async::Pool {
     }
 
     async fn board_get_last_modified(&self, thread_type: ThreadType, board: &Board) -> Option<String> {
-        let mut conn = self.get_conn().await.ok()?;
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = store.get(&1)?;
         let statement = map.get(&Query::BoardGetLastModified)?;
@@ -200,53 +267,33 @@ impl QueryExecutor for mysql_async::Pool {
         Ok(0)
     }
 
-    async fn thread_get(&self, board: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
-        let mut conn = self.get_conn().await;
-        match conn {
-            Err(e) => Either::Right(Err(anyhow!(e))),
-            Ok(mut conn) => {
-                let store = STATEMENTS.read().await;
-                let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::ThreadGet)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGet));
-                match statement {
-                    Err(e) => Either::Right(Err(e)),
-                    Ok(statement) => {
-                        let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| anyhow!(e));
-                        Either::Right(res)
-                    }
-                }
-            }
-        }
+    async fn thread_get(&self, board: &Board, thread: u64) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>> {
+        let mut conn = self.get_conn().await?;
+        let store = STATEMENTS.read().await;
+        let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::ThreadGet)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGet))?;
+        let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| anyhow!(e));
+        Ok(Either::Right(res?))
     }
 
     /// Unused
-    async fn thread_get_media(&self, board: &Board, thread: u64, start: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
-        let mut conn = self.get_conn().await;
-
-        match conn {
-            Err(e) => Either::Right(Err(anyhow!(e))),
-            Ok(mut conn) => {
-                let store = STATEMENTS.read().await;
-                let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::ThreadGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGetMedia));
-                match statement {
-                    Err(e) => Either::Right(Err(e)),
-                    Ok(statement) => {
-                        let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| anyhow!(e));
-                        Either::Right(res)
-                    }
-                }
-            }
-        }
+    async fn thread_get_media(&self, board: &Board, thread: u64, start: u64) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>> {
+        let mut conn = self.get_conn().await?;
+        let store = STATEMENTS.read().await;
+        let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::ThreadGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGetMedia))?;
+        let res: Result<Vec<mysql_async::Row>> = conn.exec(statement.as_str(), (thread,)).await.map_err(|e| anyhow!(e));
+        Ok(Either::Right(res?))
     }
 
     async fn thread_get_last_modified(&self, board_id: u16, thread: u64) -> Option<String> {
-        let mut conn = self.get_conn().await.ok()?;
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = store.get(&board_id)?;
         let statement = map.get(&Query::ThreadGetLastModified)?;
-        let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement.as_str(), params! {"thread" => thread}).await;
         loop {
+            let res: Result<Option<Option<String>>, mysql_async::Error> = conn.exec_first(statement.as_str(), params! {"thread" => thread}).await;
             match res {
-                Err(_) => {
+                Err(e) => {
+                    log::error!("{}", e);
                     if get_ctrlc() {
                         return None;
                         //break;
@@ -262,10 +309,12 @@ impl QueryExecutor for mysql_async::Pool {
 
     async fn thread_upsert(&self, board: &Board, thread_json: &serde_json::Value) -> Result<u64> {
         let mut posts: Vec<yotsuba::Post> = serde_json::from_value(thread_json["posts"].clone())?;
-        // TODO: This should never happen
         if posts.len() == 0 {
             return Ok(0);
         }
+
+        let op_no = posts[0].no;
+        let archived_on = posts[0].archived_on;
 
         // Preserve `unique_ips` when a thread is archived
         if posts[0].unique_ips.is_none() {
@@ -322,16 +371,18 @@ impl QueryExecutor for mysql_async::Pool {
         // Manually stitch the query together so we can have multiple values
         let mut q = fomat!(
         r#"
-        INSERT INTO `"# (&board.name) r#"`
+        INSERT INTO `"# (&board.name) "`
         (poster_ip, num, subnum, thread_num, op, `timestamp`, timestamp_expired, preview_orig, preview_w, preview_h,
         media_filename, media_w, media_h, media_size, media_hash, media_orig, spoiler, deleted,
-        capcode, email, `name`, trip, title, comment, delpass, sticky, locked, poster_hash, poster_country, exif)
-        VALUES
-            "#
+        capcode, email, `name`, trip, title, comment, delpass, sticky, locked, poster_hash, poster_country, exif"
+        if board.with_utc_timestamps { ", `utc_timestamp`" }
+        ") VALUES"
         for (i, post) in posts_iter {
             "\n"
-            (asagi::Post::from(post).to_sql())
-            if i < posts_iter_len-1 { "," } else { "" }
+            "(" (asagi::Post::from(post).to_sql())
+            if board.with_utc_timestamps { ", FROM_UNIXTIME(" (post.time) ")" }
+            ")"
+            if i < posts_iter_len-1 { "," }
         }
         r#"
         ON DUPLICATE KEY UPDATE
@@ -350,30 +401,67 @@ impl QueryExecutor for mysql_async::Pool {
         -- media_hash=VALUES(media_hash),
         -- media_orig=VALUES(media_orig),
         -- spoiler=VALUES(spoiler),
-        deleted=VALUES(deleted),
-        capcode=VALUES(capcode),
-        email=VALUES(email),
-        `name`=VALUES(`name`),
-        trip=VALUES(trip),
-        title=VALUES(title),
-        comment=VALUES(comment),
-        delpass=VALUES(delpass),
-        sticky = (VALUES(sticky) OR sticky ),
-        locked = (VALUES(locked) OR locked ),
-        poster_hash=VALUES(poster_hash),
-        poster_country=VALUES(poster_country),
-        exif=VALUES(exif);"#
+        deleted        = COALESCE(VALUES(deleted), deleted),
+        capcode        = COALESCE(VALUES(capcode), capcode),
+        email          = COALESCE(VALUES(email), email),
+        `name`         = COALESCE(VALUES(`name`), `name`),
+        trip           = COALESCE(VALUES(trip), trip),
+        title          = COALESCE(VALUES(title), title),
+        comment        = COALESCE(VALUES(comment), comment),
+        delpass        = COALESCE(VALUES(delpass), delpass),
+        sticky         = COALESCE((VALUES(sticky) OR sticky), sticky),
+        locked         = COALESCE((VALUES(locked) OR locked), locked),
+        poster_hash    = COALESCE(VALUES(poster_hash), poster_hash),
+        poster_country = COALESCE(VALUES(poster_country), poster_country),
+        exif           = COALESCE(VALUES(exif), exif);"#
         );
         loop {
-            // TODO: Return rows affected
-            if let Ok(_) = conn.query_drop(q.as_str()).await {
-                break;
+            match conn.query_drop(q.as_str()).await {
+                Err(e) => match e {
+                    mysql_async::Error::Server(se) => {
+                        // Don't display deadlocks as they are expected to occur
+                        if se.code != 1213 {
+                            log::error!("{}", se);
+                        }
+                    }
+                    _e => log::error!("{}", _e),
+                },
+                Ok(_) => break,
             }
             if get_ctrlc() {
                 break;
             }
             sleep(Duration::from_millis(500)).await;
         }
+
+        // Upsert archived
+        if let Some(archived_on) = archived_on {
+            if board.with_utc_timestamps {
+                let query = fomat!("
+                UPDATE `" (&board.name) "_threads`
+                    SET utc_time_archived = FROM_UNIXTIME(" (archived_on) ")
+                WHERE thread_num=" (op_no) ";");
+                loop {
+                    match conn.query_drop(query.as_str()).await {
+                        Err(e) => match e {
+                            mysql_async::Error::Server(se) => {
+                                // Don't display deadlocks as they are expected to occur
+                                if se.code != 1213 {
+                                    log::error!("{}", se);
+                                }
+                            }
+                            _e => log::error!("{}", _e),
+                        },
+                        Ok(_) => break,
+                    }
+                    if get_ctrlc() {
+                        break;
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+
         Ok(res_diff_len as u64)
     }
 
@@ -385,16 +473,25 @@ impl QueryExecutor for mysql_async::Pool {
         res.map(|_| 0).map_err(|e| anyhow!(e))
     }
 
-    async fn thread_update_deleted(&self, board_id: u16, thread: u64) -> Result<Either<tokio_postgres::RowStream, Option<u64>>> {
-        // TODO the return of this function should just be u64 or bool
+    async fn thread_update_deleted(&self, board: &Board, thread: u64) -> Result<Either<tokio_postgres::RowStream, Option<u64>>> {
         let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
-        let map = store.get(&board_id).ok_or_else(|| anyhow!("thread_update_deleted: Empty value getting key `{}` in statement store", &board_id))?;
+        let map = store.get(&board.id).ok_or_else(|| anyhow!("thread_update_deleted: Empty value getting key `{}` in statement store", board.id))?;
 
         let stmt_thread_update_deleted = map.get(&Query::ThreadUpdateDeleted).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadUpdateDeleted))?;
         let stmt_post_get_single = map.get(&Query::PostGetSingle).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetSingle))?;
 
-        let res = conn.exec_drop(stmt_thread_update_deleted.as_str(), (Post::timestamp_nyc(unix_timestamp()), thread)).await?;
+        if board.with_utc_timestamps {
+            let stmt = stmt_thread_update_deleted.replace(
+                "timestamp_expired   = ?",
+                "`timestamp_expired`   = ?,
+            `utc_timestamp_expired`   = FROM_UNIXTIME(?)",
+            );
+            let unix_timestamp = unix_timestamp();
+            let res = conn.exec_drop(stmt.as_str(), (Post::timestamp_nyc(unix_timestamp), unix_timestamp, thread)).await?;
+        } else {
+            let res = conn.exec_drop(stmt_thread_update_deleted.as_str(), (Post::timestamp_nyc(unix_timestamp()), thread)).await?;
+        }
 
         // Get the post afterwards to see if it was deleted
         let mut single_res: Option<mysql_async::Row> = conn.exec_first(stmt_post_get_single.as_str(), (thread, thread)).await?;
@@ -405,7 +502,6 @@ impl QueryExecutor for mysql_async::Pool {
     async fn thread_update_deleteds(&self, board: &Board, thread: u64, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
         let posts = json.get("posts").and_then(|posts| posts.as_array()).ok_or_else(|| anyhow!("Empty value getting `posts` array from json"))?;
 
-        // TODO this should never happen.
         if posts.len() == 0 {
             return Ok(Either::Right(None));
         }
@@ -430,19 +526,29 @@ impl QueryExecutor for mysql_async::Pool {
 
         // Manually stitch the query together so we can have multiple values/batch upsert
         let query = fomat!(
-        r#"
-                INSERT INTO `"# (&board.name) r#"`
-                (num, subnum, deleted, `timestamp`, `timestamp_expired`)
-                VALUES
-                    "#
+            "
+            INSERT INTO `" (&board.name) "`
+            (num, subnum, deleted, `timestamp_expired`
+            "
+            if board.with_utc_timestamps { ", `utc_timestamp_expired`" }
+            "
+            )
+            VALUES"
         for (i, no) in list_no_iter {
-            "\n(" (no) ", 0, 1, UNIX_TIMESTAMP(), " ((Post::timestamp_nyc(unix_timestamp()))) ")"
+            "\n(" (no) ", 0, 1, "
+            ((Post::timestamp_nyc(unix_timestamp())))
+            if board.with_utc_timestamps { ", FROM_UNIXTIME(" (unix_timestamp()) ")" }
+
+            ")"
             if i < diff.len()-1 { "," } else { "" }
         }
-        r#"
-                ON DUPLICATE KEY UPDATE
-                deleted=VALUES(`deleted`),
-                timestamp_expired=VALUES(`timestamp_expired`);"#
+        "
+        ON DUPLICATE KEY UPDATE
+        `deleted`=VALUES(`deleted`),
+        `timestamp_expired`=VALUES(`timestamp_expired`)"
+        if board.with_utc_timestamps { ", `utc_timestamp_expired` = VALUES(`utc_timestamp_expired`)" }
+
+        ";"
         );
         while let Err(e) = conn.query_drop(query.as_str()).await {
             if get_ctrlc() {
@@ -526,8 +632,8 @@ impl QueryExecutor for mysql_async::Pool {
     async fn post_get_media(&self, board: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Result<Either<Option<tokio_postgres::Row>, Option<mysql_async::Row>>> {
         let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
-        let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::PostGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetMedia));
-        let mut res: Option<mysql_async::Row> = conn.exec_first(statement?.as_str(), (md5,)).await.ok().flatten();
+        let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::PostGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetMedia))?;
+        let mut res: Option<mysql_async::Row> = conn.exec_first(statement.as_str(), (md5,)).await.ok().flatten();
         Ok(Either::Right(res))
     }
 
@@ -542,7 +648,18 @@ impl QueryExecutor for mysql_async::Pool {
 
         let mut conn = self.get_conn().await?;
         let mut map = HashMap::new();
-        let actual = if board_id == 1 { super::Query::iter().filter(|q: &Query| q.to_string().starts_with("Board")).collect::<Vec<Query>>() } else { super::Query::iter().collect::<Vec<Query>>() };
+        let actual = {
+            if board_id == 1 {
+                super::Query::iter().filter(|q: &Query| q.to_string().starts_with("Board")).collect::<Vec<Query>>()
+            } else {
+                super::Query::iter()
+                    .filter(|q| match *q {
+                        Query::ThreadUpsert | Query::ThreadUpdateDeleteds | Query::PostUpsertMedia => false,
+                        _ => true,
+                    })
+                    .collect::<Vec<Query>>()
+            }
+        };
         for query in actual {
             let statement = match query {
                 Query::BoardsIndexGetLastModified => boards_index_get_last_modified().into(),
@@ -557,15 +674,15 @@ impl QueryExecutor for mysql_async::Pool {
                 Query::ThreadGet => thread_get(board).into(),
                 Query::ThreadGetMedia => thread_get_media(board).into(),
                 Query::ThreadGetLastModified => thread_get_last_modified(board).into(),
-                Query::ThreadUpsert => thread_upsert(board).into(),
+                Query::ThreadUpsert => unreachable!(),
                 Query::ThreadUpdateLastModified => thread_update_last_modified(board).into(),
                 Query::ThreadUpdateDeleted => thread_update_deleted(board).into(),
-                Query::ThreadUpdateDeleteds => thread_update_deleteds(board).into(),
+                Query::ThreadUpdateDeleteds => unreachable!(),
                 Query::ThreadsGetCombined => threads_get_combined().into(),
                 Query::ThreadsGetModified => threads_get_modified().into(),
                 Query::PostGetSingle => post_get_single(board).into(),
                 Query::PostGetMedia => post_get_media(board).into(),
-                Query::PostUpsertMedia => "SELECT 1;".into(),
+                Query::PostUpsertMedia => unreachable!(),
             };
             map.insert(query, statement);
             map.remove(&Query::PostUpsertMedia);
@@ -685,46 +802,8 @@ pub mod queries {
         )
     }
 
-    // Unused
     pub fn thread_upsert<'a>(board: &str) -> String {
-        // omit email, delpass
-        format!(
-            r#"
-    INSERT INTO `{board}`
-    (num, subnum, thread_num, op, `timestamp`, timestamp_expired, preview_orig, preview_w, preview_h,
-    media_filename, media_w, media_h, media_size, media_hash, media_orig, spoiler,
-    capcode, `name`, trip, title, comment, sticky, locked, poster_hash, poster_country, exif)
-    VALUES
-        (:num, :subnum, :thread_num, :op, :timestamp, :timestamp_expired, :preview_orig, :preview_w, :preview_h,
-        :media_filename, :media_w, :media_h, :media_size, :media_hash, :media_orig, :spoiler,
-        :capcode, :name, :trip, :title, :comment, :sticky, :locked, :poster_hash, :poster_country, :exif)
-    ON DUPLICATE KEY UPDATE
-        op=VALUES(op),
-        `timestamp`=VALUES(`timestamp`),
-        timestamp_expired=VALUES(timestamp_expired),
-        preview_orig=VALUES(preview_orig),
-        preview_w=VALUES(preview_w),
-        preview_h=VALUES(preview_h),
-        media_filename=COALESCE(VALUES(media_filename), media_filename),
-        media_w=VALUES(media_w),
-        media_h=VALUES(media_h),
-        media_size=VALUES(media_size),
-        media_hash=VALUES(media_hash),
-        media_orig=VALUES(media_orig),
-        spoiler=VALUES(spoiler),
-        capcode=VALUES(capcode),
-        `name`=VALUES(`name`),
-        trip=VALUES(trip),
-        title=VALUES(title),
-        comment=VALUES(comment),
-        sticky = (VALUES(sticky) OR sticky ),
-        locked = (VALUES(locked) OR locked ),
-        poster_hash=VALUES(poster_hash),
-        poster_country=VALUES(poster_country),
-        exif=VALUES(exif);
-    "#,
-            board = board
-        )
+        unreachable!()
     }
 
     /// Update a thread's `last_modified`.
@@ -754,19 +833,9 @@ pub mod queries {
             board = board
         )
     }
-    // Unused
+
     pub fn thread_update_deleteds(board: &str) -> String {
-        // unused
-        format!(
-            r#"
-        UPDATE `{board}`
-        SET deleted             = 1,
-            timestamp_expired   = UNIX_TIMESTAMP()
-        WHERE
-            thread_num = ? AND num = ? AND subnum = 0
-    "#,
-            board = board
-        )
+        unreachable!()
     }
 
     /// combined, only run once at startup

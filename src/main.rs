@@ -2,7 +2,7 @@
 #![allow(unused_variables)]
 #![allow(unused_mut)]
 #![allow(unreachable_code)]
-#![recursion_limit = "512"]
+#![recursion_limit = "2048"]
 
 // use anyhow::{anyhow, Result};
 // use futures::prelude::*;
@@ -12,9 +12,10 @@
 // use async_std::sync::RwLock;
 // use futures::io::{AsyncReadExt, AsyncWriteExt};
 use anyhow::Result;
+use async_compat::CompatExt;
 use ctrlc;
 use fomat_macros::{epintln, fomat, pintln};
-use futures::{channel::oneshot, future, future::Either, stream::FuturesUnordered};
+use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
 
 // use futures::stream::FuturesOrdered;
 #[allow(unused_imports)]
@@ -26,13 +27,11 @@ use futures_lite::*;
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
 use reqwest::{self, StatusCode};
-use smol::{Task, Timer};
 use std::{
     collections::HashMap,
     fmt::Debug,
     fs::{create_dir_all, File},
     sync::atomic::{AtomicBool, AtomicU8, Ordering},
-    thread,
     time::{Duration, Instant},
 };
 pub mod config;
@@ -121,7 +120,7 @@ impl<'a, T: fmt::LowerHex> fmt::LowerHex for HexSlice<'a, T> {
 }
 
 async fn sleep(dur: Duration) {
-    Timer::new(dur).await;
+    smol::Timer::after(dur).await;
 }
 
 fn exists<P: AsRef<std::path::Path>>(path: P) -> bool {
@@ -146,10 +145,8 @@ fn main() -> Result<()> {
     log::init(::log::LevelFilter::Info).unwrap();
     let num_threads = num_cpus::get().max(1);
 
-    // Run the thread-local and work-stealing executor on a thread pool.
-    for _ in 0..num_threads {
-        // A pending future is one that simply yields forever.
-        thread::spawn(|| smol::run(future::pending::<()>()));
+    if std::env::var("SMOL_THREADS").is_err() {
+        std::env::set_var("SMOL_THREADS", num_threads.to_string());
     }
 
     let (sender, receiver) = oneshot::channel::<()>();
@@ -158,7 +155,7 @@ fn main() -> Result<()> {
             CTRLC.fetch_add(1, Ordering::SeqCst);
         })
         .expect("Error setting Ctrl-C handler");
-        async_main().await.unwrap();
+        async_main().compat().await.unwrap();
         //pintln!("Done!");
         Ok(())
     })
@@ -179,7 +176,7 @@ async fn async_main() -> Result<()> {
     }
 
     let origin = "http://boards.4chan.org";
-    if !opt.asagi() {
+    if !opt.asagi_mode {
         // temp set env variable
         std::env::set_var("PGPASSWORD", &opt.database.password);
         std::env::set_var("PGOPTIONS", "--client-min-messages=warning");
@@ -292,7 +289,7 @@ async fn async_main() -> Result<()> {
 
         // Finally connect to the database
         let (client, connection) = tokio_postgres::connect(opt.database.url.as_ref().unwrap(), tokio_postgres::NoTls).await.unwrap();
-        Task::spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = connection.await {
                 epintln!("connection error: "(e));
             }
@@ -331,6 +328,7 @@ async fn async_main() -> Result<()> {
         let query_count = sql::Query::iter().count() - 1;
         let board_count = opt.boards.iter().map(|board| board.name.as_str()).chain(opt.threads.iter().map(|t| t.trim_start_matches('/').split('/').nth(0).unwrap())).unique().count();
         let stmt_count = board_count * query_count;
+
         let pool = mysql_async::Pool::new(&fomat!( (opt.database.url.as_ref().unwrap()) "?stmt_cache_size=" (stmt_count) "&pool_min=1&pool_max=3"));
         let mut conn = pool.get_conn().await?;
         // How effective is this?
@@ -366,8 +364,10 @@ where D: sql::QueryExecutor + sql::DropExecutor
     /// Archive 4chan based on --boards | --threads options
     async fn run(&self) -> Result<()> {
         // Init the `boards` table for MySQL
-        if self.opt.asagi() {
-            self.db_client.board_table_exists("boards", &self.opt).await;
+        if self.opt.asagi_mode {
+            let mut board = Board::default();
+            board.name = "boards".into();
+            self.db_client.board_table_exists(&board, &self.opt, &self.opt.database.name).await;
         }
 
         // If postgres, this will init all statements
@@ -418,7 +418,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
             .chain(self.opt.boards.iter().cloned().map(|board| self.download_board_and_thread(board, None)))
             .collect::<FuturesUnordered<_>>();
 
-        if self.opt.asagi() {
+        if self.opt.asagi_mode {
             config::display_asagi();
         // Make them see the asciiart
         // sleep(Duration::from_millis(500)).await;
@@ -503,13 +503,14 @@ where D: sql::QueryExecutor + sql::DropExecutor
         self.db_client.board_upsert(&_board.name).await.unwrap();
 
         // Create the boards if it doesn't exist
-        if self.opt.asagi() {
+        if self.opt.asagi_mode {
             if get_ctrlc() {
                 return Ok(());
             }
-            // The group of statments for just `Boards` was done in the beginning, so this can be called
-            // This will create all the board tables, triggers, etc if the board doesn't exist
-            self.db_client.board_table_exists(&_board.name, &self.opt).await;
+            // The group of statments for just `Boards` was done in the beginning (in the `run() method`), so
+            // this can be called This will create all the board tables, triggers, etc if the board
+            // doesn't exist
+            self.db_client.board_table_exists(&_board, &self.opt, &self.opt.database.name).await;
             if get_ctrlc() {
                 return Ok(());
             }
@@ -524,7 +525,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
             _board.id = id.unwrap();
         }
 
-        if self.opt.asagi() {
+        if self.opt.asagi_mode {
             // Init the actual statements for this specific board. Ignores when already exists.
             // For postgres, all the statements were initialized in the `run` method
             self.db_client.init_statements(_board.id, &_board.name).await.unwrap();
@@ -681,11 +682,10 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                     }
                                 };
 
-                                // FIXME: Loop on db call here
-
                                 match res {
                                     Err(e) => {
                                         error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board.name, err = e,);
+                                        db_retry().await;
                                         // error!(
                                         //     "{}",
                                         //     fomat!((fun_name) ":  (" (thread_type) ") /"
@@ -830,7 +830,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                         break;
                                     }
                                 }
-                                db_retry().await;
                             }
 
                             if get_ctrlc() {
@@ -953,7 +952,9 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                     }
                                     Ok(mut thread_json) => {
                                         if !with_tail {
-                                            update_post_with_extra(&mut thread_json);
+                                            if !self.opt.asagi_mode || (self.opt.asagi_mode && board.with_extra_columns) {
+                                                update_post_with_extra(&mut thread_json);
+                                            }
                                         }
                                         let op_post = thread_json.get("posts").unwrap().as_array().unwrap().iter().nth(0).unwrap();
 
@@ -973,7 +974,9 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             }
 
                                             // Don't pop OP post (which has no time). It will be filtered upon inside `thread_upsert`.
-                                            update_post_with_extra(&mut thread_json);
+                                            if !self.opt.asagi_mode || (self.opt.asagi_mode && board.with_extra_columns) {
+                                                update_post_with_extra(&mut thread_json);
+                                            }
                                         }
 
                                         if get_ctrlc() {
@@ -981,7 +984,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                         }
 
                                         // Upsert Thread
-                                        // TODO This should never return 0
+                                        // This should never return 0
                                         let len = self.db_client.thread_upsert(board, &thread_json).await.unwrap();
 
                                         if get_ctrlc() {
@@ -1004,81 +1007,93 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             } else {
                                                 "NEW" if len == 0 { "" } else { ": "(len) }
                                             }
-                                            if len == 0 && !self.opt.asagi() { " | WARNING EMPTY SET" }
+                                            if len == 0 && !self.opt.asagi_mode { " | WARNING EMPTY SET" }
                                         );*/
-                                        if thread_type.is_threads() {
-                                            info!(
-                                                "({endpoint})\t/{board}/{thread}\t\t{len} {tail}",
-                                                endpoint = thread_type,
-                                                board = &board.name,
-                                                thread = thread,
-                                                len = len,
-                                                tail = if with_tail { "[tail]" } else { "" }
-                                            );
-                                        } else {
-                                            info!(
-                                                "({endpoint})\t/{board}/{thread}\t\t{len} {tail}",
-                                                endpoint = format!(ansi!("{;magenta}"), thread_type),
-                                                board = &board.name,
-                                                thread = thread,
-                                                len = len,
-                                                tail = if with_tail { "[tail]" } else { "" }
-                                            );
+                                        if len > 0 {
+                                            if thread_type.is_threads() {
+                                                info!(
+                                                    "({endpoint})\t/{board}/{thread}\t\t{len} {tail}",
+                                                    endpoint = thread_type,
+                                                    board = &board.name,
+                                                    thread = thread,
+                                                    len = len,
+                                                    tail = if with_tail { "[tail]" } else { "" }
+                                                );
+                                            } else {
+                                                info!(
+                                                    "({endpoint})\t/{board}/{thread}\t\t{len} {tail}",
+                                                    endpoint = format!(ansi!("{;magenta}"), thread_type),
+                                                    board = &board.name,
+                                                    thread = thread,
+                                                    len = len,
+                                                    tail = if with_tail { "[tail]" } else { "" }
+                                                );
+                                            }
                                         }
 
                                         // Update thread's deleteds
-                                        // FIXME Loop here
-                                        let res = self.db_client.thread_update_deleteds(board, thread, &thread_json).await;
-                                        match res {
-                                            Err(e) => {}
-                                            Ok(either) => match either {
-                                                Either::Right(rows) =>
-                                                    if let Some(mut rows) = rows {
-                                                        for no in rows {
-                                                            warn!(
-                                                                "({endpoint})\t/{board}/{thread}#{no}\t{deleted}",
-                                                                endpoint = thread_type,
-                                                                board = &board.name,
-                                                                thread = thread,
-                                                                no = no,
-                                                                deleted = format!(ansi!("{;yellow}"), "DELETED"),
-                                                            );
-                                                            // pintln!("download_thread:
-                                                            // ("(thread_type)")
-                                                            // /"(&board.name)"/"(thread)"#"(no)"\
-                                                            // t[DELETED]");
-                                                        }
-                                                    },
-                                                Either::Left(rows) => {
-                                                    futures::pin_mut!(rows);
-                                                    while let Some(Ok(row)) = rows.next().await {
-                                                        let no: Option<i64> = row.get("no");
-                                                        let resto: Option<i64> = row.get("resto");
-                                                        if let Some(no) = no {
-                                                            if let Some(resto) = resto {
+                                        loop {
+                                            let res = self.db_client.thread_update_deleteds(board, thread, &thread_json).await;
+                                            match res {
+                                                Err(e) => {
+                                                    error!("{}", e);
+                                                    db_retry().await;
+                                                }
+                                                Ok(either) => match either {
+                                                    Either::Right(rows) => {
+                                                        if let Some(mut rows) = rows {
+                                                            for no in rows {
                                                                 warn!(
-                                                                    "({endpoint})\t/{board}/{thread}#{no}\t[DELETED]",
+                                                                    "({endpoint})\t/{board}/{thread}#{no}\t{deleted}",
                                                                     endpoint = thread_type,
                                                                     board = &board.name,
-                                                                    thread = if resto == 0 { no } else { resto },
+                                                                    thread = thread,
                                                                     no = no,
+                                                                    deleted = format!(ansi!("{;yellow}"), "DELETED"),
                                                                 );
                                                                 // pintln!("download_thread:
                                                                 // ("(thread_type)")
-                                                                // /"(&board.name)"/"
-                                                                //     if resto == 0 { (no) } else {
-                                                                // (resto) }
-                                                                //     "#"(no)"\t[DELETED]");
+                                                                // /"(&board.name)"/"(thread)"#"
+                                                                // (no)"\
+                                                                // t[DELETED]");
                                                             }
                                                         }
+                                                        break;
                                                     }
-                                                }
-                                            },
+                                                    Either::Left(rows) => {
+                                                        futures::pin_mut!(rows);
+                                                        while let Some(Ok(row)) = rows.next().await {
+                                                            let no: Option<i64> = row.get("no");
+                                                            let resto: Option<i64> = row.get("resto");
+                                                            if let Some(no) = no {
+                                                                if let Some(resto) = resto {
+                                                                    warn!(
+                                                                        "({endpoint})\t/{board}/{thread}#{no}\t[DELETED]",
+                                                                        endpoint = thread_type,
+                                                                        board = &board.name,
+                                                                        thread = if resto == 0 { no } else { resto },
+                                                                        no = no,
+                                                                    );
+                                                                    // pintln!("download_thread:
+                                                                    // ("(thread_type)")
+                                                                    // /"(&board.name)"/"
+                                                                    //     if resto == 0 { (no) }
+                                                                    // else {
+                                                                    // (resto) }
+                                                                    //     "#"(no)"\t[DELETED]");
+                                                                }
+                                                            }
+                                                        }
+
+                                                        break;
+                                                    }
+                                                },
+                                            }
                                         }
 
                                         // Get Media
                                         if board.with_full_media || board.with_thumbnails {
-                                            if self.opt.asagi() {
+                                            if self.opt.asagi_mode {
                                                 // Get list of media. Filter out `filedeleted`. Filter out non-media.
                                                 let media_list: Vec<(u64, u64, &str, u64, &str, &str)> = (&thread_json["posts"])
                                                     .as_array()
@@ -1168,11 +1183,12 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                     // i.e The posts from the live thread minus the bumped off posts (if any) that's recorded in the db
                                                     // (if any) But queried from the database since
                                                     // it has sha256 & sha256t
-                                                    let either = self.db_client.thread_get_media(board, thread, next_no).await;
-                                                    if let Either::Left(res) = either {
-                                                        match res {
-                                                            Err(e) => epintln!("download_media: "(e)),
-                                                            Ok(rows) => {
+                                                    let res = self.db_client.thread_get_media(board, thread, next_no).await;
+
+                                                    match res {
+                                                        Err(e) => epintln!("download_media: "(e)),
+                                                        Ok(either) => {
+                                                            if let Either::Left(rows) = either {
                                                                 futures::pin_mut!(rows);
                                                                 let mm =
                                                         // let mm : Vec<Result<(Vec<u8>, u64, String, String, Option<Vec<u8>, Option<Vec<u8>>>),_>> =
@@ -1225,6 +1241,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                             }
                                                         }
                                                     }
+
                                                     sleep(Duration::from_millis(500)).await;
                                                 }
                                             }
@@ -1245,13 +1262,16 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                 deleted = true;
                                 let tail = if with_tail { "-tail" } else { "" };
                                 loop {
-                                    let either = self.db_client.thread_update_deleted(board.id, thread).await;
+                                    let either = self.db_client.thread_update_deleted(board, thread).await;
 
                                     // Display the deleted thread
                                     match either {
                                         Err(e) => {
-                                            epintln!(
-                                                "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]" "["(e)"]"
+                                            error!(
+                                                "{}",
+                                                fomat!(
+                                                    "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]" "["(e)"]"
+                                                )
                                             );
                                             sleep(Duration::from_millis(500)).await;
                                         }
@@ -1379,7 +1399,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
 
         // Test individual get for pg
         // let mut _sem_test = None;
-        // if !self.opt.asagi() {
+        // if !self.opt.asagi_mode {
         //     _sem_test = Some(SEMAPHORE_MEDIA_TEST.acquire(1).await);
         // }
         if get_ctrlc() {
@@ -1394,12 +1414,13 @@ where D: sql::QueryExecutor + sql::DropExecutor
         let mut url = None;
 
         // Check if exists
-        if self.opt.asagi() {
-            if let Either::Right(res) = self.db_client.post_get_media(board, md5_base64.as_ref().unwrap(), None).await.unwrap() {
-                match res {
-                    // Err(e) => epintln!("download_media:"(e)),
-                    None => (),
-                    Some(row) => {
+        if self.opt.asagi_mode {
+            let res = self.db_client.post_get_media(board, md5_base64.as_ref().unwrap(), None).await;
+            match res {
+                Err(e) => epintln!("download_media:"(e)),
+                // None => (),
+                Ok(either) => {
+                    if let Either::Right(Some(row)) = either {
                         let banned = row.get::<Option<u8>, &str>("banned").flatten().map_or_else(|| false, |v| v == 1);
                         if banned {
                             pintln!("download_media: Skipping banned media: /" (&board.name)"/"
@@ -1438,8 +1459,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
                         url = Some(url::Url::parse(&url_string).unwrap());
                     }
                 }
-            } else {
-                epintln!("download_media: Error getting media! This shouldn't have happened!");
             }
         } else {
             let _checksum = {
@@ -1522,17 +1541,23 @@ where D: sql::QueryExecutor + sql::DropExecutor
                     break;
                 }
                 if retry != 0 {
-                    epintln!("download_media: /"(board.name)"/"
+                    warn!(
+                        "{}",
+                        fomat!("download_media: /"(board.name)"/"
                     if resto == 0 { (no) } else { (resto) }
-                    "/"(no) " [Retry #" (retry)"]");
+                    "/"(no) " [Retry #" (retry)"]")
+                    );
                     sleep(Duration::from_millis(500)).await;
                 }
                 match self.client.get(_url.as_str()).send().await {
-                    Err(e) => epintln!("download_media: " "/"(&board.name)"/"
+                    Err(e) => error!(
+                        "{}",
+                        fomat!("download_media: " "/"(&board.name)"/"
                         if resto == 0 { (no) } else { (resto) }
                         "#"
                         (no)
-                        "["(e)"]"),
+                        "["(e)"]")
+                    ),
                     Ok(resp) => {
                         match resp.status() {
                             StatusCode::NOT_FOUND => {
@@ -1546,16 +1571,16 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                 if get_ctrlc() {
                                     break;
                                 }
-                                if self.opt.asagi() {
+                                if self.opt.asagi_mode {
                                     // Make dirs
                                     if let Some(_dir) = &dir {
                                         let res = smol::Unblock::new(create_dir_all(_dir.as_str())).into_inner().await;
                                         if let Err(e) = res {
-                                            epintln!("download_media: [" (e) "]");
+                                            error!("{}", fomat!("download_media: [" (e) "]"));
                                         }
                                     }
                                     if let Some(file_path) = &path {
-                                        let res = download_and_hash_media(resp, &file_path, media_type, self.opt.asagi()).await.unwrap();
+                                        let res = download_and_hash_media(resp, &file_path, media_type, self.opt.asagi_mode).await.unwrap();
                                         if res.is_none() || get_ctrlc() {
                                             return Ok(());
                                         }
@@ -1565,17 +1590,20 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             let result = hasher.finalize();
                                             let md5_bytes = base64::decode(md5_base64.as_ref().unwrap().as_bytes()).unwrap();
                                             if md5_bytes.as_slice() != result.as_slice() {
-                                                epintln!("download_media: Hashes don't match! /" (&board.name) "/"
-                                                if resto == 0 { (no) } else { (resto) }
-                                                "#" (no)
-                                                if retry > 0 { " [Retry #" (retry) "]" } else { "" }
+                                                error!(
+                                                    "{}",
+                                                    fomat!("download_media: Hashes don't match! /" (&board.name) "/"
+                                                    if resto == 0 { (no) } else { (resto) }
+                                                    "#" (no)
+                                                    if retry > 0 { " [Retry #" (retry) "]" } else { "" }
+                                                    )
                                                 );
                                                 continue;
                                             }
                                         }
                                         break;
                                     } else {
-                                        epintln!("download_media: file path is empty! This isn't supposed to happen!");
+                                        error!("{}", fomat!("download_media: file path is empty! This isn't supposed to happen!"));
                                     }
                                 } else {
                                     let now = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).map(|v| v.as_nanos()).unwrap_or(tim.into());
@@ -1591,7 +1619,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                     );
 
                                     // Download File and calculate hashes
-                                    let res = download_and_hash_media(resp, &tmp_path, media_type, self.opt.asagi()).await.unwrap();
+                                    let res = download_and_hash_media(resp, &tmp_path, media_type, self.opt.asagi_mode).await.unwrap();
                                     if res.is_none() || get_ctrlc() {
                                         return Ok(());
                                     }
@@ -1606,11 +1634,14 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                     if media_type == MediaType::Full {
                                         let result = hasher.finalize();
                                         if md5.as_ref().unwrap().as_slice() != result.as_slice() {
-                                            epintln!("download_media: Hashes don't match! /" (&board.name) "/"
-                                            if resto == 0 { (no) } else { (resto) }
-                                            "#" (no)
-                                            {" `{:02x}`",HexSlice(md5.as_ref().unwrap().as_slice()) } {" != `{:02x}`", &result}
-                                            if retry > 0 { " [Retry #" (retry) "]" } else { "" }
+                                            error!(
+                                                "{}",
+                                                fomat!("download_media: Hashes don't match! /" (&board.name) "/"
+                                                if resto == 0 { (no) } else { (resto) }
+                                                "#" (no)
+                                                {" `{:02x}`",HexSlice(md5.as_ref().unwrap().as_slice()) } {" != `{:02x}`", &result}
+                                                if retry > 0 { " [Retry #" (retry) "]" } else { "" }
+                                                )
                                             );
                                             let _ = std::fs::remove_file(&tmp_path);
                                             continue;
@@ -1660,12 +1691,15 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                     )
                                                     .await;
                                                 if let Err(e) = res {
-                                                    epintln!(
+                                                    error!(
+                                                        "{}",
+                                                        fomat!(
                                                         "download_media: post_upsert_media: " "/"(&board.name)"/"
                                                         if resto == 0 { (no) } else { (resto) }
                                                         "#"
                                                         (no)
-                                                        " ["(e)"]");
+                                                        " ["(e)"]")
+                                                    );
                                                     success = false;
                                                 } else {
                                                     success = true;
@@ -1689,12 +1723,12 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                         // Make dirs
                                         let dirs_result = smol::Unblock::new(create_dir_all(_dir.as_str())).into_inner().await;
                                         match dirs_result {
-                                            Err(e) => epintln!("download_media: Error creating dirs `" (&_dir) "` [" (e) "]"),
+                                            Err(e) => error!("{}", fomat!("download_media: Error creating dirs `" (&_dir) "` [" (e) "]")),
                                             Ok(_) => {
                                                 // Move to final path
                                                 let rename_result = smol::Unblock::new(std::fs::rename(&tmp_path, &_path)).into_inner().await;
                                                 match rename_result {
-                                                    Err(e) => epintln!("download_media: Error moving `" (&tmp_path) "` to `" (&_path) "` [" (e) "]"),
+                                                    Err(e) => error!("{}", fomat!("download_media: Error moving `" (&tmp_path) "` to `" (&_path) "` [" (e) "]")),
                                                     Ok(_) => {
                                                         // TODO clear this
                                                         /*
@@ -1721,11 +1755,14 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                                 )
                                                                 .await;
                                                             if let Err(e) = res {
-                                                                epintln!("download_media: " "/"(&board.name)"/"
+                                                                error!(
+                                                                    "{}",
+                                                                    fomat!("download_media: " "/"(&board.name)"/"
                                                                             if resto == 0 { (no) } else { (resto) }
                                                                             "#"
                                                                             (no)
-                                                                            "["(e)"]");
+                                                                            "["(e)"]")
+                                                                );
                                                                 success = false;
                                                             } else {
                                                                 success = true;
@@ -1744,17 +1781,17 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             }
                                         }
                                     } else {
-                                        epintln!("download_media: Error! Hash found to be " (len) " chars long when it's supposed to be 64" );
+                                        error!("download_media: Error! Hash found to be {} chars long when it's supposed to be 64", len);
                                     }
                                 }
                             }
-                            status => epintln!("download_media: "(status)),
+                            status => error!("download_media: {}", status),
                         }
                     }
                 }
             }
         } else {
-            epintln!("download_media: No URL was found! This shouldn't happen!")
+            error!("download_media: No URL was found! This shouldn't happen!")
         }
         Ok(())
     }
