@@ -167,7 +167,7 @@ Core functionality works. There are things that could be improved on:
         Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
 
 ## Asagi drop-in status
-Core functionality works.
+Stable.
 
 ## Please respect the 4chan API guidelines as best you can
 1. Use `Last-Modified` and `If-Modified-Since`
