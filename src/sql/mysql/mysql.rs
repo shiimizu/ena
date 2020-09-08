@@ -173,12 +173,12 @@ impl QueryExecutor for mysql_async::Pool {
         res.map(|opt| opt.and_then(|row| row.get::<Option<u16>, &str>("id")).flatten())
     }
 
-    async fn board_get_last_modified(&self, thread_type: ThreadType, board_info: &Board) -> Option<String> {
+    async fn board_get_last_modified(&self, thread_type: ThreadType, board: &Board) -> Option<String> {
         let mut conn = self.get_conn().await.ok()?;
         let store = STATEMENTS.read().await;
         let map = store.get(&1)?;
         let statement = map.get(&Query::BoardGetLastModified)?;
-        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (thread_type.is_threads(), board_info.id)).await;
+        let res: Result<Option<Option<String>>, _> = conn.exec_first(statement.as_str(), (thread_type.is_threads(), board.id)).await;
         res.unwrap().flatten()
     }
 
@@ -200,13 +200,13 @@ impl QueryExecutor for mysql_async::Pool {
         Ok(0)
     }
 
-    async fn thread_get(&self, board_info: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
+    async fn thread_get(&self, board: &Board, thread: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
         let mut conn = self.get_conn().await;
         match conn {
             Err(e) => Either::Right(Err(anyhow!(e))),
             Ok(mut conn) => {
                 let store = STATEMENTS.read().await;
-                let statement = store.get(&board_info.id).and_then(|queries| queries.get(&Query::ThreadGet)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGet));
+                let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::ThreadGet)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGet));
                 match statement {
                     Err(e) => Either::Right(Err(e)),
                     Ok(statement) => {
@@ -219,14 +219,14 @@ impl QueryExecutor for mysql_async::Pool {
     }
 
     /// Unused
-    async fn thread_get_media(&self, board_info: &Board, thread: u64, start: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
+    async fn thread_get_media(&self, board: &Board, thread: u64, start: u64) -> Either<Result<tokio_postgres::RowStream>, Result<Vec<mysql_async::Row>>> {
         let mut conn = self.get_conn().await;
 
         match conn {
             Err(e) => Either::Right(Err(anyhow!(e))),
             Ok(mut conn) => {
                 let store = STATEMENTS.read().await;
-                let statement = store.get(&board_info.id).and_then(|queries| queries.get(&Query::ThreadGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGetMedia));
+                let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::ThreadGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadGetMedia));
                 match statement {
                     Err(e) => Either::Right(Err(e)),
                     Ok(statement) => {
@@ -260,7 +260,7 @@ impl QueryExecutor for mysql_async::Pool {
         }
     }
 
-    async fn thread_upsert(&self, board_info: &Board, thread_json: &serde_json::Value) -> Result<u64> {
+    async fn thread_upsert(&self, board: &Board, thread_json: &serde_json::Value) -> Result<u64> {
         let mut posts: Vec<yotsuba::Post> = serde_json::from_value(thread_json["posts"].clone())?;
         // TODO: This should never happen
         if posts.len() == 0 {
@@ -271,7 +271,7 @@ impl QueryExecutor for mysql_async::Pool {
         if posts[0].unique_ips.is_none() {
             let mut conn = self.get_conn().await?;
             let store = STATEMENTS.read().await;
-            let stmt_post_get_single = store.get(&board_info.id).and_then(|queries| queries.get(&Query::PostGetSingle)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetSingle))?;
+            let stmt_post_get_single = store.get(&board.id).and_then(|queries| queries.get(&Query::PostGetSingle)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetSingle))?;
             let thread = posts[0].no;
             let mut single_res: Option<mysql_async::Row> = conn.exec_first(stmt_post_get_single.as_str(), (thread, thread)).await?;
             let prev_unique_ips = single_res
@@ -294,7 +294,7 @@ impl QueryExecutor for mysql_async::Pool {
             let thread = posts[0].no;
             let query = format!(
                 "select * from `{board}` where ((thread_num = {thread} and num >= {start}) or (thread_num = {thread} and op=1) ) and subnum = 0  order by num;",
-                board = &board_info.board,
+                board = &board.name,
                 start = start,
                 thread = thread
             );
@@ -322,7 +322,7 @@ impl QueryExecutor for mysql_async::Pool {
         // Manually stitch the query together so we can have multiple values
         let mut q = fomat!(
         r#"
-        INSERT INTO `"# (&board_info.board) r#"`
+        INSERT INTO `"# (&board.name) r#"`
         (poster_ip, num, subnum, thread_num, op, `timestamp`, timestamp_expired, preview_orig, preview_w, preview_h,
         media_filename, media_w, media_h, media_size, media_hash, media_orig, spoiler, deleted,
         capcode, email, `name`, trip, title, comment, delpass, sticky, locked, poster_hash, poster_country, exif)
@@ -402,7 +402,7 @@ impl QueryExecutor for mysql_async::Pool {
         Ok(Either::Right(status))
     }
 
-    async fn thread_update_deleteds(&self, board_info: &Board, thread: u64, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
+    async fn thread_update_deleteds(&self, board: &Board, thread: u64, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
         let posts = json.get("posts").and_then(|posts| posts.as_array()).ok_or_else(|| anyhow!("Empty value getting `posts` array from json"))?;
 
         // TODO this should never happen.
@@ -414,7 +414,7 @@ impl QueryExecutor for mysql_async::Pool {
 
         // Select all posts from DB starting from new json post's first reply `no`
         // (default to OP if noreplies).
-        let query = format!("select * from `{board}` where thread_num = {thread} and num >= {start} and subnum = 0;", board = &board_info.board, start = start, thread = thread);
+        let query = format!("select * from `{board}` where thread_num = {thread} and num >= {start} and subnum = 0;", board = &board.name, start = start, thread = thread);
         let res: Vec<mysql_async::Row> = conn.query(query.as_str()).await?;
         let rows: Vec<Post> = res.into_iter().map(|row| Post::from(row)).collect();
 
@@ -431,7 +431,7 @@ impl QueryExecutor for mysql_async::Pool {
         // Manually stitch the query together so we can have multiple values/batch upsert
         let query = fomat!(
         r#"
-                INSERT INTO `"# (&board_info.board) r#"`
+                INSERT INTO `"# (&board.name) r#"`
                 (num, subnum, deleted, `timestamp`, `timestamp_expired`)
                 VALUES
                     "#
@@ -523,12 +523,12 @@ impl QueryExecutor for mysql_async::Pool {
         .unwrap()
     }
 
-    async fn post_get_media(&self, board_info: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Result<Option<mysql_async::Row>>> {
+    async fn post_get_media(&self, board: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Result<Option<mysql_async::Row>>> {
         match self.get_conn().await {
             Err(e) => Either::Right(Err(anyhow!(e))),
             Ok(mut conn) => {
                 let store = STATEMENTS.read().await;
-                let statement = store.get(&board_info.id).and_then(|queries| queries.get(&Query::PostGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetMedia));
+                let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::PostGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetMedia));
                 match statement {
                     Err(e) => Either::Right(Err(e)),
                     Ok(statement) => {

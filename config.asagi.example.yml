@@ -44,7 +44,7 @@ board_settings:
   with_full_media:      false   # download full media
   with_thumbnails:      false   # download thumbnails
   watch_boards:         false   # poll boards instead of getting them once
-  watch_threads:        false   # poll threads until archived or deleted instead of getting them once
+  watch_threads:        false   # poll threads until archived or deleted instead of getting them once (threads from config, not threads from boards)
   skip_board_check:     false   # skip checking if a board is valid. useful if a new board was added but not yet in boards.json
 
 # Boards inherit settings from `board_settings`

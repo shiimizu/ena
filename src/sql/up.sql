@@ -42,7 +42,7 @@ COMMENT ON COLUMN media.ext     is 'Filetype';
 COMMENT ON COLUMN media.md5     is 'MD5 hash of file';
 COMMENT ON COLUMN media.sha256  is 'SHA256 hash of file';
 COMMENT ON COLUMN media.content is 'Optionally stored file';
-COMMENT ON COLUMN media.extra   is 'Sorage for any other columns';
+COMMENT ON COLUMN media.extra   is 'Storage for any other columns';
 
 -- The media entry that a post has
 CREATE TABLE IF NOT EXISTS "posts_media" (
@@ -95,16 +95,27 @@ CREATE TABLE IF NOT EXISTS "boards" (
 -- List of posts
 CREATE TABLE IF NOT EXISTS "posts" (
     "num"            INT8        NOT NULL,
+    -- "tim"               INT8,
     "thread_num"     INT8        ,
     "created_on"    TIMESTAMPTZ NOT NULL,
     "updated_on"    TIMESTAMPTZ,
     "archived_on"   TIMESTAMPTZ,
     "deleted_on"    TIMESTAMPTZ,
+    -- "fsize"             INT4,
+    -- "w"                 INT4,
+    -- "h"                 INT4,
     "replies"       INT4,
     "images"        INT4,
     "unique_ips"    INT4,
+    -- "tn_w"              INT2,
+    -- "tn_h"              INT2,
+    -- "custom_spoiler"    INT2,
+    -- "since4pass"        INT2,
     "sticky"        BOOL,
     "closed"        BOOL,
+    -- "filedeleted"       BOOL,
+    -- "spoiler"           BOOL,
+    -- "m_img"             BOOL,
     "bumplimit"     BOOL,
     "imagelimit"    BOOL,
     "md5"           BYTEA,
@@ -113,9 +124,16 @@ CREATE TABLE IF NOT EXISTS "posts" (
     "name"          TEXT,
     "subject"       TEXT,
     "html"          TEXT,
+    -- "filename"          TEXT,
+    -- "ext"               TEXT,
     "tripcode"      TEXT,
     "ip_hash"       TEXT,
+    -- "capcode"           TEXT,
     "country"       TEXT,
+    -- "troll_country"     TEXT,
+    -- "country_name"      TEXT,
+    -- "semantic_url"      TEXT,
+    -- "tag"               TEXT,
     "ip"            INET,
     "extra"         JSONB,
     PRIMARY KEY("board", "num", "created_on")

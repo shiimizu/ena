@@ -35,7 +35,8 @@ pub struct Board {
     pub id: u16,
 
     #[structopt(skip)]
-    pub board: String,
+    #[serde(rename = "board")]
+    pub name: String,
 
     // #[structopt(long, default_value, env, hide_env_values = true)]
     /// Retry number of HTTP GET requests
@@ -98,7 +99,7 @@ impl Default for Board {
     fn default() -> Self {
         Self {
             id:               0,
-            board:            String::new(),
+            name:             String::new(),
             retry_attempts:   3,
             interval_boards:  30000,
             interval_threads: 1000,
@@ -116,14 +117,14 @@ impl Default for Board {
 }
 
 fn boards_cli_string(board: &str) -> Result<Board> {
-    let board = board.to_lowercase();
-    if !board.is_empty() {
+    let board_name = board.to_lowercase();
+    if !board_name.is_empty() {
         // This will get patched at post processing so it's OK to use default here
-        let mut b = Board::default();
-        b.board = board;
-        Ok(b)
+        let mut board = Board::default();
+        board.name = board_name;
+        Ok(board)
     } else {
-        Err(anyhow!("Invalid board format `{}`", board))
+        Err(anyhow!("Invalid board format `{}`", board_name))
     }
 }
 
@@ -142,9 +143,9 @@ fn threads_cli_string(thread: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use url::Url;
     #[allow(unused_imports)]
     use pretty_assertions::{assert_eq, assert_ne};
+    use url::Url;
     #[test]
     fn url() {
         let u = Url::parse("mysql://username:@localhost:3306/db_name?pool_min=1&pool_max=3").unwrap();
@@ -154,14 +155,17 @@ mod tests {
         let password = u.password();
         let database = u.path();
         let query = u.query();
-        let parsed = Url::parse(&format!("mysql://{username}:{password}@{host}:{port}/{database}?{query}",
+        let parsed = Url::parse(&format!(
+            "mysql://{username}:{password}@{host}:{port}/{database}?{query}",
             username = username,
             password = password.unwrap_or_default(),
             host = host.unwrap_or_default(),
             port = port.unwrap_or(3306),
             database = database.trim_matches('/'),
             query = query.unwrap_or_default(),
-        )).unwrap().to_string();
+        ))
+        .unwrap()
+        .to_string();
         assert_eq!(parsed, u.to_string());
     }
     #[ignore]
@@ -181,7 +185,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
+#[derive(Debug, StructOpt, Deserialize, Serialize, Clone)]
 #[structopt(about)]
 #[serde(default)]
 // CLI Options
@@ -193,10 +197,6 @@ pub struct Opt {
     /// Download sequentially rather than concurrently. This sets limit to 1.
     #[structopt(long, display_order(5))]
     pub strict: bool,
-
-    /// Use Ena as an Asagi drop-in
-    #[structopt(long("asagi"), display_order(5))]
-    pub asagi_mode: bool,
 
     /// Download everything in the beginning with no limits and then throttle
     // #[structopt(long, display_order(5))]
@@ -280,6 +280,9 @@ pub struct Opt {
     #[structopt(flatten)]
     pub database: DatabaseOpt,
 
+    #[structopt(flatten)]
+    pub asagi: AsagiOpt,
+
     #[structopt(skip)]
     pub timescaledb: Option<TimescaleSettings>,
 
@@ -287,12 +290,24 @@ pub struct Opt {
     pub proxies: Option<Vec<ProxySettings>>,
 }
 
+impl Opt {
+    pub fn asagi(&self) -> bool {
+        self.asagi.r#use
+    }
+    pub fn to_string(&mut self) -> Result<String> {
+            let mut url = url::Url::parse(self.database.url.as_ref().unwrap())?;
+            url.set_password(Some("*****")).unwrap();
+            self.database.password = url.password().unwrap().to_string();
+            self.database.url = Some(url.to_string());
+            Ok(serde_json::to_string_pretty(self)?)
+    }
+}
+
 impl Default for Opt {
     fn default() -> Self {
         Self {
             debug:               false,
             strict:              false,
-            asagi_mode:          false,
             quickstart:          false,
             start_with_archives: false,
             config:              "config.yml".into(),
@@ -309,19 +324,38 @@ impl Default for Opt {
             media_url:           "https://i.4cdn.org".parse().unwrap(),
             board_settings:      Board::default(),
             database:            DatabaseOpt::default(),
+            asagi:               AsagiOpt::default(),
             timescaledb:         None,
             proxies:             None,
         }
     }
 }
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone, Default)]
+
+#[derive(Debug, StructOpt, Deserialize, Serialize, Clone, Default)]
+#[serde(default)]
+pub struct AsagiOpt {
+    /// Use Ena as an Asagi drop-in replacement
+    #[structopt(display_order(5), long("asagi"))]
+    pub r#use: bool,
+
+    /// Add and use `utc_timestamp_expired`, `utc_timestamp`, in board tables and
+    /// `utc_time_archived` in `{board}_threads` tables
+    #[structopt(hidden(true), long, env)]
+    pub with_utc_timestamps: bool,
+
+    /// Add any extra columns to `exif`
+    #[structopt(hidden(true), long, env)]
+    pub with_extra_columns: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(default)]
 pub struct TimescaleSettings {
     pub column: String,
     pub every:  String,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(default)]
 pub struct ProxySettings {
     pub url:      String,
@@ -380,6 +414,7 @@ impl From<&str> for MediaStorage {
         }
     }
 }
+
 impl std::fmt::Display for MediaStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -389,8 +424,7 @@ impl std::fmt::Display for MediaStorage {
         }
     }
 }
-
-#[derive(Debug, StructOpt, PartialEq, Deserialize, Serialize, Clone)]
+#[derive(Debug, StructOpt, Deserialize, Serialize, Clone)]
 #[serde(default)]
 pub struct DatabaseOpt {
     /// Set database url
@@ -510,7 +544,7 @@ pub fn version() -> String {
 #[rustfmt::skip]
 pub fn get_opt() -> Result<Opt> {
     let mut opt = Opt::from_args();
-    let default = Board::default(); // This has to call Self::default(), not &default_opt.board_settings (to prevent incorrect values)
+    let default = Board::default();
     for b in opt.boards.iter_mut() {
         // Patch CLI opt boards to use its board_settings
         if b.retry_attempts     == default.retry_attempts   { b.retry_attempts      = opt.board_settings.retry_attempts; }
@@ -524,35 +558,34 @@ pub fn get_opt() -> Result<Opt> {
         if b.watch_boards       == default.watch_boards     { b.watch_boards        = opt.board_settings.watch_boards; }
         if b.watch_threads      == default.watch_threads    { b.watch_threads       = opt.board_settings.watch_threads; }
     }
-    let new_boards: Vec<Board> = opt.boards.iter().filter(|b| !opt.boards_excluded.iter().any(|be| b.board == be.board) ).map(|b|b.clone())
-                        .collect();
-    opt.boards = new_boards;
+    
+    opt.boards = opt.boards.iter()
+        .filter(|board| !opt.boards_excluded.iter().any(|board_excluded| board.name == board_excluded.name) )
+        .cloned()
+        .collect::<Vec<Board>>();
     // https://stackoverflow.com/a/55150936
     let mut opt = {
         if let Some(config_file) = &opt.config.to_str() {
-            if config_file.is_empty() {
+            if config_file.trim().is_empty() {
                 opt
             } else {
-                let content = if config_file == &"-" {
+                let content =
+                if config_file == &"-" {
                     let mut content = String::new();
                     std::io::stdin().lock().read_to_string(&mut content)?;
                     content
                 } else {
-                    let res = std::fs::read_to_string(config_file);
-                    match res {
-                        Err(e) => { return Err(anyhow!("Error accessing config `{}` [{}]", &config_file, e)); },
-                        Ok(_res) => { _res },
-                    }
+                    let res = std::fs::read_to_string(config_file).map_err(|e|
+                        anyhow!("Error accessing config `{}` [{}]", &config_file, e)
+                    )?;
+                    res
                 };
-                let mut o = if !content.trim().is_empty() { serde_yaml::from_str::<Opt>(&content).map_err(|e|anyhow!("Error parsing config `{}` [{}]", &config_file, e)) } else { Err(anyhow!("Error `{}` is empty.", &config_file)) };
-                match o {
-                    Err(e) => {
-                        return Err(e);
-                    },
-                    Ok(ref mut q) => {
-                        let default_opt = Opt::default();
+                let mut q = 
+                serde_yaml::from_str::<Opt>(&content).map_err(|e|anyhow!("Error parsing config `{}` [{}]", &config_file, e))?;
+                let default_opt = Opt::default();
                         let default = Board::default(); // This has to call Self::default(), not &default_opt.board_settings (to prevent incorrect values)
                         let default_database = DatabaseOpt::default();
+                        let default_asagi = AsagiOpt::default();
                         if opt.board_settings.retry_attempts    != default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
                         if opt.board_settings.interval_boards   != default.interval_boards  { q.board_settings.interval_boards = opt.board_settings.interval_boards; }
                         if opt.board_settings.interval_threads  != default.interval_threads { q.board_settings.interval_threads = opt.board_settings.interval_threads; }
@@ -567,10 +600,11 @@ pub fn get_opt() -> Result<Opt> {
                         if opt.board_settings.watch_threads     != default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; }
 
 
-                        let boards_excluded_combined: Vec<Board>  = q.boards_excluded.iter().chain(opt.boards_excluded.iter()).map(|b| b.clone()).collect();
-                        let threads_combined: Vec<String> = q.threads.iter().chain(opt.threads.iter()).map(|s| s.clone()).collect();
-                        let boards_combined: Vec<Board> = q.boards.iter().chain(opt.boards.iter()).map(|b| b.clone())
-                        .filter(|b| !boards_excluded_combined.iter().any(|be| b.board == be.board) )
+                        let boards_excluded_combined: Vec<Board>  = q.boards_excluded.iter().chain(opt.boards_excluded.iter()).cloned().collect();
+                        let threads_combined: Vec<String> = q.threads.iter().chain(opt.threads.iter()).cloned().collect();
+                        let boards_combined: Vec<Board> = q.boards.iter().chain(opt.boards.iter())
+                        .filter(|board| !boards_excluded_combined.iter().any(|board_excluded| board.name == board_excluded.name) )
+                        .cloned()
                         .collect();
                         q.boards_excluded = boards_excluded_combined;
                         q.boards = boards_combined;
@@ -592,9 +626,8 @@ pub fn get_opt() -> Result<Opt> {
                         }
 
                         // Finally patch the yaml's board_settings with CLI opts
-                        if q.debug                  == default_opt.debug               { q.debug = opt.debug;                                    }
+                        if q.debug                  == default_opt.debug                { q.debug = opt.debug;                                      }
                         if q.strict                 == default_opt.strict               { q.strict = opt.strict;                                    }
-                        if q.asagi_mode             == default_opt.asagi_mode           { q.asagi_mode = opt.asagi_mode;                            }
                         if q.quickstart             == default_opt.quickstart           { q.quickstart = opt.quickstart;                            }
                         if q.start_with_archives    == default_opt.start_with_archives  { q.start_with_archives = opt.start_with_archives;          }
                         if q.config                 == default_opt.config               { q.config = opt.config;                                    }
@@ -602,7 +635,7 @@ pub fn get_opt() -> Result<Opt> {
                         if q.limit                  == default_opt.limit                { q.limit = opt.limit;                                      }
                         if q.media_dir              == default_opt.media_dir            { q.media_dir = opt.media_dir;                              }
                         if q.media_storage          == default_opt.media_storage        { q.media_storage = opt.media_storage;                      }
-                        if q.limit_media          == default_opt.limit_media        { q.limit_media = opt.limit_media;                      }
+                        if q.limit_media            == default_opt.limit_media          { q.limit_media = opt.limit_media;                          }
                         if q.user_agent             == default_opt.user_agent           { q.user_agent = opt.user_agent;                            }
                         if q.api_url                == default_opt.api_url              { q.api_url = opt.api_url;                                  }
                         if q.media_url              == default_opt.media_url            { q.media_url = opt.media_url;                              }
@@ -617,16 +650,12 @@ pub fn get_opt() -> Result<Opt> {
                         if q.database.password      == default_database.password        { q.database.password   = opt.database.password.clone();    }
                         if q.database.charset       == default_database.charset         { q.database.charset    = opt.database.charset.clone();     }
                         if q.database.collate       == default_database.collate         { q.database.collate    = opt.database.collate;             }
-                        // Or you can do it this way:
-                        // if opt.database.url           != default_database.url             { q.database.url        = opt.database.url.clone();         }
-                        // if opt.database.engine        != default_database.engine          { q.database.engine     = opt.database.engine.clone();      }
-                        // if opt.database.name          != default_database.name            { q.database.name       = opt.database.name.clone();        }
-                        // if opt.database.schema        != default_database.schema          { q.database.schema     = opt.database.schema.clone();      }
-                        // if opt.database.port          != default_database.port            { q.database.port       = opt.database.port;                }
-                        // if opt.database.username      != default_database.username        { q.database.username   = opt.database.username.clone();    }
-                        // if opt.database.password      != default_database.password        { q.database.password   = opt.database.password.clone();    }
-                        // if opt.database.charset       != default_database.charset         { q.database.charset    = opt.database.charset.clone();     }
-                        // if opt.database.collate       != default_database.collate         { q.database.collate    = opt.database.collate;             }
+                        
+                        // Asagi Options
+                        if q.asagi()                   == default_asagi.r#use               { q.asagi.r#use               = opt.asagi.r#use;               }
+                        if q.asagi.with_utc_timestamps == default_asagi.with_utc_timestamps { q.asagi.with_utc_timestamps = opt.asagi.with_utc_timestamps; }
+                        if q.asagi.with_extra_columns  == default_asagi.with_extra_columns  { q.asagi.with_extra_columns  = opt.asagi.with_extra_columns;  }
+                        
 
 
                         if q.board_settings.retry_attempts      == default.retry_attempts   { q.board_settings.retry_attempts = opt.board_settings.retry_attempts; }
@@ -643,9 +672,6 @@ pub fn get_opt() -> Result<Opt> {
                         if q.board_settings.watch_threads       == default.watch_threads    { q.board_settings.watch_threads = opt.board_settings.watch_threads; }
 
                         q.clone()
-                    }
-
-                }
             }
         } else {
             opt
@@ -677,11 +703,11 @@ pub fn get_opt() -> Result<Opt> {
         opt.database.url = Some(url);
     }
 
-    if opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("mysql") {
+    if opt.asagi() && !opt.database.url.as_ref().unwrap().contains("mysql") {
         return Err(anyhow!("Asagi mode must be used with a MySQL database. Did you mean to disable --asagi ?"));
     }
 
-    if !opt.asagi_mode && !opt.database.url.as_ref().unwrap().contains("postgresql") {
+    if !opt.asagi() && !opt.database.url.as_ref().unwrap().contains("postgresql") {
         return Err(anyhow!("Ena must be used with a PostgreSQL database. Did you mean to enable --asagi ?"));
     }
 
@@ -694,7 +720,7 @@ pub fn get_opt() -> Result<Opt> {
 
     // Afterwards dedup boards
     use itertools::Itertools;
-    opt.boards = (&opt.boards).into_iter().unique_by(|board| board.board.as_str()).map(|b| b.clone()).collect();
+    opt.boards = (&opt.boards).into_iter().unique_by(|board| board.name.as_str()).cloned().collect();
 
 
     // Trim media dir
@@ -705,7 +731,7 @@ pub fn get_opt() -> Result<Opt> {
         create_dir_all(&opt.media_dir)?;
     }
 
-    if !opt.asagi_mode {
+    if !opt.asagi() {
         let tmp = fomat!( (&opt.media_dir.display())"/tmp" );
         if !std::path::Path::new(&tmp).is_dir() {
             create_dir_all(&tmp)?;
