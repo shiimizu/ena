@@ -294,12 +294,13 @@ impl Opt {
     pub fn asagi(&self) -> bool {
         self.asagi.r#use
     }
+
     pub fn to_string(&mut self) -> Result<String> {
-            let mut url = url::Url::parse(self.database.url.as_ref().unwrap())?;
-            url.set_password(Some("*****")).unwrap();
-            self.database.password = url.password().unwrap().to_string();
-            self.database.url = Some(url.to_string());
-            Ok(serde_json::to_string_pretty(self)?)
+        let mut url = url::Url::parse(self.database.url.as_ref().unwrap())?;
+        url.set_password(Some("*****")).unwrap();
+        self.database.password = url.password().unwrap().to_string();
+        self.database.url = Some(url.to_string());
+        Ok(serde_json::to_string_pretty(self)?)
     }
 }
 

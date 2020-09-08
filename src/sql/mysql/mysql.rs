@@ -523,21 +523,12 @@ impl QueryExecutor for mysql_async::Pool {
         .unwrap()
     }
 
-    async fn post_get_media(&self, board: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Either<Result<Option<tokio_postgres::Row>>, Result<Option<mysql_async::Row>>> {
-        match self.get_conn().await {
-            Err(e) => Either::Right(Err(anyhow!(e))),
-            Ok(mut conn) => {
-                let store = STATEMENTS.read().await;
-                let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::PostGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetMedia));
-                match statement {
-                    Err(e) => Either::Right(Err(e)),
-                    Ok(statement) => {
-                        let mut res: Option<mysql_async::Row> = conn.exec_first(statement.as_str(), (md5,)).await.ok().flatten();
-                        Either::Right(Ok(res))
-                    }
-                }
-            }
-        }
+    async fn post_get_media(&self, board: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Result<Either<Option<tokio_postgres::Row>, Option<mysql_async::Row>>> {
+        let mut conn = self.get_conn().await?;
+        let store = STATEMENTS.read().await;
+        let statement = store.get(&board.id).and_then(|queries| queries.get(&Query::PostGetMedia)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::PostGetMedia));
+        let mut res: Option<mysql_async::Row> = conn.exec_first(statement?.as_str(), (md5,)).await.ok().flatten();
+        Ok(Either::Right(res))
     }
 
     async fn post_upsert_media(&self, md5: &[u8], hash_full: Option<&[u8]>, hash_thumb: Option<&[u8]>) -> Result<u64> {

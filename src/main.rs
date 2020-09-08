@@ -169,10 +169,10 @@ async fn async_main() -> Result<()> {
         Err(e) => {
             epintln!((e));
             return Ok(());
-        },
+        }
         Ok(res) => res,
     };
-    
+
     if opt.debug {
         pintln!((opt.to_string().unwrap()));
         return Ok(());
@@ -238,12 +238,10 @@ async fn async_main() -> Result<()> {
                         up = up.replace("INTERVAL '2 weeks'", &ts.every);
                     }
                 } else {
-                    up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION")
-                        .replace("SELECT create_hypertable", "-- SELECT create_hypertable");
+                    up = up.replace("CREATE EXTENSION", "-- CREATE EXTENSION").replace("SELECT create_hypertable", "-- SELECT create_hypertable");
                 }
 
-                up = up.replace("%%SCHEMA%%", &opt.database.schema)
-                        .replace("%%DB_NAME%%", &opt.database.name);
+                up = up.replace("%%SCHEMA%%", &opt.database.schema).replace("%%DB_NAME%%", &opt.database.name);
                 up
             };
 
@@ -1045,7 +1043,10 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                                 no = no,
                                                                 deleted = format!(ansi!("{;yellow}"), "DELETED"),
                                                             );
-                                                            // pintln!("download_thread: ("(thread_type)") /"(&board.name)"/"(thread)"#"(no)"\t[DELETED]");
+                                                            // pintln!("download_thread:
+                                                            // ("(thread_type)")
+                                                            // /"(&board.name)"/"(thread)"#"(no)"\
+                                                            // t[DELETED]");
                                                         }
                                                     },
                                                 Either::Left(rows) => {
@@ -1194,8 +1195,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                                 {
                                                                     // Downlaod Thumbnails
                                                                     if board.with_thumbnails && board.name != "f" {
-                                                                        let r =
-                                                                            mm.clone().into_iter().map(|details| self.download_media(board, details, MediaType::Thumbnail)).collect::<Vec<_>>();
+                                                                        let r = mm.clone().into_iter().map(|details| self.download_media(board, details, MediaType::Thumbnail)).collect::<Vec<_>>();
 
                                                                         let mut stream_of_futures = stream::iter(r);
 
@@ -1395,11 +1395,11 @@ where D: sql::QueryExecutor + sql::DropExecutor
 
         // Check if exists
         if self.opt.asagi() {
-            if let Either::Right(res) = self.db_client.post_get_media(board, md5_base64.as_ref().unwrap(), None).await {
+            if let Either::Right(res) = self.db_client.post_get_media(board, md5_base64.as_ref().unwrap(), None).await.unwrap() {
                 match res {
-                    Err(e) => epintln!("download_media:"(e)),
-                    Ok(None) => (),
-                    Ok(Some(row)) => {
+                    // Err(e) => epintln!("download_media:"(e)),
+                    None => (),
+                    Some(row) => {
                         let banned = row.get::<Option<u8>, &str>("banned").flatten().map_or_else(|| false, |v| v == 1);
                         if banned {
                             pintln!("download_media: Skipping banned media: /" (&board.name)"/"
@@ -1448,8 +1448,8 @@ where D: sql::QueryExecutor + sql::DropExecutor
                 } else {
                     // Thumbnails aren't unique and can have duplicates
                     // So check the database if we already have it or not
-                    if let Either::Left(s) = self.db_client.post_get_media(board, "", sha256t.as_ref().map(|v| v.as_slice())).await {
-                        s.ok().flatten().map(|row| row.get::<&str, Option<Vec<u8>>>("sha256t")).flatten()
+                    if let Either::Left(s) = self.db_client.post_get_media(board, "", sha256t.as_ref().map(|v| v.as_slice())).await.unwrap() {
+                        s.and_then(|row| row.get::<&str, Option<Vec<u8>>>("sha256t"))
                     } else {
                         // This else case will probably never run
                         // Since the Either will always run
