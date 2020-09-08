@@ -37,6 +37,8 @@
 -->
 # Ena
 
+<!--
+
 [![License][license-badge]][license-url]
 
 [license-badge]: https://img.shields.io/github/license/shiimizu/ena?color=blue
@@ -44,12 +46,16 @@
 [matrix-chat-link]: https://matrix.to/#/#bibanon-chat:matrix.org
 [matrix-chat-badge]: https://img.shields.io/matrix/bibanon-chat:matrix.org?logo=matrix&color=green
 
+-->
+
 Low resource and high performance archiver to save posts, images and all relevant data from an imageboard into a local database and local image store. The project currently only supports 4chan.  
 
 **This development branch is currently undergoing active breaking changes towards ena v0.8.0. Do not use in production. See the current [status](#Status).**
 
 ## Tracking changes
-<!-- * 🚧 Fix getting all 4 variants of thumbnails 🚧 -->
+<!-- * 🚧 Fix getting all 4 variants of thumbnails 🚧 
+* Now gets the correct number of thumbnails (op & reply) -->
+
 * Better last modified detection
 * Ability to use `-tail` json
 * Fix the correct number of `replies` and `images`
@@ -61,14 +67,11 @@ Low resource and high performance archiver to save posts, images and all relevan
 * Switch to YAML
 * Lives up to the description by being able to get threads and/or boards in a oneshot fashion
 * Reduce postgres min version. Probably >= `9` now.
-* Now gets the correct number of thumbnails (op & reply) *
 * **Database schema changes. Now one big `posts` table instead of seperated by board.**
 * No longer reports the current position/total while logging since things are fetched concurrently
 * Media fetching is no longer done in a background thread
 * Now relying on md5 check before downloading media, which means no sha256sum collision detection
 * Introduction of `unsafe` to clean post comments for Asagi.  
-
-<small>* in progress</small>
 
 ## Usage
 
@@ -130,6 +133,7 @@ OPTIONS:
 * Proxies
 * TimescaleDB support
 * Asagi drop-in replacement support
+* Customizable and tunable
 * `UPSERT` for superior thread accuracy and correctness
 * `SHA256` for full media and thumbnails to prevent duplicates
 
@@ -142,8 +146,9 @@ OPTIONS:
 
 ### Asagi drop-in
 1. Set `asagi_mode` to `true` in the config or pass `--asagi` in the command line.
-2. ???
-2. Profit
+1. A database is created if it wasn't already.
+1. ???
+1. Profit
 
 ## Building/Updating
 1. Install [Rust](https://www.rust-lang.org/tools/install) if you haven't already
@@ -160,11 +165,8 @@ OPTIONS:
     Build artifacts can be found in `target/release/`  
 
 ## Status  
-Core functionality works. There are things that could be improved on:  
-* Things are a bit fragile at the moment as the codebase is littered with `unwrap()` (for debugging) and can panic if any one of them sets off. (This will be cleaned up as things are finalized)
-* Postgres side
-  * Currently not getting the correct amount of media files.  
-        Solution found and implementation is underway. See [this report](error-media-log.md) for more information.
+Core functionality works. 
+* `Postgres side`: Currently not getting the correct amount of media files. Solution found. See [this report](error-media-log.md) for more information.
 
 ## Asagi drop-in status
 Stable.
@@ -194,14 +196,18 @@ Respecting the first rule will get you very far.
 
 
 ## Asagi specific implementation changes
-* Added `with_utc_timestamps` as an option which adds `utc_timestamp`, `utc_timestamp_expired`, columns to boards and `utc_archived_on` to `{board}_threads` table
-* Added `with_extra_columns` as an option which adds any extra or future columns to `exif`
-* Added `boards` table to cache `threads.json`|`archive.json` for state save restore.
-* Fixed updating `sticky` and `locked` for threads in triggers
-* More accurate `deleted` posts due to upserts
-* Cleaner sticky comments
-* Use `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
-* Any new changes for posts made by this implementation will overwrite the entry in your database due to upserts. 
+* Additions
+  * `with_extra_columns` config setting which adds any extra or future columns to `exif`
+  * `with_utc_timestamps` config setting which adds `utc_timestamp`, `utc_timestamp_expired`, columns to boards and `utc_archived_on` to `{board}_threads` table
+* Improvements
+  * Fixed updating `sticky` and `locked` for threads in triggers
+  * More accurate `deleted` posts due to upserts
+  * Cleaner sticky comments
+* Under the hood
+  * Ena has a feature to be a drop-in replacement for Asagi, so any deviation from Asagi's outputs should be considered a bug. However, Ena does not communicate with MySQL the same way Asagi does, and Ena tries to be more performant.
+  * Uses `boards` table to cache `threads.json`|`archive.json` for state save restore.
+  * Uses `{board}_threads`'s `time_last` to store `Last-Modified` from HTTP header. Nobody uses the `time_last` column so it's OK. 
+  * Any new changes for posts made by this implementation will overwrite the entry in your database due to upserts. 
 
 
 
