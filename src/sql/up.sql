@@ -88,20 +88,20 @@ CREATE TABLE IF NOT EXISTS "posts" (
     "semantic_url"      TEXT,
     "tag"               TEXT,
     "ip"                INET,
-    "extra"             JSONB,
-    UNIQUE("no", COALESCE("subnum", 0), board, "time")
+    "extra"             JSONB
 );
 
 COMMENT ON COLUMN posts.last_modified is 'Last modified time according to ''Last-Modified'' header in server response for OP, or modified/deleted/updated for replies';
 COMMENT ON COLUMN posts.deleted_on is 'Whenever a post is deleted. This is only accurate if you are actively archiving. Therefore it should not be relied upon entirely.';
 COMMENT ON COLUMN posts.ip is 'Gotta have a way to ban spammers ya''know';
 
-CREATE INDEX IF NOT EXISTS ix_no             ON "posts" USING brin ("no") WITH (pages_per_range = 32, autosummarize = on);
-CREATE INDEX IF NOT EXISTS ix_board          ON "posts" USING brin ("board") WITH (pages_per_range = 32, autosummarize = on);
-CREATE INDEX IF NOT EXISTS ix_time           ON "posts" ("time") ;
-CREATE INDEX IF NOT EXISTS ix_md5            ON "posts" USING brin ("md5") WITH (pages_per_range = 32, autosummarize = on) WHERE "md5" is not null;
-CREATE INDEX IF NOT EXISTS ix_no_board       ON "posts" USING brin ("no", "board" ) WITH (pages_per_range = 32, autosummarize = on);
-CREATE INDEX IF NOT EXISTS ix_no_resto_board ON "posts" USING brin ("no", "resto", "board" ) WITH (pages_per_range = 32, autosummarize = on);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_unq_no_subnum_board_time ON "posts" ("no", COALESCE("subnum", 0), board, "time");
+CREATE        INDEX IF NOT EXISTS ix_no                       ON "posts" USING brin ("no") WITH (pages_per_range = 32, autosummarize = on);
+CREATE        INDEX IF NOT EXISTS ix_board                    ON "posts" USING brin ("board") WITH (pages_per_range = 32, autosummarize = on);
+CREATE        INDEX IF NOT EXISTS ix_time                     ON "posts" ("time") ;
+CREATE        INDEX IF NOT EXISTS ix_md5                      ON "posts" USING brin ("md5") WITH (pages_per_range = 32, autosummarize = on) WHERE "md5" is not null;
+CREATE        INDEX IF NOT EXISTS ix_no_board                 ON "posts" USING brin ("no", "board" ) WITH (pages_per_range = 32, autosummarize = on);
+CREATE        INDEX IF NOT EXISTS ix_no_resto_board           ON "posts" USING brin ("no", "resto", "board" ) WITH (pages_per_range = 32, autosummarize = on);
 
 -- Optional TimescaleDB. It is recommended to partition on a huge table such as posts.
 CREATE EXTENSION IF NOT EXISTS timescaledb SCHEMA extensions CASCADE;

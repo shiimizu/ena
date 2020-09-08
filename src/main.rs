@@ -300,7 +300,7 @@ async fn async_main() -> Result<()> {
         fchan.run().await
     } else {
         use itertools::Itertools;
-        use mysql_async::prelude::*;
+        // use mysql_async::prelude::*;
         use sql::DropExecutor;
         use strum::IntoEnumIterator;
 
@@ -330,15 +330,6 @@ async fn async_main() -> Result<()> {
         let stmt_count = board_count * query_count;
 
         let pool = mysql_async::Pool::new(&fomat!( (opt.database.url.as_ref().unwrap()) "?stmt_cache_size=" (stmt_count) "&pool_min=1&pool_max=3"));
-        let mut conn = pool.get_conn().await?;
-        // How effective is this?
-        conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;").await?;
-        conn.query_drop("SET SESSION CHARACTER_SET_CONNECTION = utf8mb4;").await?;
-        conn.query_drop("SET SESSION CHARACTER_SET_CLIENT = utf8mb4;").await?;
-        conn.query_drop("SET SESSION CHARACTER_SET_RESULTS = utf8mb4;").await?;
-        conn.query_drop("SET SESSION COLLATION_CONNECTION = utf8mb4_unicode_ci;").await?;
-        conn.query_drop("SET SESSION COLLATION_SERVER = utf8mb4_unicode_ci;").await?;
-        drop(conn);
         let fchan = FourChan::new(create_client(origin, &opt).await?, pool, opt).await;
         fchan.run().await?;
         fchan.db_client.disconnect_pool().await?;
@@ -473,7 +464,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                 match self.client.head(&fomat!((self.opt.api_url)"/"(&_board.name)"/threads.json")).send().await {
                     Err(e) =>
                         if retry == _board.retry_attempts {
-                            epintln!("download_board_and_thread: Error requesting `/" (&_board.name) "/threads.json` [" (e) "]");
+                            epintln!("Error requesting `/" (&_board.name) "/threads.json` [" (e) "]");
                             return Ok(());
                         },
                     Ok(resp) => {
@@ -626,12 +617,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
             match resp {
                 Err(e) => {
                     error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board.name, err = e,);
-                    // epintln!((fun_name) ":  (" (thread_type) ") /" (&board.name) "/"
-                    // if board.name.len() <= 2 { "\t\t" } else {"\t "}
-                    // if let Some(_lm) =  &last_modified { (_lm) } else { "None" }
-                    // " | ["
-                    // (e)"]"
-                    // );
                     if retry == board.retry_attempts {
                         return Ok(StatusCode::SERVICE_UNAVAILABLE);
                     }
@@ -830,12 +815,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                             return Ok(status);
                         }
                         _ => {
-                            // epintln!((fun_name) ":  (" (thread_type) ") /" (&board.name) "/"
-                            // if board.name.len() <= 2 { "\t\t" } else {"\t"}
-                            // (&lm)
-                            // " | ["
-                            // (status)"]"
-                            // );
+                            
                             error!("({endpoint})\t/{board}/\t\t{status}", endpoint = thread_type, board = &board.name, status = status,);
                             if retry == board.retry_attempts {
                                 return Ok(status);
@@ -1035,11 +1015,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                                     no = no,
                                                                     deleted = format!(ansi!("{;yellow}"), "DELETED"),
                                                                 );
-                                                                // pintln!("download_thread:
-                                                                // ("(thread_type)")
-                                                                // /"(&board.name)"/"(thread)"#"
-                                                                // (no)"\
-                                                                // t[DELETED]");
                                                             }
                                                         }
                                                         break;
@@ -1052,19 +1027,13 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                             if let Some(no) = no {
                                                                 if let Some(resto) = resto {
                                                                     warn!(
-                                                                        "({endpoint})\t/{board}/{thread}#{no}\t[DELETED]",
+                                                                        "({endpoint})\t/{board}/{thread}#{no}\t{deleted}",
                                                                         endpoint = thread_type,
                                                                         board = &board.name,
                                                                         thread = if resto == 0 { no } else { resto },
                                                                         no = no,
+                                                                        deleted = format!(ansi!("{;yellow}"), "DELETED"),
                                                                     );
-                                                                    // pintln!("download_thread:
-                                                                    // ("(thread_type)")
-                                                                    // /"(&board.name)"/"
-                                                                    //     if resto == 0 { (no) }
-                                                                    // else {
-                                                                    // (resto) }
-                                                                    //     "#"(no)"\t[DELETED]");
                                                                 }
                                                             }
                                                         }
@@ -1281,8 +1250,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                             deleted = format!(ansi!("{;yellow}"), "DELETED"),
                                                             tail = if with_tail { " [tail]" } else { "" },
                                                         );
-                                                        // pintln!("download_thread: ("(thread_type)") /"(&board.name)"/"(no)(tail)"\t["(status)"]
-                                                        // [DELETED]");
+                                                        
 
                                                         // Ignore the below comments. If it's deleted, it won't matter what last-modified it is.
                                                         //
@@ -1319,26 +1287,19 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                                         endpoint = thread_type,
                                                                         board = &board.name,
                                                                         thread = no,
-                                                                        deleted = ansi!("{;yellow}", "DELETED"),
+                                                                        deleted = format!(ansi!("{;yellow}"), "DELETED"),
                                                                         tail = if with_tail { " [tail]" } else { "" },
                                                                     );
-                                                                // pintln!(
-                                                                //     "download_thread:
-                                                                // ("(thread_type)")
-                                                                // /"(&board.name)"/"
-                                                                // (no)(tail)"\t["(status)"]
-                                                                // [DELETED]"
-                                                                // );
                                                                 } else {
-                                                                    epintln!(
+                                                                    error!("{}",fomat!(
                                                                         "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [`no` is empty]"
-                                                                    );
+                                                                    ));
                                                                 }
                                                             }
                                                             Err(e) => {
-                                                                epintln!(
+                                                                error!("{}",fomat!(
                                                                     "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]"
-                                                                );
+                                                                ));
                                                             }
                                                         }
                                                     }
@@ -1414,7 +1375,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
         if self.opt.asagi_mode {
             let res = self.db_client.post_get_media(board, md5_base64.as_ref().unwrap(), None).await;
             match res {
-                Err(e) => epintln!("download_media:"(e)),
+                Err(e) => error!("download_media: {}", e),
                 // None => (),
                 Ok(either) => {
                     if let Either::Right(Some(row)) = either {
@@ -1500,7 +1461,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                 let res = self.db_client.post_upsert_media(md5.as_ref().unwrap().as_slice(), None, _checksum.as_ref().map(|v| v.as_slice())).await;
                                 match res {
                                     Err(e) => {
-                                        epintln!("download_media: post_upsert_media (thumb): [" (e) "]");
+                                        error!("download_media: post_upsert_media (thumb): [{}]", e);
                                     }
                                     Ok(_) => {
                                         break;
@@ -1511,12 +1472,10 @@ where D: sql::QueryExecutor + sql::DropExecutor
                         }
                         return Ok(());
                     } else {
-                        epintln!(
-                        "download_media: Exists in db but not in filesystem!: `" (&_path) "`"
-                        );
+                        error!("download_media: Exists in db but not in filesystem!: `{}`", &_path);
                     }
                 } else {
-                    epintln!("download_media: Error! Hash found to be " (len) " chars long when it's supposed to be 64" );
+                    error!("download_media: Error! Hash found to be {} chars long when it's supposed to be 64", len );
                 }
                 // path = Some(_path); // used by asagi
             }
