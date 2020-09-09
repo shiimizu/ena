@@ -242,7 +242,7 @@ async fn async_main() -> Result<()> {
                 up
             };
 
-            pintln!("Initializing database..");
+            info!("Initializing database..");
 
             // Create database if not exists
             let mut child = Command::new("psql")
@@ -438,7 +438,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                     break;
                 }
                 Err(e) => {
-                    error!("download_boards_index: [{}]", e);
+                    error!("({endpoint})\t\t[download_boards_index] [{err}]", endpoint = "boards", err = e,);
                 }
             }
             sleep(Duration::from_secs(1)).await;
@@ -650,18 +650,8 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                         if get_ctrlc() {
                                             break;
                                         }
-                                        error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board.name, err = e,);
+                                        error!("({endpoint})\t/{board}/{tab}{err}", endpoint = thread_type, board = &board.name, tab = if board.name.len() <= 2 { "\t\t" } else { "\t" }, err = e);
                                         db_retry().await;
-                                        // error!(
-                                        //     "{}",
-                                        //     fomat!((fun_name) ":  (" (thread_type) ") /"
-                                        // (&board.name) "/"
-                                        //     if board.name.len() <= 2 { "\t\t" } else {"\t"}
-                                        //     (&lm)
-                                        //     " | ["
-                                        //     (e)"]"
-                                        //     )
-                                        // );
                                     }
                                     Ok(either) => {
                                         match either {
@@ -707,15 +697,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
 
                                                         // buffered ordered or unordered makes no difference since it's run concurrently
                                                         let mut fut = stream_of_futures.buffer_unordered(self.opt.limit as usize);
-
-                                                        // fut
-                                                        // .for_each(|res| async {
-                                                        //     match res {
-                                                        //         Ok(b) => (),
-                                                        //         Err(e) => error!("{}", e),
-                                                        //     }
-                                                        // })
-                                                        // .await;
                                                         while let Some(res) = fut.next().await {
                                                             res.unwrap();
                                                         }
@@ -815,7 +796,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
                             return Ok(status);
                         }
                         _ => {
-                            
                             error!("({endpoint})\t/{board}/\t\t{status}", endpoint = thread_type, board = &board.name, status = status,);
                             if retry == board.retry_attempts {
                                 return Ok(status);
@@ -860,12 +840,12 @@ where D: sql::QueryExecutor + sql::DropExecutor
                 match resp {
                     Err(e) => {
                         error!(
-                            "{}",
-                            fomat!(
-                                "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)
-                                if with_tail { "-tail" } else { "" }
-                                "\t["(e)"]"
-                            )
+                            "({endpoint})\t/{board}/{thread}{tail}\t[download_thread] [{err}]",
+                            endpoint = thread_type,
+                            board = &board.name,
+                            thread = thread,
+                            tail = if with_tail { "-tail " } else { " " },
+                            err = e
                         );
                     }
                     Ok((status, lm, body)) => {
@@ -905,10 +885,12 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                 match serde_json::from_slice::<serde_json::Value>(&body) {
                                     Err(e) => {
                                         error!(
-                                            "{}",
-                                            fomat!("download_thread: ("(thread_type)") /"(&board.name)"/"(thread)
-                                        if with_tail { "-tail " } else { " " }
-                                        "["(e)"] " [&last_modified])
+                                            "({endpoint})\t/{board}/{thread}{tail}\t[download_thread] [{err}]",
+                                            endpoint = thread_type,
+                                            board = &board.name,
+                                            thread = thread,
+                                            tail = if with_tail { "-tail " } else { " " },
+                                            err = e
                                         );
                                     }
                                     Ok(mut thread_json) => {
@@ -1000,7 +982,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                     if get_ctrlc() {
                                                         break;
                                                     }
-                                                    error!("{}", e);
+                                                    error!("({endpoint})\t/{board}/{thread}\t{err}", endpoint = thread_type, board = &board.name, thread = thread, err = e,);
                                                     db_retry().await;
                                                 }
                                                 Ok(either) => match either {
@@ -1143,7 +1125,14 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                             if get_ctrlc() {
                                                                 break;
                                                             }
-                                                            error!("download_media: {}", e);
+                                                            error!(
+                                                                "({endpoint})\t/{board}/{thread}#{no}\t[thread_get_media] [{err}]",
+                                                                endpoint = thread_type,
+                                                                board = &board.name,
+                                                                thread = if resto == 0 { no } else { resto },
+                                                                no = no,
+                                                                err = e,
+                                                            );
                                                             db_retry().await;
                                                         }
                                                         Ok(either) => {
@@ -1231,10 +1220,12 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                 break;
                                             }
                                             error!(
-                                                "{}",
-                                                fomat!(
-                                                    "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]" "["(e)"]"
-                                                )
+                                                "({endpoint})\t/{board}/{thread}{tail}\t[thread_update_deleted] [{err}]",
+                                                endpoint = thread_type,
+                                                board = &board.name,
+                                                thread = thread,
+                                                tail = if with_tail { "-tail " } else { " " },
+                                                err = e
                                             );
                                             db_retry().await;
                                         }
@@ -1250,7 +1241,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                             deleted = format!(ansi!("{;yellow}"), "DELETED"),
                                                             tail = if with_tail { " [tail]" } else { "" },
                                                         );
-                                                        
 
                                                         // Ignore the below comments. If it's deleted, it won't matter what last-modified it is.
                                                         //
@@ -1291,15 +1281,24 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                                         tail = if with_tail { " [tail]" } else { "" },
                                                                     );
                                                                 } else {
-                                                                    error!("{}",fomat!(
-                                                                        "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [`no` is empty]"
-                                                                    ));
+                                                                    error!(
+                                                                        "({endpoint})\t/{board}/{thread}{tail}\t[thread_update_deleted] [`no` is empty]",
+                                                                        endpoint = thread_type,
+                                                                        board = &board.name,
+                                                                        thread = thread,
+                                                                        tail = if with_tail { "-tail " } else { " " },
+                                                                    );
                                                                 }
                                                             }
                                                             Err(e) => {
-                                                                error!("{}",fomat!(
-                                                                    "download_thread: ("(thread_type)") /"(&board.name)"/"(thread)(tail)"\t["(status)"] [thread_update_deleted]"
-                                                                ));
+                                                                error!(
+                                                                    "({endpoint})\t/{board}/{thread}{tail}\t[thread_update_deleted] [{err}]",
+                                                                    endpoint = thread_type,
+                                                                    board = &board.name,
+                                                                    thread = thread,
+                                                                    tail = if with_tail { "-tail " } else { " " },
+                                                                    err = e
+                                                                );
                                                             }
                                                         }
                                                     }
@@ -1375,7 +1374,8 @@ where D: sql::QueryExecutor + sql::DropExecutor
         if self.opt.asagi_mode {
             let res = self.db_client.post_get_media(board, md5_base64.as_ref().unwrap(), None).await;
             match res {
-                Err(e) => error!("download_media: {}", e),
+                Err(e) =>
+                    error!("({endpoint})\t/{board}/{thread}#{no}\t[post_get_media] [{err}]", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no, err = e,),
                 // None => (),
                 Ok(either) => {
                     if let Either::Right(Some(row)) = either {
@@ -1461,7 +1461,14 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                 let res = self.db_client.post_upsert_media(md5.as_ref().unwrap().as_slice(), None, _checksum.as_ref().map(|v| v.as_slice())).await;
                                 match res {
                                     Err(e) => {
-                                        error!("download_media: post_upsert_media (thumb): [{}]", e);
+                                        error!(
+                                            "({endpoint})\t/{board}/{thread}#{no}\t[post_upsert_media] [{err}]",
+                                            endpoint = "media",
+                                            board = &board.name,
+                                            thread = if resto == 0 { no } else { resto },
+                                            no = no,
+                                            err = e,
+                                        );
                                     }
                                     Ok(_) => {
                                         break;
@@ -1472,10 +1479,24 @@ where D: sql::QueryExecutor + sql::DropExecutor
                         }
                         return Ok(());
                     } else {
-                        error!("download_media: Exists in db but not in filesystem!: `{}`", &_path);
+                        error!(
+                            "({endpoint})\t/{board}/{thread}#{no}\tExists in db but not in filesystem!: `{path:?}`",
+                            endpoint = "media",
+                            board = &board.name,
+                            thread = if resto == 0 { no } else { resto },
+                            no = no,
+                            path = path,
+                        );
                     }
                 } else {
-                    error!("download_media: Error! Hash found to be {} chars long when it's supposed to be 64", len );
+                    error!(
+                        "({endpoint})\t/{board}/{thread}#{no}\tError! Hash found to be {len} chars long when it's supposed to be 64",
+                        endpoint = "media",
+                        board = &board.name,
+                        thread = if resto == 0 { no } else { resto },
+                        no = no,
+                        len = len,
+                    );
                 }
                 // path = Some(_path); // used by asagi
             }
@@ -1497,23 +1518,11 @@ where D: sql::QueryExecutor + sql::DropExecutor
                     break;
                 }
                 if retry != 0 {
-                    warn!(
-                        "{}",
-                        fomat!("download_media: /"(board.name)"/"
-                    if resto == 0 { (no) } else { (resto) }
-                    "/"(no) " [Retry #" (retry)"]")
-                    );
+                    warn!("({endpoint})\t/{board}/{thread}#{no}\t[Retry #{retry}]", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no, retry = retry,);
                     sleep(Duration::from_millis(500)).await;
                 }
                 match self.client.get(_url.as_str()).send().await {
-                    Err(e) => error!(
-                        "{}",
-                        fomat!("download_media: " "/"(&board.name)"/"
-                        if resto == 0 { (no) } else { (resto) }
-                        "#"
-                        (no)
-                        "["(e)"]")
-                    ),
+                    Err(e) => error!("({endpoint})\t/{board}/{thread}#{no}\t[{err}]", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no, err = e,),
                     Ok(resp) => {
                         match resp.status() {
                             StatusCode::NOT_FOUND => {
@@ -1532,7 +1541,14 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                     if let Some(_dir) = &dir {
                                         let res = smol::Unblock::new(create_dir_all(_dir.as_str())).into_inner().await;
                                         if let Err(e) = res {
-                                            error!("{}", fomat!("download_media: [" (e) "]"));
+                                            error!(
+                                                "({endpoint})\t/{board}/{thread}#{no}\t[{err}]",
+                                                endpoint = "media",
+                                                board = &board.name,
+                                                thread = if resto == 0 { no } else { resto },
+                                                no = no,
+                                                err = e,
+                                            );
                                         }
                                     }
                                     if let Some(file_path) = &path {
@@ -1546,20 +1562,36 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             let result = hasher.finalize();
                                             let md5_bytes = base64::decode(md5_base64.as_ref().unwrap().as_bytes()).unwrap();
                                             if md5_bytes.as_slice() != result.as_slice() {
-                                                error!(
-                                                    "{}",
-                                                    fomat!("download_media: Hashes don't match! /" (&board.name) "/"
-                                                    if resto == 0 { (no) } else { (resto) }
-                                                    "#" (no)
-                                                    if retry > 0 { " [Retry #" (retry) "]" } else { "" }
-                                                    )
-                                                );
+                                                if retry > 0 {
+                                                    error!(
+                                                        "({endpoint})\t/{board}/{thread}#{no}\tHashes don't match! [Retry #{retry}]",
+                                                        endpoint = "media",
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        no = no,
+                                                        retry = retry,
+                                                    );
+                                                } else {
+                                                    error!(
+                                                        "({endpoint})\t/{board}/{thread}#{no}\tHashes don't match!",
+                                                        endpoint = "media",
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        no = no,
+                                                    );
+                                                }
                                                 continue;
                                             }
                                         }
                                         break;
                                     } else {
-                                        error!("{}", fomat!("download_media: file path is empty! This isn't supposed to happen!"));
+                                        error!(
+                                            "({endpoint})\t/{board}/{thread}#{no}\tFile path is empty! This isn't supposed to happen!",
+                                            endpoint = "media",
+                                            board = &board.name,
+                                            thread = if resto == 0 { no } else { resto },
+                                            no = no,
+                                        );
                                     }
                                 } else {
                                     let now = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).map(|v| v.as_nanos()).unwrap_or(tim.into());
@@ -1648,13 +1680,12 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                     .await;
                                                 if let Err(e) = res {
                                                     error!(
-                                                        "{}",
-                                                        fomat!(
-                                                        "download_media: post_upsert_media: " "/"(&board.name)"/"
-                                                        if resto == 0 { (no) } else { (resto) }
-                                                        "#"
-                                                        (no)
-                                                        " ["(e)"]")
+                                                        "({endpoint})\t/{board}/{thread}#{no}\t[post_upsert_media] [{err}]",
+                                                        endpoint = "media",
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        no = no,
+                                                        err = e,
                                                     );
                                                     success = false;
                                                 } else {
@@ -1679,12 +1710,29 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                         // Make dirs
                                         let dirs_result = smol::Unblock::new(create_dir_all(_dir.as_str())).into_inner().await;
                                         match dirs_result {
-                                            Err(e) => error!("{}", fomat!("download_media: Error creating dirs `" (&_dir) "` [" (e) "]")),
+                                            Err(e) => error!(
+                                                "({endpoint})\t/{board}/{thread}#{no}\tError creating dirs `{dir}` [{err}]",
+                                                endpoint = "media",
+                                                board = &board.name,
+                                                thread = if resto == 0 { no } else { resto },
+                                                no = no,
+                                                dir = &_dir,
+                                                err = e,
+                                            ),
                                             Ok(_) => {
                                                 // Move to final path
                                                 let rename_result = smol::Unblock::new(std::fs::rename(&tmp_path, &_path)).into_inner().await;
                                                 match rename_result {
-                                                    Err(e) => error!("{}", fomat!("download_media: Error moving `" (&tmp_path) "` to `" (&_path) "` [" (e) "]")),
+                                                    Err(e) => error!(
+                                                        "({endpoint})\t/{board}/{thread}#{no}\tError moving `{tmp}` to `{dest}` [{err}]",
+                                                        endpoint = "media",
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        no = no,
+                                                        tmp = &tmp_path,
+                                                        dest = &_path,
+                                                        err = e,
+                                                    ),
                                                     Ok(_) => {
                                                         // TODO clear this
                                                         /*
@@ -1712,12 +1760,12 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                                 .await;
                                                             if let Err(e) = res {
                                                                 error!(
-                                                                    "{}",
-                                                                    fomat!("download_media: " "/"(&board.name)"/"
-                                                                            if resto == 0 { (no) } else { (resto) }
-                                                                            "#"
-                                                                            (no)
-                                                                            "["(e)"]")
+                                                                    "({endpoint})\t/{board}/{thread}#{no}\t[post_upsert_media] [{err}]",
+                                                                    endpoint = "media",
+                                                                    board = &board.name,
+                                                                    thread = if resto == 0 { no } else { resto },
+                                                                    no = no,
+                                                                    err = e,
                                                                 );
                                                                 success = false;
                                                             } else {
@@ -1737,17 +1785,31 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             }
                                         }
                                     } else {
-                                        error!("download_media: Error! Hash found to be {} chars long when it's supposed to be 64", len);
+                                        error!(
+                                            "({endpoint})\t/{board}/{thread}#{no}\tError! Hash found to be {len} chars long when it's supposed to be 64",
+                                            endpoint = "media",
+                                            board = &board.name,
+                                            thread = if resto == 0 { no } else { resto },
+                                            no = no,
+                                            len = len,
+                                        );
                                     }
                                 }
                             }
-                            status => error!("download_media: {}", status),
+                            status => error!(
+                                "({endpoint})\t/{board}/{thread}#{no}\t{status}",
+                                endpoint = "media",
+                                board = &board.name,
+                                thread = if resto == 0 { no } else { resto },
+                                no = no,
+                                status = status,
+                            ),
                         }
                     }
                 }
             }
         } else {
-            error!("download_media: No URL was found! This shouldn't happen!")
+            error!("({endpoint})\t/{board}/{thread}#{no}\tNo URL was found! This shouldn't happen!", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no,);
         }
         Ok(())
     }
