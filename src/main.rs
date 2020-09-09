@@ -1576,14 +1576,11 @@ where D: sql::QueryExecutor + sql::DropExecutor
 
         // Download the file
         if let Some(_url) = url {
-            let mut retry = 0;
-            while retry != board.retry_attempts {
+            let mut retry = -1;
+            loop {
+                retry = retry + 1;
                 if get_ctrlc() {
                     break;
-                }
-                if retry != 0 {
-                    warn!("({endpoint})\t/{board}/{thread}#{no}\t[Retry #{retry}]", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no, retry = retry,);
-                    sleep(Duration::from_millis(500)).await;
                 }
                 match self.client.get(_url.as_str()).send().await {
                     Err(e) => error!("({endpoint})\t/{board}/{thread}#{no}\t[{err}]", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no, err = e,),
@@ -1624,16 +1621,30 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                     if get_ctrlc() {
                                                         return Ok(());
                                                     }
-                                                    error!(
-                                                        "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [{err}]",
-                                                        endpoint = "media",
-                                                        board = &board.name,
-                                                        thread = if resto == 0 { no } else { resto },
-                                                        no = no,
-                                                        status = status,
-                                                        err = e,
-                                                    );
-                                                    retry = retry + 1;
+
+                                                    if retry == 0 {
+                                                        error!(
+                                                            "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [{err}]",
+                                                            endpoint = "media",
+                                                            board = &board.name,
+                                                            thread = if resto == 0 { no } else { resto },
+                                                            no = no,
+                                                            status = status,
+                                                            err = e,
+                                                        );
+                                                    } else {
+                                                        error!(
+                                                            "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [Retry #{retry}] [{err}]",
+                                                            endpoint = "media",
+                                                            board = &board.name,
+                                                            thread = if resto == 0 { no } else { resto },
+                                                            no = no,
+                                                            status = status,
+                                                            retry = retry,
+                                                            err = e,
+                                                        );
+                                                    }
+                                                    db_retry().await;
                                                     continue;
                                                 }
                                                 Ok(opt) => opt,
@@ -1711,16 +1722,29 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                                 if get_ctrlc() {
                                                     return Ok(());
                                                 }
-                                                error!(
-                                                    "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [{err}]",
-                                                    endpoint = "media",
-                                                    board = &board.name,
-                                                    thread = if resto == 0 { no } else { resto },
-                                                    no = no,
-                                                    status = status,
-                                                    err = e,
-                                                );
-                                                retry = retry + 1;
+                                                if retry == 0 {
+                                                    error!(
+                                                        "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [{err}]",
+                                                        endpoint = "media",
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        no = no,
+                                                        status = status,
+                                                        err = e,
+                                                    );
+                                                } else {
+                                                    error!(
+                                                        "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [Retry #{retry}] [{err}]",
+                                                        endpoint = "media",
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        no = no,
+                                                        status = status,
+                                                        retry = retry,
+                                                        err = e,
+                                                    );
+                                                }
+                                                db_retry().await;
                                                 continue;
                                             }
                                             Ok(opt) => opt,
@@ -1935,7 +1959,6 @@ where D: sql::QueryExecutor + sql::DropExecutor
                         }
                     }
                 }
-                retry = retry + 1;
             }
         } else {
             error!("({endpoint})\t/{board}/{thread}#{no}\tNo URL was found! This shouldn't happen!", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no,);
