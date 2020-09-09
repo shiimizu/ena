@@ -272,8 +272,7 @@ impl QueryExecutor for mysql_async::Pool {
         let store = STATEMENTS.read().await;
         let statement = store.get(&1).and_then(|queries| queries.get(&Query::BoardUpsertThreads)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::BoardUpsertThreads))?;
         let json = serde_json::to_string(json)?;
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| anyhow!(e));
-        Ok(0)
+        Ok(conn.exec_drop(statement.as_str(), (board_id, board, json, last_modified)).await.map(|_| 0)?)
     }
 
     async fn board_upsert_archive(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64> {
@@ -281,8 +280,7 @@ impl QueryExecutor for mysql_async::Pool {
         let store = STATEMENTS.read().await;
         let statement = store.get(&1).and_then(|queries| queries.get(&Query::BoardUpsertArchive)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::BoardUpsertArchive))?;
         let json = serde_json::to_string(json)?;
-        let res: Result<Option<mysql_async::Row>> = conn.exec_first(statement.as_str(), (board_id, board, json, last_modified)).await.map_err(|e| anyhow!(e));
-        Ok(0)
+        Ok(conn.exec_drop(statement.as_str(), (board_id, board, json, last_modified)).await.map(|_| 0)?)
     }
 
     async fn thread_get(&self, board: &Board, thread: u64) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>> {
@@ -491,7 +489,7 @@ impl QueryExecutor for mysql_async::Pool {
         let store = STATEMENTS.read().await;
         let statement = store.get(&board_id).and_then(|queries| queries.get(&Query::ThreadUpdateLastModified)).ok_or_else(|| anyhow!("{}: Empty query statement", Query::ThreadUpdateLastModified))?;
         let res = conn.exec_drop(statement.as_str(), (last_modified, thread)).await;
-        res.map(|_| 0).map_err(|e| anyhow!(e))
+        Ok(res.map(|_| 0)?)
     }
 
     async fn thread_update_deleted(&self, board: &Board, thread: u64) -> Result<Either<tokio_postgres::RowStream, Option<u64>>> {

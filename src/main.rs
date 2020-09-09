@@ -155,9 +155,7 @@ fn main() -> Result<()> {
             CTRLC.fetch_add(1, Ordering::SeqCst);
         })
         .expect("Error setting Ctrl-C handler");
-        async_main().compat().await.unwrap();
-        //pintln!("Done!");
-        Ok(())
+        async_main().compat().await
     })
 }
 
@@ -784,10 +782,25 @@ where D: sql::QueryExecutor + sql::DropExecutor
                             }
 
                             // Update threads/archive cache at the end
-                            if thread_type.is_threads() {
-                                self.db_client.board_upsert_threads(board.id, &board.name, &body_json, &lm).await.unwrap();
-                            } else if thread_type.is_archive() {
-                                self.db_client.board_upsert_archive(board.id, &board.name, &body_json, &lm).await.unwrap();
+                            loop {
+                                let res = {
+                                    if thread_type.is_threads() {
+                                        self.db_client.board_upsert_threads(board.id, &board.name, &body_json, &lm).await
+                                    } else {
+                                        self.db_client.board_upsert_archive(board.id, &board.name, &body_json, &lm).await
+                                    }
+                                };
+                                match res {
+                                    Err(e) => {
+                                        if get_ctrlc() {
+                                            return Ok(status);
+                                        }
+                                        error!("({endpoint})\t/{board}/\t\t{err}", endpoint = thread_type, board = &board.name, err = e);
+
+                                        db_retry().await;
+                                    }
+                                    Ok(_) => break,
+                                }
                             }
                             break; // exit the retry loop
                         }
@@ -908,8 +921,25 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                             // Check if we can use the tail.json
                                             // Check if we have the tail_id in the db
                                             let tail_id = op_post["tail_id"].as_u64().unwrap();
-                                            let query = (&self).db_client.post_get_single(board.id, thread, tail_id).await.unwrap();
-
+                                            let query = loop {
+                                                match self.db_client.post_get_single(board.id, thread, tail_id).await {
+                                                    Ok(b) => break b,
+                                                    Err(e) => {
+                                                        if get_ctrlc() {
+                                                            return Ok((thread_type, deleted));
+                                                        }
+                                                        error!(
+                                                            "({endpoint})\t/{board}/{thread}{tail}\t[post_get_single] [{err}]",
+                                                            endpoint = thread_type,
+                                                            board = &board.name,
+                                                            thread = thread,
+                                                            tail = if with_tail { "-tail " } else { " " },
+                                                            err = e
+                                                        );
+                                                        db_retry().await;
+                                                    }
+                                                }
+                                            };
                                             // If no Row returned, download thread normally
                                             if !query {
                                                 with_tail = false;
@@ -1197,7 +1227,25 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                         }
 
                                         // Update thread's last_modified
-                                        self.db_client.thread_update_last_modified(&lm, board.id, thread).await.unwrap();
+                                        loop {
+                                            let res = self.db_client.thread_update_last_modified(&lm, board.id, thread).await;
+                                            match res {
+                                                Err(e) => {
+                                                    if get_ctrlc() {
+                                                        return Ok((thread_type, deleted));
+                                                    }
+                                                    error!(
+                                                        "({endpoint})\t/{board}/{thread}\t[thread_update_last_modified] [{err}]",
+                                                        endpoint = thread_type,
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        err = e,
+                                                    );
+                                                    db_retry().await;
+                                                }
+                                                Ok(_) => break,
+                                            }
+                                        }
                                         break; // exit the retry loop
                                     }
                                 }
@@ -1425,12 +1473,27 @@ where D: sql::QueryExecutor + sql::DropExecutor
                 } else {
                     // Thumbnails aren't unique and can have duplicates
                     // So check the database if we already have it or not
-                    if let Either::Left(s) = self.db_client.post_get_media(board, "", sha256t.as_ref().map(|v| v.as_slice())).await.unwrap() {
-                        s.and_then(|row| row.get::<&str, Option<Vec<u8>>>("sha256t"))
-                    } else {
-                        // This else case will probably never run
-                        // Since the Either will always run
-                        sha256t
+                    loop {
+                        match self.db_client.post_get_media(board, "", sha256t.as_ref().map(|v| v.as_slice())).await {
+                            Err(e) => {
+                                if get_ctrlc() {
+                                    return Ok(());
+                                }
+                                error!(
+                                    "({endpoint})\t/{board}/{thread}#{no}\t[post_get_media] [{err}]",
+                                    endpoint = "media",
+                                    board = &board.name,
+                                    thread = if resto == 0 { no } else { resto },
+                                    no = no,
+                                    err = e,
+                                );
+                                db_retry().await;
+                            }
+                            Ok(Either::Right(_)) => unreachable!(),
+                            Ok(Either::Left(s)) => {
+                                break s.and_then(|row| row.get::<&str, Option<Vec<u8>>>("sha256t"));
+                            }
+                        }
                     }
                 }
             };
@@ -1513,7 +1576,8 @@ where D: sql::QueryExecutor + sql::DropExecutor
 
         // Download the file
         if let Some(_url) = url {
-            for retry in 0..=board.retry_attempts {
+            let mut retry = 0;
+            while retry != board.retry_attempts {
                 if get_ctrlc() {
                     break;
                 }
@@ -1524,7 +1588,8 @@ where D: sql::QueryExecutor + sql::DropExecutor
                 match self.client.get(_url.as_str()).send().await {
                     Err(e) => error!("({endpoint})\t/{board}/{thread}#{no}\t[{err}]", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no, err = e,),
                     Ok(resp) => {
-                        match resp.status() {
+                        let status = resp.status();
+                        match status {
                             StatusCode::NOT_FOUND => {
                                 // epintln!("download_media: /"(&board.name)"/" if resto == 0 { (no) } else { (resto)
                                 // }"#"(no)" " (StatusCode::NOT_FOUND));
@@ -1552,10 +1617,42 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                         }
                                     }
                                     if let Some(file_path) = &path {
-                                        let res = download_and_hash_media(resp, &file_path, media_type, self.opt.asagi_mode).await.unwrap();
+                                        let res = {
+                                            match download_and_hash_media(resp, &file_path, media_type, self.opt.asagi_mode).await {
+                                                Err(e) => {
+                                                    // Going here probably means invalid file. Continue the while loop to redownload it
+                                                    if get_ctrlc() {
+                                                        return Ok(());
+                                                    }
+                                                    error!(
+                                                        "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [{err}]",
+                                                        endpoint = "media",
+                                                        board = &board.name,
+                                                        thread = if resto == 0 { no } else { resto },
+                                                        no = no,
+                                                        status = status,
+                                                        err = e,
+                                                    );
+                                                    retry = retry + 1;
+                                                    continue;
+                                                }
+                                                Ok(opt) => opt,
+                                            }
+                                        };
                                         if res.is_none() || get_ctrlc() {
                                             return Ok(());
                                         }
+                                        if retry > 0 {
+                                            info!(
+                                                "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] {resolved}",
+                                                endpoint = "media",
+                                                board = &board.name,
+                                                thread = if resto == 0 { no } else { resto },
+                                                no = no,
+                                                resolved = format!(ansi!("{;green}"), "RESOLVED")
+                                            );
+                                        }
+
                                         let hasher = res.unwrap().0;
                                         // Only check md5 for full media
                                         if media_type == MediaType::Full {
@@ -1607,9 +1704,40 @@ where D: sql::QueryExecutor + sql::DropExecutor
                                     );
 
                                     // Download File and calculate hashes
-                                    let res = download_and_hash_media(resp, &tmp_path, media_type, self.opt.asagi_mode).await.unwrap();
+                                    let res = {
+                                        match download_and_hash_media(resp, &tmp_path, media_type, self.opt.asagi_mode).await {
+                                            Err(e) => {
+                                                // Going here probably means invalid file. Continue the while loop to redownload it
+                                                if get_ctrlc() {
+                                                    return Ok(());
+                                                }
+                                                error!(
+                                                    "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [{err}]",
+                                                    endpoint = "media",
+                                                    board = &board.name,
+                                                    thread = if resto == 0 { no } else { resto },
+                                                    no = no,
+                                                    status = status,
+                                                    err = e,
+                                                );
+                                                retry = retry + 1;
+                                                continue;
+                                            }
+                                            Ok(opt) => opt,
+                                        }
+                                    };
                                     if res.is_none() || get_ctrlc() {
                                         return Ok(());
+                                    }
+                                    if retry > 0 {
+                                        info!(
+                                            "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] {resolved}",
+                                            endpoint = "media",
+                                            board = &board.name,
+                                            thread = if resto == 0 { no } else { resto },
+                                            no = no,
+                                            resolved = format!(ansi!("{;green}"), "RESOLVED")
+                                        );
                                     }
                                     let opts = res.unwrap();
                                     let hasher = opts.0;
@@ -1807,6 +1935,7 @@ where D: sql::QueryExecutor + sql::DropExecutor
                         }
                     }
                 }
+                retry = retry + 1;
             }
         } else {
             error!("({endpoint})\t/{board}/{thread}#{no}\tNo URL was found! This shouldn't happen!", endpoint = "media", board = &board.name, thread = if resto == 0 { no } else { resto }, no = no,);
