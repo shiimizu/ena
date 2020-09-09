@@ -543,7 +543,7 @@ mod tests {
         converted.op = false;
 
         let converted_sql = converted.to_sql();
-        let target = "0,0,0,0,false,0,0,NULL,0,0,NULL,0,0,0,NULL,NULL,false,0,\'N\',NULL,NULL,NULL,NULL,NULL,NULL,false,false,NULL,NULL,NULL";
+        let target = "0,0,0,0,false,0,0,NULL,0,0,NULL,0,0,0,NULL,NULL,false,0,'N',NULL,NULL,NULL,NULL,NULL,NULL,false,false,NULL,NULL,NULL";
         assert_eq!(target, &converted_sql);
     }
 

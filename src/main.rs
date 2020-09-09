@@ -15,7 +15,7 @@ use anyhow::Result;
 use async_compat::CompatExt;
 use ctrlc;
 use fomat_macros::{epintln, fomat, pintln};
-use futures::{channel::oneshot, future::Either, stream::FuturesUnordered};
+use futures::{future::Either, stream::FuturesUnordered};
 
 // use futures::stream::FuturesOrdered;
 #[allow(unused_imports)]
@@ -88,13 +88,19 @@ impl std::fmt::Display for ThreadType {
     }
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MediaType {
     Full,
     Thumbnail,
 }
 
 impl MediaType {
+    fn human_str<'a>(&self) -> &'a str {
+        match self {
+            MediaType::Full => "media",
+            MediaType::Thumbnail => "thumb",
+        }
+    }
     fn ext<'a>(&self) -> &'a str {
         match self {
             MediaType::Full => "",
@@ -159,9 +165,12 @@ fn main() -> Result<()> {
         std::env::set_var("SMOL_THREADS", num_threads.to_string());
     }
 
-    let (sender, receiver) = oneshot::channel::<()>();
+    // let (sender, receiver) = oneshot::channel::<()>();
     smol::block_on(async {
         ctrlc::set_handler(move || {
+            if CTRLC.load(Ordering::SeqCst) == 0 {
+                warn!("Received SIGTERM/SIGINT signal. Ena will try to exit cleanly (by waiting for all current posts/images to finish downloading).");
+            }
             CTRLC.fetch_add(1, Ordering::SeqCst);
         })
         .expect("Error setting Ctrl-C handler");
@@ -1839,9 +1848,9 @@ where
         // if !self.opt.asagi_mode {
         //     _sem_test = Some(SEMAPHORE_MEDIA_TEST.acquire(1).await);
         // }
-        if get_ctrlc() {
-            return Ok(());
-        }
+        // if get_ctrlc() {
+        //     return Ok(());
+        // }
 
         // This is from 4chan post / postgres post
         let (resto, no, md5_base64, md5, tim, ext, filename, sha256, sha256t) = details;
@@ -1850,72 +1859,82 @@ where
         let mut path = None;
         let mut url = None;
 
-        // Check if exists
+        // Check if the file exists (already downloaded) before downloading the file
         if self.opt.asagi_mode {
-            let res = self
-                .db_client
-                .post_get_media(board, md5_base64.as_ref().unwrap(), None)
-                .await;
-            match res {
-                Err(e) => error!(
-                    "({endpoint})\t/{board}/{thread}#{no}\t[post_get_media] [{err}]",
-                    endpoint = "media",
-                    board = &board.name,
-                    thread = if resto == 0 { no } else { resto },
-                    no = no,
-                    err = e,
-                ),
-                // None => (),
-                Ok(either) => {
-                    if let Either::Right(Some(row)) = either {
-                        let banned = row
-                            .get::<Option<u8>, &str>("banned")
-                            .flatten()
-                            .map_or_else(|| false, |v| v == 1);
-                        if banned {
-                            pintln!("download_media: Skipping banned media: /" (&board.name)"/"
-                            if resto == 0 { (no) } else { (resto) }
-                            "#" (no)
-                            )
-                        }
-
-                        let media = row.get::<Option<String>, &str>("media").flatten().unwrap();
-                        let preview_op = row.get::<Option<String>, &str>("preview_op").flatten();
-                        let preview_reply =
-                            row.get::<Option<String>, &str>("preview_reply").flatten();
-                        let preview = preview_op
-                            .map_or_else(|| preview_reply, |v| Some(v))
-                            .unwrap();
-
-                        let tim_filename = if media_type == MediaType::Full {
-                            media
-                        } else {
-                            preview
-                        };
-
-                        // Directory Structure:
-                        // 1540970147550
-                        // {media_dir}/{board}/{image|thumb}/1540/97
-                        let _dir = fomat!(
-                            (self.opt.media_dir.display()) "/" (&board.name) "/"
-                            if media_type == MediaType::Full { "image" } else { "thumb" } "/"
-                            (tim_filename[..4]) "/" (tim_filename[4..6])
-                        );
-                        let _path = fomat!(
-                            (_dir) "/" (&tim_filename)
-                        );
-                        if exists(&_path) {
+            let either = loop {
+                let res = self
+                    .db_client
+                    .post_get_media(board, md5_base64.as_ref().unwrap(), None)
+                    .await;
+                match res {
+                    Err(e) => {
+                        if get_ctrlc() {
                             return Ok(());
                         }
-                        path = Some(_path);
-                        dir = Some(_dir);
-                        let url_string = fomat!(
-                            (&self.opt.media_url) (&board.name)"/"
-                            if board.name == "f" { (&filename)(ext) }  else { (tim_filename) }
+                        error!(
+                            "({endpoint})\t/{board}/{thread}#{no}\t[post_get_media] [{err}]",
+                            endpoint = "media",
+                            board = &board.name,
+                            thread = if resto == 0 { no } else { resto },
+                            no = no,
+                            err = e,
                         );
-                        url = Some(url::Url::parse(&url_string).unwrap());
+                        db_retry().await;
                     }
+                    Ok(either) => break either,
                 }
+            };
+            if let Either::Right(Some(row)) = either {
+                let banned = row
+                    .get::<Option<u8>, &str>("banned")
+                    .flatten()
+                    .map_or_else(|| false, |v| v == 1);
+                if banned {
+                    warn!(
+                        "({endpoint})\t/{board}/{thread}#{no}\t{message}",
+                        endpoint = "media",
+                        board = &board.name,
+                        thread = if resto == 0 { no } else { resto },
+                        no = no,
+                        message = format!(ansi!("{;yellow}"), "Skipping banned media"),
+                    );
+                    return Ok(());
+                }
+
+                let media = row.get::<Option<String>, &str>("media").flatten().unwrap();
+                let preview_op = row.get::<Option<String>, &str>("preview_op").flatten();
+                let preview_reply = row.get::<Option<String>, &str>("preview_reply").flatten();
+                let preview = preview_op
+                    .map_or_else(|| preview_reply, |v| Some(v))
+                    .unwrap();
+
+                let tim_filename = if media_type == MediaType::Full {
+                    media
+                } else {
+                    preview
+                };
+
+                // Directory Structure:
+                // 1540970147550
+                // {media_dir}/{board}/{image|thumb}/1540/97
+                let _dir = fomat!(
+                    (self.opt.media_dir.display()) "/" (&board.name) "/"
+                    if media_type == MediaType::Full { "image" } else { "thumb" } "/"
+                    (tim_filename[..4]) "/" (tim_filename[4..6])
+                );
+                let _path = fomat!(
+                    (_dir) "/" (&tim_filename)
+                );
+                if exists(&_path) {
+                    return Ok(());
+                }
+                path = Some(_path);
+                dir = Some(_dir);
+                let url_string = fomat!(
+                    (&self.opt.media_url) (&board.name)"/"
+                    if board.name == "f" { (&filename)(ext) }  else { (tim_filename) }
+                );
+                url = Some(url::Url::parse(&url_string).unwrap());
             }
         } else {
             let _checksum = {
@@ -2045,6 +2064,7 @@ where
                 if get_ctrlc() {
                     break;
                 }
+                let start_time = Instant::now();
                 match self.client.get(_url.as_str()).send().await {
                     Err(e) => error!(
                         "({endpoint})\t/{board}/{thread}#{no}\t[{err}]",
@@ -2085,24 +2105,34 @@ where
                                             );
                                         }
                                     }
-                                    if let Some(file_path) = &path {
-                                        let res = {
-                                            match download_and_hash_media(
-                                                resp,
-                                                &file_path,
-                                                media_type,
-                                                self.opt.asagi_mode,
-                                            )
-                                            .await
-                                            {
-                                                Err(e) => {
-                                                    // Going here probably means invalid file. Continue the while loop to redownload it
-                                                    if get_ctrlc() {
-                                                        return Ok(());
-                                                    }
+                                    if path.as_ref().is_none() {
+                                        error!(
+                                            "({endpoint})\t/{board}/{thread}#{no}\tFile path is empty! This isn't supposed to happen!",
+                                            endpoint = "media",
+                                            board = &board.name,
+                                            thread = if resto == 0 { no } else { resto },
+                                            no = no,
+                                        );
+                                        continue;
+                                    }
+                                    let file_path = path.as_ref().unwrap();
+                                    let res = {
+                                        match download_and_hash_media(
+                                            resp,
+                                            &file_path,
+                                            media_type,
+                                            self.opt.asagi_mode,
+                                        )
+                                        .await
+                                        {
+                                            Err(e) => {
+                                                // Going here probably means invalid file. Continue the while loop to redownload it
+                                                if get_ctrlc() {
+                                                    return Ok(());
+                                                }
 
-                                                    if retry == 0 {
-                                                        error!(
+                                                if retry == 0 {
+                                                    error!(
                                                             "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [{err}]",
                                                             endpoint = "media",
                                                             board = &board.name,
@@ -2111,8 +2141,8 @@ where
                                                             status = status,
                                                             err = e,
                                                         );
-                                                    } else {
-                                                        error!(
+                                                } else {
+                                                    error!(
                                                             "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] [{status}] [Retry #{retry}] [{err}]",
                                                             endpoint = "media",
                                                             board = &board.name,
@@ -2122,18 +2152,18 @@ where
                                                             retry = retry,
                                                             err = e,
                                                         );
-                                                    }
-                                                    db_retry().await;
-                                                    continue;
                                                 }
-                                                Ok(opt) => opt,
+                                                db_retry().await;
+                                                continue;
                                             }
-                                        };
-                                        if res.is_none() || get_ctrlc() {
-                                            return Ok(());
+                                            Ok(opt) => opt,
                                         }
-                                        if retry > 0 {
-                                            info!(
+                                    };
+                                    if res.is_none() || get_ctrlc() {
+                                        return Ok(());
+                                    }
+                                    if retry > 0 {
+                                        info!(
                                                 "({endpoint})\t/{board}/{thread}#{no}\t[download_and_hash_media] {resolved}",
                                                 endpoint = "media",
                                                 board = &board.name,
@@ -2141,19 +2171,18 @@ where
                                                 no = no,
                                                 resolved = format!(ansi!("{;green}"), "RESOLVED")
                                             );
-                                        }
-
-                                        let hasher = res.unwrap().0;
-                                        // Only check md5 for full media
-                                        if media_type == MediaType::Full {
-                                            let result = hasher.finalize();
-                                            let md5_bytes = base64::decode(
-                                                md5_base64.as_ref().unwrap().as_bytes(),
-                                            )
-                                            .unwrap();
-                                            if md5_bytes.as_slice() != result.as_slice() {
-                                                if retry > 0 {
-                                                    error!(
+                                    }
+                                    let (file_size, hasher, _) = res.unwrap();
+                                    // let hasher = res.unwrap().0;
+                                    // Only check md5 for full media
+                                    if media_type == MediaType::Full {
+                                        let result = hasher.finalize();
+                                        let md5_bytes =
+                                            base64::decode(md5_base64.as_ref().unwrap().as_bytes())
+                                                .unwrap();
+                                        if md5_bytes.as_slice() != result.as_slice() {
+                                            if retry > 0 {
+                                                error!(
                                                         "({endpoint})\t/{board}/{thread}#{no}\tHashes don't match! [Retry #{retry}]",
                                                         endpoint = "media",
                                                         board = &board.name,
@@ -2161,28 +2190,34 @@ where
                                                         no = no,
                                                         retry = retry,
                                                     );
-                                                } else {
-                                                    error!(
+                                            } else {
+                                                error!(
                                                         "({endpoint})\t/{board}/{thread}#{no}\tHashes don't match!",
                                                         endpoint = "media",
                                                         board = &board.name,
                                                         thread = if resto == 0 { no } else { resto },
                                                         no = no,
                                                     );
-                                                }
-                                                continue;
                                             }
+                                            continue;
                                         }
-                                        break;
-                                    } else {
-                                        error!(
-                                            "({endpoint})\t/{board}/{thread}#{no}\tFile path is empty! This isn't supposed to happen!",
+                                    }
+
+                                    // Display media info
+                                    let elapsed = start_time.elapsed().as_millis();
+                                    info!(
+                                            "({endpoint})\t/{board}/{thread}#{no}\tDownloaded {media_type}/{filename}  {file_size} bytes. Took {elapsed} ms.",
                                             endpoint = "media",
                                             board = &board.name,
                                             thread = if resto == 0 { no } else { resto },
                                             no = no,
+                                            media_type = media_type.human_str(),
+                                            filename = fomat!((tim) if media_type == MediaType::Full { (ext) } else { "s.jpg" } ),
+                                            file_size = file_size,
+                                            elapsed = elapsed,
                                         );
-                                    }
+
+                                    break;
                                 } else {
                                     let now = std::time::SystemTime::now()
                                         .duration_since(std::time::SystemTime::UNIX_EPOCH)
@@ -2255,9 +2290,8 @@ where
                                             resolved = format!(ansi!("{;green}"), "RESOLVED")
                                         );
                                     }
-                                    let opts = res.unwrap();
-                                    let hasher = opts.0;
-                                    let hasher_sha256 = opts.1.unwrap();
+                                    let (file_size, hasher, hasher_sha256) = res.unwrap();
+                                    let hasher_sha256 = hasher_sha256.unwrap();
                                     let result_sha256 = hasher_sha256.finalize();
                                     let hash = format!("{:02x}", result_sha256);
                                     let len = hash.len();
@@ -2280,6 +2314,21 @@ where
                                         }
                                     }
 
+                                    // Display media info
+                                    let elapsed = start_time.elapsed().as_millis();
+                                    info!(
+                                        "({endpoint})\t/{board}/{thread}#{no}\tDownloaded {media_type}/{filename}  {file_size} bytes. Took {elapsed} ms.",
+                                        endpoint = "media",
+                                        board = &board.name,
+                                        thread = if resto == 0 { no } else { resto },
+                                        no = no,
+                                        media_type = media_type.human_str(),
+                                        filename = fomat!((tim) if media_type == MediaType::Full { (ext) } else { "s.jpg" } ),
+                                        file_size = file_size,
+                                        elapsed = elapsed,
+                                    );
+
+                                    // Move the tmp file to it's final path
                                     if len == 64 {
                                         let _dir = fomat!
                                         (
@@ -2293,6 +2342,7 @@ where
                                             (&hash)
                                             if media_type == MediaType::Full { (&ext) } else { ".jpg" }
                                         );
+
                                         if exists(&_path) {
                                             // FIXME Becuase this `download_media` method is run concurrently
                                             // If in the beginning there's no hashes, this error will always be reported
@@ -2359,6 +2409,7 @@ where
                                                 break;
                                             }
                                         }
+
                                         // Make dirs
                                         let dirs_result =
                                             smol::Unblock::new(create_dir_all(_dir.as_str()))
@@ -2465,13 +2516,14 @@ where
             }
         } else {
             error!(
-                "({endpoint})\t/{board}/{thread}#{no}\tNo URL was found! This shouldn't happen!",
+                "({endpoint})\t/{board}/{thread}#{no}\tNo URL was found! This shouldn't have happen!",
                 endpoint = "media",
                 board = &board.name,
                 thread = if resto == 0 { no } else { resto },
                 no = no,
             );
         }
+
         Ok(())
     }
 }
@@ -2481,7 +2533,7 @@ async fn download_and_hash_media(
     path: &str,
     media_type: MediaType,
     asagi_mode: bool,
-) -> Result<Option<(Md5, Option<sha2::Sha256>)>> {
+) -> Result<Option<(usize, Md5, Option<sha2::Sha256>)>> {
     let mut file = smol::Unblock::new(File::create(path)?);
     let mut writer = io::BufWriter::new(&mut file);
     let mut stream = resp.bytes_stream();
@@ -2491,6 +2543,7 @@ async fn download_and_hash_media(
     } else {
         None
     };
+    let mut len: usize = 0;
     while let Some(item) = stream.next().await {
         if media_type == MediaType::Full && get_ctrlc() {
             writer.flush().await?;
@@ -2505,11 +2558,12 @@ async fn download_and_hash_media(
         if let Some(mut _hasher_sha256) = hasher_sha256.as_mut() {
             _hasher_sha256.update(_item);
         };
+        len = len + _item.len();
         writer.write_all(_item).await?;
     }
     writer.flush().await?;
     writer.close().await?;
-    Ok(Some((hasher, hasher_sha256)))
+    Ok(Some((len, hasher, hasher_sha256)))
 }
 
 // TODO clear this

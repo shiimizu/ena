@@ -98,9 +98,9 @@ fn unix_timestamp() -> u64 {
 
 pub async fn get_db_conn(pool: &mysql_async::Pool) -> mysql_async::Result<mysql_async::Conn> {
     let mut conn = pool.get_conn().await?;
+    // SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;
     conn.query_drop(
         "
-    SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE;
     SET SESSION CHARACTER_SET_CONNECTION = utf8mb4;
     SET SESSION CHARACTER_SET_CLIENT = utf8mb4;
     SET SESSION CHARACTER_SET_RESULTS = utf8mb4;
@@ -115,7 +115,7 @@ pub async fn get_db_conn(pool: &mysql_async::Pool) -> mysql_async::Result<mysql_
 impl QueryExecutor for mysql_async::Pool {
     async fn boards_index_get_last_modified(&self) -> Result<Option<String>> {
         let fun_name = "boards_index_get_last_modified";
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&1)
@@ -133,7 +133,7 @@ impl QueryExecutor for mysql_async::Pool {
         last_modified: &str,
     ) -> Result<u64> {
         let fun_name = "boards_index_upsert";
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let res = store
             .get(&1)
@@ -147,7 +147,7 @@ impl QueryExecutor for mysql_async::Pool {
 
     async fn board_is_valid(&self, board: &str) -> Result<bool> {
         let fun_name = "board_is_valid";
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let res: Result<Option<Option<String>>, _> = store
             .get(&1)
@@ -175,7 +175,7 @@ impl QueryExecutor for mysql_async::Pool {
 
     async fn board_upsert(&self, board: &str) -> Result<u64> {
         let fun_name = "board_upsert";
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&1)
@@ -188,7 +188,7 @@ impl QueryExecutor for mysql_async::Pool {
     }
 
     async fn board_table_exists(&self, board: &Board, opt: &Opt, db_name: &str) -> Option<String> {
-        let mut conn = get_db_conn(self).await.unwrap();
+        let mut conn = self.get_conn().await.unwrap();
         let board_name = board.name.as_str();
         // Init the `boards` table
         if board_name == "boards" {
@@ -321,7 +321,7 @@ impl QueryExecutor for mysql_async::Pool {
     }
 
     async fn board_get(&self, board: &str) -> Result<Option<u16>> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&1)
@@ -342,7 +342,7 @@ impl QueryExecutor for mysql_async::Pool {
         thread_type: ThreadType,
         board: &Board,
     ) -> Option<String> {
-        let mut conn = get_db_conn(self).await.unwrap();
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = store.get(&1)?;
         let statement = map.get(&Query::BoardGetLastModified)?;
@@ -359,7 +359,7 @@ impl QueryExecutor for mysql_async::Pool {
         json: &serde_json::Value,
         last_modified: &str,
     ) -> Result<u64> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&1)
@@ -379,7 +379,7 @@ impl QueryExecutor for mysql_async::Pool {
         json: &serde_json::Value,
         last_modified: &str,
     ) -> Result<u64> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&1)
@@ -397,7 +397,7 @@ impl QueryExecutor for mysql_async::Pool {
         board: &Board,
         thread: u64,
     ) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&board.id)
@@ -417,7 +417,7 @@ impl QueryExecutor for mysql_async::Pool {
         thread: u64,
         start: u64,
     ) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&board.id)
@@ -431,7 +431,7 @@ impl QueryExecutor for mysql_async::Pool {
     }
 
     async fn thread_get_last_modified(&self, board_id: u16, thread: u64) -> Option<String> {
-        let mut conn = get_db_conn(self).await.unwrap();
+        let mut conn = self.get_conn().await.unwrap();
         let store = STATEMENTS.read().await;
         let map = store.get(&board_id)?;
         let statement = map.get(&Query::ThreadGetLastModified)?;
@@ -465,7 +465,7 @@ impl QueryExecutor for mysql_async::Pool {
 
         // Preserve `unique_ips` when a thread is archived
         if posts[0].unique_ips.is_none() {
-            let mut conn = get_db_conn(self).await?;
+            let mut conn = self.get_conn().await?;
             let store = STATEMENTS.read().await;
             let stmt_post_get_single = store
                 .get(&board.id)
@@ -484,7 +484,7 @@ impl QueryExecutor for mysql_async::Pool {
             posts[0].unique_ips = prev_unique_ips;
         }
 
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
 
         // Get the size of differences (upserted)
         let res_diff_len = {
@@ -642,7 +642,7 @@ impl QueryExecutor for mysql_async::Pool {
         board_id: u16,
         thread: u64,
     ) -> Result<u64> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&board_id)
@@ -659,7 +659,7 @@ impl QueryExecutor for mysql_async::Pool {
         board: &Board,
         thread: u64,
     ) -> Result<Either<tokio_postgres::RowStream, Option<u64>>> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let map = store.get(&board.id).ok_or_else(|| {
             anyhow!(
@@ -727,7 +727,7 @@ impl QueryExecutor for mysql_async::Pool {
         let start = posts[if posts.len() == 1 { 0 } else { 1 }]["no"]
             .as_u64()
             .unwrap_or_default();
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
 
         // Select all posts from DB starting from new json post's first reply `no`
         // (default to OP if noreplies).
@@ -812,7 +812,7 @@ impl QueryExecutor for mysql_async::Pool {
         board_id: u16,
         json: &serde_json::Value,
     ) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&board_id)
@@ -860,7 +860,7 @@ impl QueryExecutor for mysql_async::Pool {
         board_id: u16,
         json: &serde_json::Value,
     ) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&board_id)
@@ -886,7 +886,7 @@ impl QueryExecutor for mysql_async::Pool {
     }
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> Result<bool> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&board_id)
@@ -910,7 +910,7 @@ impl QueryExecutor for mysql_async::Pool {
         md5: &str,
         hash_thumb: Option<&[u8]>,
     ) -> Result<Either<Option<tokio_postgres::Row>, Option<mysql_async::Row>>> {
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let store = STATEMENTS.read().await;
         let statement = store
             .get(&board.id)
@@ -938,7 +938,7 @@ impl QueryExecutor for mysql_async::Pool {
             return Ok(());
         }
 
-        let mut conn = get_db_conn(self).await?;
+        let mut conn = self.get_conn().await?;
         let mut map = HashMap::new();
         let actual = {
             if board_id == 1 {
@@ -991,13 +991,11 @@ impl QueryExecutor for mysql_async::Pool {
 /// List of available queries to make
 pub mod queries {
     pub fn boards_index_get_last_modified<'a>() -> &'a str {
-        r#"
-        SELECT DATE_FORMAT(FROM_UNIXTIME(`last_modified_threads`), '%a, %d %b %Y %T GMT') AS `last_modified` FROM boards WHERE id=1;
-    "#
+        "SELECT DATE_FORMAT(FROM_UNIXTIME(`last_modified_threads`), '%a, %d %b %Y %T GMT') AS `last_modified` FROM boards WHERE id=1;"
     }
 
     pub fn boards_index_upsert<'a>() -> &'a str {
-        r#"
+        "
         INSERT INTO boards(id, board, title, threads, last_modified_threads)
         VALUES(1, 'boards', 'boards.json', ?, UNIX_TIMESTAMP(STR_TO_DATE(?, '%a, %d %b %Y %T GMT')))
         ON DUPLICATE KEY UPDATE
@@ -1005,23 +1003,17 @@ pub mod queries {
             board                   = VALUES(board),
             title                   = VALUES(title),
             threads                 = VALUES(threads),
-            last_modified_threads   = VALUES(last_modified_threads);
-    "#
+            last_modified_threads   = VALUES(last_modified_threads);"
     }
 
     pub fn board_is_valid<'a>() -> &'a str {
-        // SELECT JSON_CONTAINS(JSON_EXTRACT(threads, "$.boards[*].board"), CONCAT('"', ?, '"'), "$") AS
-        // board from boards where id=1;
-        r#"
-        SELECT threads from boards where id=1;
-    "#
+        "SELECT threads from boards where id=1;"
     }
 
     pub fn board_upsert<'a>() -> &'a str {
-        r#"
+        "
         INSERT INTO boards(board)
-        SELECT :board AS `board` FROM DUAL WHERE NOT EXISTS ( SELECT 1 FROM boards WHERE board = :board ) ;
-    "#
+        SELECT :board AS `board` FROM DUAL WHERE NOT EXISTS ( SELECT 1 FROM boards WHERE board = :board);"
     }
 
     pub fn board_table_exists<'a>() -> &'a str {
@@ -1033,36 +1025,32 @@ pub mod queries {
     }
 
     pub fn board_get_last_modified<'a>() -> &'a str {
-        // The CASE is a workaround so we can make a Statement for tokio_postgres
-        r#"
-    SELECT
-    DATE_FORMAT(FROM_UNIXTIME(
-        (CASE WHEN ? THEN last_modified_threads ELSE last_modified_archive END)
-    ), '%a, %d %b %Y %T GMT')
-    AS last_modified FROM boards WHERE id=?;
-    "#
+        "
+        SELECT
+        DATE_FORMAT(FROM_UNIXTIME(
+            (CASE WHEN ? THEN last_modified_threads ELSE last_modified_archive END)
+        ), '%a, %d %b %Y %T GMT')
+        AS last_modified FROM boards WHERE id=?;"
     }
 
     pub fn board_upsert_threads<'a>() -> &'a str {
-        r#"
-    INSERT INTO boards(id, board, threads, last_modified_threads) VALUES(?, ?, ?, UNIX_TIMESTAMP(STR_TO_DATE(?, '%a, %d %b %Y %T GMT')))
-    ON DUPLICATE KEY UPDATE
-        id                          = VALUES(id),
-        board                       = VALUES(board),
-        threads                     = VALUES(threads),
-        last_modified_threads       = VALUES(last_modified_threads);
-    "#
+        "
+        INSERT INTO boards(id, board, threads, last_modified_threads) VALUES(?, ?, ?, UNIX_TIMESTAMP(STR_TO_DATE(?, '%a, %d %b %Y %T GMT')))
+        ON DUPLICATE KEY UPDATE
+            id                          = VALUES(id),
+            board                       = VALUES(board),
+            threads                     = VALUES(threads),
+            last_modified_threads       = VALUES(last_modified_threads);"
     }
 
     pub fn board_upsert_archive<'a>() -> &'a str {
-        r#"
-    INSERT INTO boards(id, board, archive, last_modified_archive) VALUES(?, ?, ?, UNIX_TIMESTAMP(STR_TO_DATE(?, '%a, %d %b %Y %T GMT')))
-    ON DUPLICATE KEY UPDATE
-        id                          = VALUES(id),
-        board                       = VALUES(board),
-        archive                     = VALUES(archive),
-        last_modified_archive       = VALUES(last_modified_archive);
-    "#
+        "
+        INSERT INTO boards(id, board, archive, last_modified_archive) VALUES(?, ?, ?, UNIX_TIMESTAMP(STR_TO_DATE(?, '%a, %d %b %Y %T GMT')))
+        ON DUPLICATE KEY UPDATE
+            id                          = VALUES(id),
+            board                       = VALUES(board),
+            archive                     = VALUES(archive),
+            last_modified_archive       = VALUES(last_modified_archive);"
     }
 
     pub fn thread_get(board: &str) -> String {
@@ -1077,26 +1065,24 @@ pub mod queries {
     }
 
     pub fn thread_get_last_modified(board: &str) -> String {
-        // WHERE num=:thread
         // num is always unique for a single post in the `{board}` table so it always returns 1 row.
         format!(
-            r#"
-        SELECT COALESCE(op.last_modified, latest_post.last_modified) as last_modified FROM
-        (
-            SELECT
-            DATE_FORMAT(FROM_UNIXTIME(`timestamp`), '%a, %d %b %Y %T GMT')
-            AS last_modified
-            FROM `{board}` WHERE num=:thread AND subnum=0
-        ) latest_post
-        LEFT JOIN
-        (
-            SELECT
-            DATE_FORMAT(FROM_UNIXTIME(`time_last`), '%a, %d %b %Y %T GMT')
-            AS last_modified
-            FROM `{board}_threads` WHERE thread_num=:thread
-        ) op
-        ON true;
-    "#,
+            "
+            SELECT COALESCE(op.last_modified, latest_post.last_modified) as last_modified FROM
+            (
+                SELECT
+                DATE_FORMAT(FROM_UNIXTIME(`timestamp`), '%a, %d %b %Y %T GMT')
+                AS last_modified
+                FROM `{board}` WHERE num=:thread AND subnum=0
+            ) latest_post
+            LEFT JOIN
+            (
+                SELECT
+                DATE_FORMAT(FROM_UNIXTIME(`time_last`), '%a, %d %b %Y %T GMT')
+                AS last_modified
+                FROM `{board}_threads` WHERE thread_num=:thread
+            ) op
+            ON true;",
             board = board
         )
     }
@@ -1110,11 +1096,9 @@ pub mod queries {
     // so we don't have to set a clause to update if things changed.
     pub fn thread_update_last_modified(board: &str) -> String {
         format!(
-            r#"
-        UPDATE `{board}_threads`
-            SET time_last = UNIX_TIMESTAMP(STR_TO_DATE(?, '%a, %d %b %Y %T GMT'))
-        WHERE thread_num=?;
-    "#,
+            "UPDATE `{board}_threads`
+                SET time_last = UNIX_TIMESTAMP(STR_TO_DATE(?, '%a, %d %b %Y %T GMT'))
+            WHERE thread_num=?;",
             board = board
         )
     }
@@ -1122,13 +1106,11 @@ pub mod queries {
     /// Mark a thread as deleted
     pub fn thread_update_deleted(board: &str) -> String {
         format!(
-            r#"
-        UPDATE `{board}`
-        SET deleted             = 1,
-            timestamp_expired   = ?
-        WHERE
-            op=1 AND thread_num = ? AND subnum = 0;
-    "#,
+            "UPDATE `{board}`
+            SET deleted             = 1,
+                timestamp_expired   = ?
+            WHERE
+                op=1 AND thread_num = ? AND subnum = 0;",
             board = board
         )
     }
@@ -1137,35 +1119,23 @@ pub mod queries {
         unreachable!()
     }
 
-    /// combined, only run once at startup
+    /// Combined threads. Only ran at startup.
     ///
-    /// This is the MySQL variant.  
-    /// It returns the cached `threads` or `archive` in the database for a specific board.
-    ///
-    /// ```sql
-    ///     SELECT (CASE WHEN ? THEN threads ELSE archive END) as `threads`
-    ///     FROM boards WHERE id=?;
-    /// ```
+    /// Returns the cached `threads` or `archive` in the database for a specific board.
     pub fn threads_get_combined<'a>() -> &'a str {
-        r#"
-        SELECT (CASE WHEN ? THEN threads ELSE archive END) as `threads` FROM boards WHERE id=?;
-    "#
+        "SELECT (CASE WHEN ? THEN threads ELSE archive END) as `threads` FROM boards WHERE id=?;"
     }
 
     /// modified (on subsequent fetch. --watch-thread/--watch-board)
     /// on threads modified, deleted, archived?
     /// Only applies to threads. Archives call get_combined.
     pub fn threads_get_modified<'a>() -> &'a str {
-        r#"
-        SELECT threads FROM boards WHERE id=?;
-    "#
+        "SELECT threads FROM boards WHERE id=?;"
     }
 
     pub fn post_get_single(board: &str) -> String {
         format!(
-            r#"
-        SELECT * from `{board}` WHERE thread_num=? AND num=? AND subnum = 0 LIMIT 1;
-    "#,
+            "SELECT * from `{board}` WHERE thread_num=? AND num=? AND subnum = 0 LIMIT 1;",
             board = board
         )
     }
