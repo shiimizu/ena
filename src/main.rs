@@ -2536,7 +2536,7 @@ async fn download_and_hash_media(
 ) -> Result<Option<(usize, Md5, Option<sha2::Sha256>)>> {
     let mut file = smol::Unblock::new(File::create(path)?);
     let mut writer = io::BufWriter::new(&mut file);
-    let mut stream = resp.bytes_stream();
+    let mut resp = resp;
     let mut hasher = Md5::new();
     let mut hasher_sha256 = if !asagi_mode {
         Some(sha2::Sha256::new())
@@ -2544,14 +2544,14 @@ async fn download_and_hash_media(
         None
     };
     let mut len: usize = 0;
-    while let Some(item) = stream.next().await {
+    while let Some(item) = resp.chunk().await? {
         if media_type == MediaType::Full && get_ctrlc() {
             writer.flush().await?;
             writer.close().await?;
             let _ = std::fs::remove_file(path);
             return Ok(None);
         }
-        let _item = &item?;
+        let _item = item.as_ref();
         if media_type == MediaType::Full {
             hasher.update(_item);
         }
