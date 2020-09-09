@@ -14,45 +14,45 @@ use std::{
 #[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, Default)]
 #[serde(default)]
 pub struct Post {
-    pub no:             u64,
-    pub sticky:         Option<u8>,
-    pub closed:         Option<u8>,
-    pub now:            Option<String>,
-    pub name:           Option<String>,
-    pub sub:            Option<String>,
-    pub com:            Option<String>,
-    pub filedeleted:    Option<u8>,
-    pub spoiler:        Option<u8>,
+    pub no: u64,
+    pub sticky: Option<u8>,
+    pub closed: Option<u8>,
+    pub now: Option<String>,
+    pub name: Option<String>,
+    pub sub: Option<String>,
+    pub com: Option<String>,
+    pub filedeleted: Option<u8>,
+    pub spoiler: Option<u8>,
     pub custom_spoiler: Option<u16>,
-    pub filename:       Option<String>,
-    pub ext:            Option<String>,
-    pub w:              Option<u32>,
-    pub h:              Option<u32>,
-    pub tn_w:           Option<u32>,
-    pub tn_h:           Option<u32>,
-    pub tim:            Option<u64>,
-    pub time:           u64,
-    pub md5:            Option<String>,
-    pub fsize:          Option<u32>,
-    pub m_img:          Option<u8>,
-    pub resto:          u64,
-    pub trip:           Option<String>,
-    pub id:             Option<String>,
-    pub capcode:        Option<String>,
-    pub country:        Option<String>,
-    pub troll_country:  Option<String>,
-    pub country_name:   Option<String>,
-    pub archived:       Option<u8>,
-    pub bumplimit:      Option<u8>,
-    pub archived_on:    Option<u64>,
-    pub imagelimit:     Option<u16>,
-    pub semantic_url:   Option<String>,
-    pub replies:        Option<u32>,
-    pub images:         Option<u32>,
-    pub unique_ips:     Option<u32>,
-    pub tag:            Option<String>,
-    pub since4pass:     Option<u16>,
-    pub extra:          Option<serde_json::Value>,
+    pub filename: Option<String>,
+    pub ext: Option<String>,
+    pub w: Option<u32>,
+    pub h: Option<u32>,
+    pub tn_w: Option<u32>,
+    pub tn_h: Option<u32>,
+    pub tim: Option<u64>,
+    pub time: u64,
+    pub md5: Option<String>,
+    pub fsize: Option<u32>,
+    pub m_img: Option<u8>,
+    pub resto: u64,
+    pub trip: Option<String>,
+    pub id: Option<String>,
+    pub capcode: Option<String>,
+    pub country: Option<String>,
+    pub troll_country: Option<String>,
+    pub country_name: Option<String>,
+    pub archived: Option<u8>,
+    pub bumplimit: Option<u8>,
+    pub archived_on: Option<u64>,
+    pub imagelimit: Option<u16>,
+    pub semantic_url: Option<String>,
+    pub replies: Option<u32>,
+    pub images: Option<u32>,
+    pub unique_ips: Option<u32>,
+    pub tag: Option<String>,
+    pub since4pass: Option<u16>,
+    pub extra: Option<serde_json::Value>,
 }
 
 impl AsRef<Post> for Post {
@@ -123,7 +123,12 @@ impl Hash for Post {
 
 pub fn update_post_with_extra(json: &mut serde_json::Value) {
     let post_default_json = serde_json::to_value(Post::default()).unwrap();
-    let orig_keys: &Vec<&String> = &post_default_json.as_object().unwrap().keys().filter(|&s| s.as_str() != "extra").collect();
+    let orig_keys: &Vec<&String> = &post_default_json
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|&s| s.as_str() != "extra")
+        .collect();
     /*let json_thread = json["posts"].as_array_mut().unwrap();
     let _ = json_thread.iter_mut().map(serde_json::value::Value::as_object_mut).flat_map(|mo| mo.map(|mut post| {
 
@@ -155,7 +160,11 @@ pub fn update_post_with_extra(json: &mut serde_json::Value) {
         let mut post = post_j.as_object_mut().unwrap();
         let mut posts_with_extra_keys: &mut Vec<&String> = &mut post
             .iter_mut()
-            .filter(|(key, _)| !(key.as_str() == "tail_size" || key.as_str() == "tail_id" || orig_keys.iter().any(|key_orig| key == key_orig)))
+            .filter(|(key, _)| {
+                !(key.as_str() == "tail_size"
+                    || key.as_str() == "tail_id"
+                    || orig_keys.iter().any(|key_orig| key == key_orig))
+            })
             .map(|(k, v)| {
                 extra_map.insert(k.clone(), v.clone());
                 k
@@ -189,9 +198,9 @@ mod tests {
 
     #[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
     struct ThreadEntry {
-        no:            u64,
+        no: u64,
         last_modified: u64,
-        replies:       u16,
+        replies: u16,
     }
 
     #[allow(dead_code)]
@@ -253,21 +262,81 @@ mod tests {
         // Also Skip archived, deleted, and duplicate threads
         let mut map = HashMap::new();
         let v = vec![
-            ThreadEntry { no: 196649146, last_modified: 1576266882, replies: 349 },
-            ThreadEntry { no: 196656555, last_modified: 1576266881, replies: 6 },
-            ThreadEntry { no: 196654076, last_modified: 1576266880, replies: 191 },
-            ThreadEntry { no: 196637792, last_modified: 1576266880, replies: 233 },
-            ThreadEntry { no: 196647457, last_modified: 1576266880, replies: 110 },
-            ThreadEntry { no: 196624742, last_modified: 1576266873, replies: 103 },
-            ThreadEntry { no: 196656097, last_modified: 1576266868, replies: 7 },
-            ThreadEntry { no: 196645355, last_modified: 1576266866, replies: 361 },
-            ThreadEntry { no: 196655995, last_modified: 1576266867, replies: 3 },
-            ThreadEntry { no: 196655998, last_modified: 1576266860, replies: 5 },
-            ThreadEntry { no: 196652782, last_modified: 1576266858, replies: 42 },
-            ThreadEntry { no: 196656536, last_modified: 1576266853, replies: 5 },
-            ThreadEntry { no: 196621039, last_modified: 1576266853, replies: 189 },
-            ThreadEntry { no: 196640441, last_modified: 1576266851, replies: 495 },
-            ThreadEntry { no: 196637247, last_modified: 1576266850, replies: 101 },
+            ThreadEntry {
+                no: 196649146,
+                last_modified: 1576266882,
+                replies: 349,
+            },
+            ThreadEntry {
+                no: 196656555,
+                last_modified: 1576266881,
+                replies: 6,
+            },
+            ThreadEntry {
+                no: 196654076,
+                last_modified: 1576266880,
+                replies: 191,
+            },
+            ThreadEntry {
+                no: 196637792,
+                last_modified: 1576266880,
+                replies: 233,
+            },
+            ThreadEntry {
+                no: 196647457,
+                last_modified: 1576266880,
+                replies: 110,
+            },
+            ThreadEntry {
+                no: 196624742,
+                last_modified: 1576266873,
+                replies: 103,
+            },
+            ThreadEntry {
+                no: 196656097,
+                last_modified: 1576266868,
+                replies: 7,
+            },
+            ThreadEntry {
+                no: 196645355,
+                last_modified: 1576266866,
+                replies: 361,
+            },
+            ThreadEntry {
+                no: 196655995,
+                last_modified: 1576266867,
+                replies: 3,
+            },
+            ThreadEntry {
+                no: 196655998,
+                last_modified: 1576266860,
+                replies: 5,
+            },
+            ThreadEntry {
+                no: 196652782,
+                last_modified: 1576266858,
+                replies: 42,
+            },
+            ThreadEntry {
+                no: 196656536,
+                last_modified: 1576266853,
+                replies: 5,
+            },
+            ThreadEntry {
+                no: 196621039,
+                last_modified: 1576266853,
+                replies: 189,
+            },
+            ThreadEntry {
+                no: 196640441,
+                last_modified: 1576266851,
+                replies: 495,
+            },
+            ThreadEntry {
+                no: 196637247,
+                last_modified: 1576266850,
+                replies: 101,
+            },
         ];
         map.insert("threads".to_string(), v);
         let a: HashSet<_> = map.get("threads").unwrap().iter().cloned().collect();
@@ -277,22 +346,86 @@ mod tests {
     fn get_set_b() -> HashSet<ThreadEntry> {
         let mut map = HashMap::new();
         let v = vec![
-            ThreadEntry { no: 196649146, last_modified: 1576266882, replies: 349 },
-            ThreadEntry { no: 196656555, last_modified: 1576266881, replies: 6 },
-            ThreadEntry { no: 196654076, last_modified: 1576266880, replies: 191 },
-            ThreadEntry { no: 196637792, last_modified: 1576266880, replies: 233 },
-            ThreadEntry { no: 196647457, last_modified: 1576266880, replies: 110 },
-            ThreadEntry { no: 196624742, last_modified: 1576266873, replies: 103 },
-            ThreadEntry { no: 196656097, last_modified: 1576266868, replies: 7 },
-            ThreadEntry { no: 196645355, last_modified: 1576266866, replies: 361 },
-            ThreadEntry { no: 196655995, last_modified: 1576266867, replies: 3 },
-            ThreadEntry { no: 196655998, last_modified: 1576266860, replies: 5 },
-            ThreadEntry { no: 196652782, last_modified: 1576266858, replies: 42 },
-            ThreadEntry { no: 196656536, last_modified: 1576266853, replies: 6 },
-            ThreadEntry { no: 196621031, last_modified: 1576266853, replies: 189 },
-            ThreadEntry { no: 196640441, last_modified: 1576266851, replies: 495 },
-            ThreadEntry { no: 196637247, last_modified: 1576266850, replies: 101 },
-            ThreadEntry { no: 8888, last_modified: 1576266850, replies: 101 },
+            ThreadEntry {
+                no: 196649146,
+                last_modified: 1576266882,
+                replies: 349,
+            },
+            ThreadEntry {
+                no: 196656555,
+                last_modified: 1576266881,
+                replies: 6,
+            },
+            ThreadEntry {
+                no: 196654076,
+                last_modified: 1576266880,
+                replies: 191,
+            },
+            ThreadEntry {
+                no: 196637792,
+                last_modified: 1576266880,
+                replies: 233,
+            },
+            ThreadEntry {
+                no: 196647457,
+                last_modified: 1576266880,
+                replies: 110,
+            },
+            ThreadEntry {
+                no: 196624742,
+                last_modified: 1576266873,
+                replies: 103,
+            },
+            ThreadEntry {
+                no: 196656097,
+                last_modified: 1576266868,
+                replies: 7,
+            },
+            ThreadEntry {
+                no: 196645355,
+                last_modified: 1576266866,
+                replies: 361,
+            },
+            ThreadEntry {
+                no: 196655995,
+                last_modified: 1576266867,
+                replies: 3,
+            },
+            ThreadEntry {
+                no: 196655998,
+                last_modified: 1576266860,
+                replies: 5,
+            },
+            ThreadEntry {
+                no: 196652782,
+                last_modified: 1576266858,
+                replies: 42,
+            },
+            ThreadEntry {
+                no: 196656536,
+                last_modified: 1576266853,
+                replies: 6,
+            },
+            ThreadEntry {
+                no: 196621031,
+                last_modified: 1576266853,
+                replies: 189,
+            },
+            ThreadEntry {
+                no: 196640441,
+                last_modified: 1576266851,
+                replies: 495,
+            },
+            ThreadEntry {
+                no: 196637247,
+                last_modified: 1576266850,
+                replies: 101,
+            },
+            ThreadEntry {
+                no: 8888,
+                last_modified: 1576266850,
+                replies: 101,
+            },
         ];
         map.insert("threads".to_string(), v);
         let a: HashSet<_> = map.get("threads").unwrap().iter().cloned().collect();

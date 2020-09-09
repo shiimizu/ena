@@ -14,17 +14,44 @@ use url::Url;
 // Semaphores to limit concurrency
 // Boards currently limit to 1, so it's sequential
 pub(crate) static SEMAPHORE_AMOUNT_BOARDS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1));
-pub(crate) static SEMAPHORE_AMOUNT_BOARDS_ARCHIVE: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1));
+pub(crate) static SEMAPHORE_AMOUNT_BOARDS_ARCHIVE: Lazy<AtomicU32> =
+    Lazy::new(|| AtomicU32::new(1));
 pub(crate) static SEMAPHORE_AMOUNT_THREADS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
 pub(crate) static SEMAPHORE_AMOUNT_MEDIA: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(0));
-pub(crate) static SEMAPHORE_BOARDS: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_BOARDS.load(Ordering::SeqCst) as usize));
+pub(crate) static SEMAPHORE_BOARDS: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| {
+    futures_intrusive::sync::Semaphore::new(
+        true,
+        SEMAPHORE_AMOUNT_BOARDS.load(Ordering::SeqCst) as usize,
+    )
+});
 pub(crate) static SEMAPHORE_BOARDS_ARCHIVE: Lazy<futures_intrusive::sync::Semaphore> =
-    Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_BOARDS_ARCHIVE.load(Ordering::SeqCst) as usize));
-pub(crate) static SEMAPHORE_THREADS: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst) as usize));
+    Lazy::new(|| {
+        futures_intrusive::sync::Semaphore::new(
+            true,
+            SEMAPHORE_AMOUNT_BOARDS_ARCHIVE.load(Ordering::SeqCst) as usize,
+        )
+    });
+pub(crate) static SEMAPHORE_THREADS: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| {
+    futures_intrusive::sync::Semaphore::new(
+        true,
+        SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst) as usize,
+    )
+});
 pub(crate) static SEMAPHORE_THREADS_ARCHIVE: Lazy<futures_intrusive::sync::Semaphore> =
-    Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst) as usize));
-pub(crate) static SEMAPHORE_MEDIA: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, SEMAPHORE_AMOUNT_MEDIA.load(Ordering::SeqCst) as usize));
-pub(crate) static SEMAPHORE_MEDIA_TEST: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, 1));
+    Lazy::new(|| {
+        futures_intrusive::sync::Semaphore::new(
+            true,
+            SEMAPHORE_AMOUNT_THREADS.load(Ordering::SeqCst) as usize,
+        )
+    });
+pub(crate) static SEMAPHORE_MEDIA: Lazy<futures_intrusive::sync::Semaphore> = Lazy::new(|| {
+    futures_intrusive::sync::Semaphore::new(
+        true,
+        SEMAPHORE_AMOUNT_MEDIA.load(Ordering::SeqCst) as usize,
+    )
+});
+pub(crate) static SEMAPHORE_MEDIA_TEST: Lazy<futures_intrusive::sync::Semaphore> =
+    Lazy::new(|| futures_intrusive::sync::Semaphore::new(true, 1));
 
 // default_value must be closely tied to Default::default() for sanity.
 // Since structopt doesn't use Default::default...
@@ -40,15 +67,33 @@ pub struct Board {
 
     // #[structopt(long, default_value, env, hide_env_values = true)]
     /// Retry number of HTTP GET requests
-    #[structopt(display_order(5), long, default_value("3"), env, hide_env_values = true)]
+    #[structopt(
+        display_order(5),
+        long,
+        default_value("3"),
+        env,
+        hide_env_values = true
+    )]
     pub retry_attempts: u8,
 
     /// Delay (ms) between each board
-    #[structopt(display_order(5), long, default_value("30000"), env, hide_env_values = true)]
+    #[structopt(
+        display_order(5),
+        long,
+        default_value("30000"),
+        env,
+        hide_env_values = true
+    )]
     pub interval_boards: u16,
 
     /// Delay (ms) between each thread
-    #[structopt(display_order(5), long, default_value("1000"), env, hide_env_values = true)]
+    #[structopt(
+        display_order(5),
+        long,
+        default_value("1000"),
+        env,
+        hide_env_values = true
+    )]
     pub interval_threads: u16,
 
     /// Add 5s on intervals for each NOT_MODIFIED. Capped.
@@ -107,22 +152,22 @@ pub struct Board {
 impl Default for Board {
     fn default() -> Self {
         Self {
-            id:                  0,
-            name:                String::new(),
-            retry_attempts:      3,
-            interval_boards:     30000,
-            interval_threads:    1000,
-            interval_dynamic:    false,
-            skip_board_check:    false,
-            with_threads:        false,
-            with_archives:       false,
-            with_tail:           false,
-            with_full_media:     false,
-            with_thumbnails:     false,
-            watch_boards:        false,
-            watch_threads:       false,
+            id: 0,
+            name: String::new(),
+            retry_attempts: 3,
+            interval_boards: 30000,
+            interval_threads: 1000,
+            interval_dynamic: false,
+            skip_board_check: false,
+            with_threads: false,
+            with_archives: false,
+            with_tail: false,
+            with_full_media: false,
+            with_thumbnails: false,
+            watch_boards: false,
+            watch_threads: false,
             with_utc_timestamps: false,
-            with_extra_columns:  false,
+            with_extra_columns: false,
         }
     }
 }
@@ -145,7 +190,12 @@ fn threads_cli_string(thread: &str) -> Result<String> {
         let no = split[1].parse::<u64>();
         match no {
             Ok(n) => Ok(thread.into()),
-            Err(e) => Err(anyhow!("Invalid thread `{}` for `/{}/{}`", split[1], split[0], split[1])),
+            Err(e) => Err(anyhow!(
+                "Invalid thread `{}` for `/{}/{}`",
+                split[1],
+                split[0],
+                split[1]
+            )),
         }
     } else {
         Err(anyhow!("Invalid thread format `{}`", thread))
@@ -159,7 +209,8 @@ mod tests {
     use url::Url;
     #[test]
     fn url() {
-        let u = Url::parse("mysql://username:@localhost:3306/db_name?pool_min=1&pool_max=3").unwrap();
+        let u =
+            Url::parse("mysql://username:@localhost:3306/db_name?pool_min=1&pool_max=3").unwrap();
         let host = u.host_str();
         let port = u.port();
         let username = u.username();
@@ -224,7 +275,15 @@ pub struct Opt {
     pub start_with_archives: bool,
 
     /// Config file or `-` for stdin
-    #[structopt(display_order(1), short, long, parse(from_os_str), default_value = "config.yml", env, hide_env_values = true)]
+    #[structopt(
+        display_order(1),
+        short,
+        long,
+        parse(from_os_str),
+        default_value = "config.yml",
+        env,
+        hide_env_values = true
+    )]
     pub config: PathBuf,
 
     /// Get boards [example: a,b,c]
@@ -246,15 +305,37 @@ pub struct Opt {
     pub threads: Vec<String>,
 
     /// Set site
-    #[structopt(hidden(true), display_order(4), short, long, default_value = "4chan", env)]
+    #[structopt(
+        hidden(true),
+        display_order(4),
+        short,
+        long,
+        default_value = "4chan",
+        env
+    )]
     pub site: String,
 
     /// Limit concurrency getting threads
-    #[structopt(display_order(5), long, default_value = "151", env, hide_env_values = true)]
+    #[structopt(
+        display_order(5),
+        long,
+        default_value = "151",
+        env,
+        hide_env_values = true
+    )]
     pub limit: u32,
 
     /// Media download location
-    #[structopt(display_order(5), short, long, parse(from_os_str), default_value = "assets/media", env, hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(5),
+        short,
+        long,
+        parse(from_os_str),
+        default_value = "assets/media",
+        env,
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub media_dir: PathBuf,
 
     /// Media storage type
@@ -266,7 +347,13 @@ pub struct Opt {
     pub media_storage: MediaStorage,
 
     /// Limit concurrency getting media
-    #[structopt(display_order(5), long, default_value = "151", env, hide_env_values = true)]
+    #[structopt(
+        display_order(5),
+        long,
+        default_value = "151",
+        env,
+        hide_env_values = true
+    )]
     pub limit_media: u32,
 
     /// Set user agent
@@ -315,27 +402,29 @@ impl Opt {
 impl Default for Opt {
     fn default() -> Self {
         Self {
-            debug:               false,
-            strict:              false,
-            asagi_mode:          false,
-            quickstart:          false,
+            debug: false,
+            strict: false,
+            asagi_mode: false,
+            quickstart: false,
             start_with_archives: false,
-            config:              "config.yml".into(),
-            boards:              vec![],
-            boards_excluded:     vec![],
-            threads:             vec![],
-            site:                "4chan".into(),
-            limit:               151,
-            media_dir:           "assets/media".into(),
-            media_storage:       MediaStorage::FlatFiles,
-            limit_media:         151,
-            user_agent:          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0".into(),
-            api_url:             "https://a.4cdn.org".parse().unwrap(),
-            media_url:           "https://i.4cdn.org".parse().unwrap(),
-            board_settings:      Board::default(),
-            database:            DatabaseOpt::default(),
-            timescaledb:         None,
-            proxies:             None,
+            config: "config.yml".into(),
+            boards: vec![],
+            boards_excluded: vec![],
+            threads: vec![],
+            site: "4chan".into(),
+            limit: 151,
+            media_dir: "assets/media".into(),
+            media_storage: MediaStorage::FlatFiles,
+            limit_media: 151,
+            user_agent:
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:76.0) Gecko/20100101 Firefox/76.0"
+                    .into(),
+            api_url: "https://a.4cdn.org".parse().unwrap(),
+            media_url: "https://i.4cdn.org".parse().unwrap(),
+            board_settings: Board::default(),
+            database: DatabaseOpt::default(),
+            timescaledb: None,
+            proxies: None,
         }
     }
 }
@@ -344,13 +433,13 @@ impl Default for Opt {
 #[serde(default)]
 pub struct TimescaleSettings {
     pub column: String,
-    pub every:  String,
+    pub every: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(default)]
 pub struct ProxySettings {
-    pub url:      String,
+    pub url: String,
     pub username: Option<String>,
     pub password: Option<String>,
 }
@@ -420,60 +509,130 @@ impl std::fmt::Display for MediaStorage {
 #[serde(default)]
 pub struct DatabaseOpt {
     /// Set database url
-    #[structopt(hidden(true), display_order(10), long = "db-url", env = "ENA_DATABASE_URL", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        hidden(true),
+        display_order(10),
+        long = "db-url",
+        env = "ENA_DATABASE_URL",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub url: Option<String>,
 
     /// Set database engine
-    #[structopt(display_order(11), long, default_value("postgresql"), env = "ENA_DATABASE_ENGINE", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(11),
+        long,
+        default_value("postgresql"),
+        env = "ENA_DATABASE_ENGINE",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub engine: String,
 
     /// Set database name
-    #[structopt(display_order(12), long, default_value("ena"), env = "ENA_DATABASE_NAME", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(12),
+        long,
+        default_value("ena"),
+        env = "ENA_DATABASE_NAME",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     #[serde(rename = "database")]
     pub name: String,
 
     /// Set database schema
-    #[structopt(display_order(13), long, default_value("public"), env = "ENA_DATABASE_SCHEMA", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(13),
+        long,
+        default_value("public"),
+        env = "ENA_DATABASE_SCHEMA",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub schema: String,
 
     /// Set database host
-    #[structopt(display_order(14), long, default_value("localhost"), env = "ENA_DATABASE_HOST", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(14),
+        long,
+        default_value("localhost"),
+        env = "ENA_DATABASE_HOST",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub host: String,
 
     /// Set database port
-    #[structopt(display_order(15), long, default_value("5432"), env = "ENA_DATABASE_PORT", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(15),
+        long,
+        default_value("5432"),
+        env = "ENA_DATABASE_PORT",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub port: u16,
 
     /// Set database user
-    #[structopt(display_order(16), long, default_value("postgres"), env = "ENA_DATABASE_USERNAME", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(16),
+        long,
+        default_value("postgres"),
+        env = "ENA_DATABASE_USERNAME",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub username: String,
 
     /// Set database password
-    #[structopt(display_order(17), long, default_value("zxc"), env = "ENA_DATABASE_PASSWORD", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(17),
+        long,
+        default_value("zxc"),
+        env = "ENA_DATABASE_PASSWORD",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub password: String,
 
     /// Set database charset
-    #[structopt(display_order(18), long, default_value("utf8"), env = "ENA_DATABASE_CHARSET", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(18),
+        long,
+        default_value("utf8"),
+        env = "ENA_DATABASE_CHARSET",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub charset: String,
 
     /// Set database charset
-    #[structopt(display_order(18), long, default_value("utf8"), env = "ENA_DATABASE_COLLATE", hide_env_values = true, hide_default_value(true))]
+    #[structopt(
+        display_order(18),
+        long,
+        default_value("utf8"),
+        env = "ENA_DATABASE_COLLATE",
+        hide_env_values = true,
+        hide_default_value(true)
+    )]
     pub collate: String,
 }
 
 impl Default for DatabaseOpt {
     fn default() -> Self {
         Self {
-            url:      None,
-            engine:   "postgresql".into(),
-            name:     "ena".into(),
-            schema:   "public".into(),
-            host:     "localhost".into(),
-            port:     5432,
+            url: None,
+            engine: "postgresql".into(),
+            name: "ena".into(),
+            schema: "public".into(),
+            host: "localhost".into(),
+            port: 5432,
             username: "postgres".into(),
             password: "zxc".into(),
-            charset:  "utf8".into(),
-            collate:  "utf8".into(),
+            charset: "utf8".into(),
+            collate: "utf8".into(),
         }
     }
 }
@@ -530,7 +689,9 @@ pub fn display_asagi() {
 /// let version = config::version();
 /// ```
 pub fn version() -> String {
-    option_env!("CARGO_PKG_VERSION").unwrap_or("?.?.?").to_string()
+    option_env!("CARGO_PKG_VERSION")
+        .unwrap_or("?.?.?")
+        .to_string()
 }
 
 #[rustfmt::skip]

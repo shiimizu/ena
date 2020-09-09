@@ -15,7 +15,9 @@ use crate::{
     ThreadType,
 };
 
-#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, Hash, EnumIter, strum_macros::Display)]
+#[derive(
+    Deserialize, Serialize, Debug, Clone, Eq, PartialEq, Hash, EnumIter, strum_macros::Display,
+)]
 pub enum Query {
     BoardsIndexGetLastModified,
     BoardsIndexUpsert,
@@ -47,28 +49,90 @@ pub trait DropExecutor {
 #[async_trait]
 pub trait QueryExecutor {
     async fn boards_index_get_last_modified(&self) -> Result<Option<String>>;
-    async fn boards_index_upsert(&self, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
+    async fn boards_index_upsert(
+        &self,
+        json: &serde_json::Value,
+        last_modified: &str,
+    ) -> Result<u64>;
     async fn board_is_valid(&self, board: &str) -> Result<bool>;
     async fn board_upsert(&self, board: &str) -> Result<u64>;
     async fn board_table_exists(&self, board: &Board, opt: &Opt, db_name: &str) -> Option<String>;
     async fn board_get(&self, board: &str) -> Result<Option<u16>>;
-    async fn board_get_last_modified(&self, thread_type: ThreadType, board: &Board) -> Option<String>;
-    async fn board_upsert_threads(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
-    async fn board_upsert_archive(&self, board_id: u16, board: &str, json: &serde_json::Value, last_modified: &str) -> Result<u64>;
+    async fn board_get_last_modified(
+        &self,
+        thread_type: ThreadType,
+        board: &Board,
+    ) -> Option<String>;
+    async fn board_upsert_threads(
+        &self,
+        board_id: u16,
+        board: &str,
+        json: &serde_json::Value,
+        last_modified: &str,
+    ) -> Result<u64>;
+    async fn board_upsert_archive(
+        &self,
+        board_id: u16,
+        board: &str,
+        json: &serde_json::Value,
+        last_modified: &str,
+    ) -> Result<u64>;
 
-    async fn thread_get(&self, board: &Board, thread: u64) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>>;
-    async fn thread_get_media(&self, board: &Board, thread: u64, start: u64) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>>;
+    async fn thread_get(
+        &self,
+        board: &Board,
+        thread: u64,
+    ) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>>;
+    async fn thread_get_media(
+        &self,
+        board: &Board,
+        thread: u64,
+        start: u64,
+    ) -> Result<Either<tokio_postgres::RowStream, Vec<mysql_async::Row>>>;
     async fn thread_get_last_modified(&self, board_id: u16, thread: u64) -> Option<String>;
     async fn thread_upsert(&self, board: &Board, thread_json: &serde_json::Value) -> Result<u64>;
-    async fn thread_update_last_modified(&self, last_modified: &str, board_id: u16, thread: u64) -> Result<u64>;
-    async fn thread_update_deleted(&self, board: &Board, thread: u64) -> Result<Either<tokio_postgres::RowStream, Option<u64>>>;
-    async fn thread_update_deleteds(&self, board: &Board, thread: u64, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>>;
-    async fn threads_get_combined(&self, thread_type: ThreadType, board_id: u16, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>>;
-    async fn threads_get_modified(&self, board_id: u16, json: &serde_json::Value) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>>;
+    async fn thread_update_last_modified(
+        &self,
+        last_modified: &str,
+        board_id: u16,
+        thread: u64,
+    ) -> Result<u64>;
+    async fn thread_update_deleted(
+        &self,
+        board: &Board,
+        thread: u64,
+    ) -> Result<Either<tokio_postgres::RowStream, Option<u64>>>;
+    async fn thread_update_deleteds(
+        &self,
+        board: &Board,
+        thread: u64,
+        json: &serde_json::Value,
+    ) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>>;
+    async fn threads_get_combined(
+        &self,
+        thread_type: ThreadType,
+        board_id: u16,
+        json: &serde_json::Value,
+    ) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>>;
+    async fn threads_get_modified(
+        &self,
+        board_id: u16,
+        json: &serde_json::Value,
+    ) -> Result<Either<tokio_postgres::RowStream, Option<Vec<u64>>>>;
 
     async fn post_get_single(&self, board_id: u16, thread: u64, no: u64) -> Result<bool>;
-    async fn post_get_media(&self, board: &Board, md5: &str, hash_thumb: Option<&[u8]>) -> Result<Either<Option<tokio_postgres::Row>, Option<mysql_async::Row>>>;
-    async fn post_upsert_media(&self, md5: &[u8], hash_full: Option<&[u8]>, hash_thumb: Option<&[u8]>) -> Result<u64>;
+    async fn post_get_media(
+        &self,
+        board: &Board,
+        md5: &str,
+        hash_thumb: Option<&[u8]>,
+    ) -> Result<Either<Option<tokio_postgres::Row>, Option<mysql_async::Row>>>;
+    async fn post_upsert_media(
+        &self,
+        md5: &[u8],
+        hash_full: Option<&[u8]>,
+        hash_thumb: Option<&[u8]>,
+    ) -> Result<u64>;
 
     async fn init_statements(&self, board_id: u16, board: &str) -> Result<()>;
 }

@@ -11,13 +11,21 @@ use std::fmt::Debug;
 
 #[async_trait]
 pub trait HttpClient: Sync + Send {
-    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: Option<&String>) -> Result<(StatusCode, String, Vec<u8>)>;
+    async fn gett<U: IntoUrl + Send + Debug + Clone>(
+        &self,
+        url: U,
+        last_modified: Option<&String>,
+    ) -> Result<(StatusCode, String, Vec<u8>)>;
 }
 
 /// Implementation of `HttpClient` for `reqwest`.
 #[async_trait]
 impl HttpClient for Client {
-    async fn gett<U: IntoUrl + Send + Debug + Clone>(&self, url: U, last_modified: Option<&String>) -> Result<(StatusCode, String, Vec<u8>)> {
+    async fn gett<U: IntoUrl + Send + Debug + Clone>(
+        &self,
+        url: U,
+        last_modified: Option<&String>,
+    ) -> Result<(StatusCode, String, Vec<u8>)> {
         // let url: &str = url.into();
         // let _url = url.clone();
         let res = {
@@ -37,7 +45,12 @@ impl HttpClient for Client {
         // Last-Modified Should never be empty where status is OK
         // Which we always check after this method is called
         let status = res.status();
-        let last_modified = res.headers().get(LAST_MODIFIED).and_then(|r| r.to_str().ok()).unwrap_or("").to_string();
+        let last_modified = res
+            .headers()
+            .get(LAST_MODIFIED)
+            .and_then(|r| r.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         let body = res.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
 
         Ok((status, last_modified, body))

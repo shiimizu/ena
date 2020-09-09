@@ -172,11 +172,18 @@ mod tests {
     #[test]
     fn g_sticky() {
         let com = "This board is for the discussion of technology and related topics.<br> <br> \nReminder that instigating OR participating in flame/brand wars will result in a ban.<br>\nTech support threads should be posted to <a href=\"/wsr/\" class=\"quotelink\"><a href=\"//boards.4channel.org/wsr/\" class=\"quotelink\">&gt;&gt;&gt;/wsr/</a></a><br> \nCryptocurrency discussion belongs on <a href=\"/biz/\" class=\"quotelink\"><a href=\"//boards.4channel.org/biz/\" class=\"quotelink\">&gt;&gt;&gt;/biz/</a></a><br> <br> To use the Code tag, book-end your body of code with: [co\u{00ad}de] and [/co\u{00ad}de]<br> <br> The /g/ Wiki: <a href=\"https://wiki.installgentoo.com/\">https://wiki.installgentoo.com/</a>".to_string();
-        let s =
-            (&ammonia::Builder::default().rm_tags(&["span", "a", "p"]).clean(&com.replace("\r", "").replace("\n", "").replace("<br>", "\n").replace('\u{00ad}'.to_string().as_str(), "")).to_string())
-                .as_str()
-                .clean_full()
-                .to_string();
+        let s = (&ammonia::Builder::default()
+            .rm_tags(&["span", "a", "p"])
+            .clean(
+                &com.replace("\r", "")
+                    .replace("\n", "")
+                    .replace("<br>", "\n")
+                    .replace('\u{00ad}'.to_string().as_str(), ""),
+            )
+            .to_string())
+            .as_str()
+            .clean_full()
+            .to_string();
         let target = "This board is for the discussion of technology and related topics.\n \n Reminder that instigating OR participating in flame/brand wars will result in a ban.\nTech support threads should be posted to >>>/wsr/\n Cryptocurrency discussion belongs on >>>/biz/\n \n To use the Code tag, book-end your body of code with: [code:lit] and [/code:lit]\n \n The /g/ Wiki: https://wiki.installgentoo.com/";
         pintln!([s]);
         assert_eq!(&s, target);
@@ -185,11 +192,18 @@ mod tests {
     #[test]
     fn x_sticky() {
         let com = "Welcome to /x/ - Paranormal. This is not a board for the faint of heart. If you need something to get started with, see the below lists for some basic resources. We hope you enjoy your venture into the spooks, the creeps and the unknown.\r\n<br>\r\n<br>\r\nThe resources in this thread are not exhaustive and are merely meant for beginners to get their footing.\r\n<br>\r\n<br>\r\n<img src=\"//s.4cdn.org/image/temp/danger.gif\" alt=\"\">".to_string();
-        let s =
-            (&ammonia::Builder::default().rm_tags(&["span", "a", "p"]).clean(&com.replace("\r", "").replace("\n", "").replace("<br>", "\n").replace('\u{00ad}'.to_string().as_str(), "")).to_string())
-                .as_str()
-                .clean_full()
-                .to_string();
+        let s = (&ammonia::Builder::default()
+            .rm_tags(&["span", "a", "p"])
+            .clean(
+                &com.replace("\r", "")
+                    .replace("\n", "")
+                    .replace("<br>", "\n")
+                    .replace('\u{00ad}'.to_string().as_str(), ""),
+            )
+            .to_string())
+            .as_str()
+            .clean_full()
+            .to_string();
         let target = "Welcome to /x/ - Paranormal. This is not a board for the faint of heart. If you need something to get started with, see the below lists for some basic resources. We hope you enjoy your venture into the spooks, the creeps and the unknown.\n\nThe resources in this thread are not exhaustive and are merely meant for beginners to get their footing.\n\n<img src=\"//s.4cdn.org/image/temp/danger.gif\" alt=\"\">";
         pintln!([s]);
         assert_eq!(&s, target);
@@ -198,11 +212,18 @@ mod tests {
     #[test]
     fn vrpg_sticky() {
         let com = "/vrpg/ is a place to discuss all types of role-playing video games, including single-player, multi-player, and massively multi-player, turn-based and real-time action, western-style and JRPG.<br>\n<br>\nDoes this mean RPGs are banned on other video game boards? <span style=\"font-size:15px;font-weight:bold;\">No!</span> /vrpg/ is just a separate board specifically focused on RPGs where discussions about your favorite games can thrive.<br>\n<br>\nPlease familiarize yourself with <a href=\"https://www.4channel.org/rules#vrpg\">the rules</a> and remember to <a href=\"https://www.4channel.org/faq#spoiler\">use the spoiler function where appropriate</a>!<br>\n<p style=\"font-size:15px;font-weight:bold;\">Please note that, like /v/, &quot;Generals&quot;\u{2014}long-term, one-after-the-other, recurring threads about a specific game are not permitted on /vrpg/. Such threads belong on <a href=\"https://boards.4channel.org/vg/\"><a href=\"//boards.4channel.org/vg/\" class=\"quotelink\">&gt;&gt;&gt;/vg/</a></a>.</p>".to_string();
-        let s =
-            (&ammonia::Builder::default().rm_tags(&["span", "a", "p"]).clean(&com.replace("\r", "").replace("\n", "").replace("<br>", "\n").replace('\u{00ad}'.to_string().as_str(), "")).to_string())
-                .as_str()
-                .clean_full()
-                .to_string();
+        let s = (&ammonia::Builder::default()
+            .rm_tags(&["span", "a", "p"])
+            .clean(
+                &com.replace("\r", "")
+                    .replace("\n", "")
+                    .replace("<br>", "\n")
+                    .replace('\u{00ad}'.to_string().as_str(), ""),
+            )
+            .to_string())
+            .as_str()
+            .clean_full()
+            .to_string();
         let target = "/vrpg/ is a place to discuss all types of role-playing video games, including single-player, multi-player, and massively multi-player, turn-based and real-time action, western-style and JRPG.\n\nDoes this mean RPGs are banned on other video game boards? No! /vrpg/ is just a separate board specifically focused on RPGs where discussions about your favorite games can thrive.\n\nPlease familiarize yourself with the rules and remember to use the spoiler function where appropriate!\nPlease note that, like /v/, \"Generals\"—long-term, one-after-the-other, recurring threads about a specific game are not permitted on /vrpg/. Such threads belong on >>>/vg/.";
         pintln!([s]);
         assert_eq!(&s, target);

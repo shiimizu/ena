@@ -9,38 +9,38 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(default)]
 pub struct Post {
-    pub doc_id:            u64,
-    pub media_id:          u64,
-    pub poster_ip:         f64,
-    pub num:               u64,
-    pub subnum:            u64,
-    pub thread_num:        u64,
-    pub op:                bool,
-    pub timestamp:         u64,
+    pub doc_id: u64,
+    pub media_id: u64,
+    pub poster_ip: f64,
+    pub num: u64,
+    pub subnum: u64,
+    pub thread_num: u64,
+    pub op: bool,
+    pub timestamp: u64,
     pub timestamp_expired: u64,
-    pub preview_orig:      Option<String>,
-    pub preview_w:         u32,
-    pub preview_h:         u32,
-    pub media_filename:    Option<String>,
-    pub media_w:           u32,
-    pub media_h:           u32,
-    pub media_size:        u32,
-    pub media_hash:        Option<String>,
-    pub media_orig:        Option<String>,
-    pub spoiler:           bool,
-    pub deleted:           bool,
-    pub capcode:           String,
-    pub email:             Option<String>,
-    pub name:              Option<String>,
-    pub trip:              Option<String>,
-    pub title:             Option<String>,
-    pub comment:           Option<String>,
-    pub delpass:           Option<String>,
-    pub sticky:            bool,
-    pub locked:            bool,
-    pub poster_hash:       Option<String>,
-    pub poster_country:    Option<String>,
-    pub exif:              Option<String>,
+    pub preview_orig: Option<String>,
+    pub preview_w: u32,
+    pub preview_h: u32,
+    pub media_filename: Option<String>,
+    pub media_w: u32,
+    pub media_h: u32,
+    pub media_size: u32,
+    pub media_hash: Option<String>,
+    pub media_orig: Option<String>,
+    pub spoiler: bool,
+    pub deleted: bool,
+    pub capcode: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub trip: Option<String>,
+    pub title: Option<String>,
+    pub comment: Option<String>,
+    pub delpass: Option<String>,
+    pub sticky: bool,
+    pub locked: bool,
+    pub poster_hash: Option<String>,
+    pub poster_country: Option<String>,
+    pub exif: Option<String>,
 }
 
 impl Eq for Post {}
@@ -88,38 +88,38 @@ impl Hash for Post {
 impl Default for Post {
     fn default() -> Self {
         Self {
-            doc_id:            0,
-            media_id:          0,
-            poster_ip:         0.0,
-            num:               0,
-            subnum:            0,
-            thread_num:        0,
-            op:                false,
-            timestamp:         0,
+            doc_id: 0,
+            media_id: 0,
+            poster_ip: 0.0,
+            num: 0,
+            subnum: 0,
+            thread_num: 0,
+            op: false,
+            timestamp: 0,
             timestamp_expired: 0,
-            preview_orig:      None,
-            preview_w:         0,
-            preview_h:         0,
-            media_filename:    None,
-            media_w:           0,
-            media_h:           0,
-            media_size:        0,
-            media_hash:        None,
-            media_orig:        None,
-            spoiler:           false,
-            deleted:           false,
-            capcode:           "N".into(),
-            email:             None,
-            name:              None,
-            trip:              None,
-            title:             None,
-            comment:           None,
-            delpass:           None,
-            sticky:            false,
-            locked:            false,
-            poster_hash:       None,
-            poster_country:    None,
-            exif:              None,
+            preview_orig: None,
+            preview_w: 0,
+            preview_h: 0,
+            media_filename: None,
+            media_w: 0,
+            media_h: 0,
+            media_size: 0,
+            media_hash: None,
+            media_orig: None,
+            spoiler: false,
+            deleted: false,
+            capcode: "N".into(),
+            email: None,
+            name: None,
+            trip: None,
+            title: None,
+            comment: None,
+            delpass: None,
+            sticky: false,
+            locked: false,
+            poster_hash: None,
+            poster_country: None,
+            exif: None,
         }
     }
 }
@@ -130,19 +130,23 @@ impl From<&yotsuba::Post> for Post {
     /// 4chan sometimes has a `\` character in their `md5`.
     fn from(post: &yotsuba::Post) -> Self {
         Self {
-            doc_id:            0,
-            media_id:          0,
-            poster_ip:         0.0,
-            num:               post.no,
-            subnum:            0,
-            thread_num:        if post.resto == 0 { post.no } else { post.resto },
-            op:                (post.resto == 0),
-            timestamp:         if post.time == 0 { 0 } else { Self::timestamp_nyc(post.time) },
+            doc_id: 0,
+            media_id: 0,
+            poster_ip: 0.0,
+            num: post.no,
+            subnum: 0,
+            thread_num: if post.resto == 0 { post.no } else { post.resto },
+            op: (post.resto == 0),
+            timestamp: if post.time == 0 {
+                0
+            } else {
+                Self::timestamp_nyc(post.time)
+            },
             timestamp_expired: 0,
-            preview_orig:      post.tim.map(|tim| fomat!((tim)"s.jpg")),
-            preview_w:         post.tn_w.unwrap_or_default(),
-            preview_h:         post.tn_h.unwrap_or_default(),
-            media_filename:    if let Some(filename) = post.filename.as_ref() {
+            preview_orig: post.tim.map(|tim| fomat!((tim)"s.jpg")),
+            preview_w: post.tn_w.unwrap_or_default(),
+            preview_h: post.tn_h.unwrap_or_default(),
+            media_filename: if let Some(filename) = post.filename.as_ref() {
                 if !filename.is_empty() {
                     if let Some(ext) = post.ext.as_ref() {
                         Some(fomat!((filename)(ext)))
@@ -155,11 +159,11 @@ impl From<&yotsuba::Post> for Post {
             } else {
                 None
             },
-            media_w:           post.w.unwrap_or_default(),
-            media_h:           post.h.unwrap_or_default(),
-            media_size:        post.fsize.unwrap_or_default(),
-            media_hash:        post.md5.as_ref().map(|md5| md5.replace("\\", "")),
-            media_orig:        if let Some(tim) = post.tim {
+            media_w: post.w.unwrap_or_default(),
+            media_h: post.h.unwrap_or_default(),
+            media_size: post.fsize.unwrap_or_default(),
+            media_hash: post.md5.as_ref().map(|md5| md5.replace("\\", "")),
+            media_orig: if let Some(tim) = post.tim {
                 if let Some(ext) = post.ext.as_ref() {
                     Some(fomat!((tim)(ext)))
                 } else {
@@ -168,9 +172,9 @@ impl From<&yotsuba::Post> for Post {
             } else {
                 None
             },
-            spoiler:           post.spoiler.map_or_else(|| false, |v| v == 1),
-            deleted:           false,
-            capcode:           {
+            spoiler: post.spoiler.map_or_else(|| false, |v| v == 1),
+            deleted: false,
+            capcode: {
                 fomat!(if let Some(cap) = &post.capcode {
                     if cap == "manager" || cap == "Manager" {
                         "G"
@@ -185,16 +189,27 @@ impl From<&yotsuba::Post> for Post {
                     "N"
                 })
             },
-            email:             None,
-            name:              post.name.as_ref().map(|s| s.as_str().clean().trim().to_string()),
-            trip:              post.trip.clone(),
-            title:             post.sub.as_ref().map(|s| s.as_str().clean().trim().to_string()),
-            comment:           if post.sticky.unwrap_or_else(|| 0) == 1 && post.com.is_some() {
+            email: None,
+            name: post
+                .name
+                .as_ref()
+                .map(|s| s.as_str().clean().trim().to_string()),
+            trip: post.trip.clone(),
+            title: post
+                .sub
+                .as_ref()
+                .map(|s| s.as_str().clean().trim().to_string()),
+            comment: if post.sticky.unwrap_or_else(|| 0) == 1 && post.com.is_some() {
                 let com = post.com.as_ref().unwrap();
                 if !com.is_empty() {
                     let s = (&ammonia::Builder::default()
                         .rm_tags(&["span", "a", "p"])
-                        .clean(&com.replace("\r", "").replace("\n", "").replace("<br>", "\n").replace('\u{00ad}'.to_string().as_str(), ""))
+                        .clean(
+                            &com.replace("\r", "")
+                                .replace("\n", "")
+                                .replace("<br>", "\n")
+                                .replace('\u{00ad}'.to_string().as_str(), ""),
+                        )
                         .to_string())
                         .as_str()
                         .clean_full()
@@ -204,14 +219,27 @@ impl From<&yotsuba::Post> for Post {
                     None
                 }
             } else {
-                post.com.as_ref().map(|s| s.as_str().clean_full().to_string())
+                post.com
+                    .as_ref()
+                    .map(|s| s.as_str().clean_full().to_string())
             },
-            delpass:           None,
-            sticky:            post.sticky.map_or_else(|| false, |v| v == 1),
-            locked:            post.closed.map_or_else(|| false, |v| v == 1) && !post.archived.map_or_else(|| false, |v| v == 1),
-            poster_hash:       post.id.as_ref().map(|s| if s == "Developer" { "Dev".into() } else { s.clone() }),
-            poster_country:    post.country.as_ref().filter(|&v| !(v == "XX" || v == "A1")).map(|s| s.into()),
-            exif:              {
+            delpass: None,
+            sticky: post.sticky.map_or_else(|| false, |v| v == 1),
+            locked: post.closed.map_or_else(|| false, |v| v == 1)
+                && !post.archived.map_or_else(|| false, |v| v == 1),
+            poster_hash: post.id.as_ref().map(|s| {
+                if s == "Developer" {
+                    "Dev".into()
+                } else {
+                    s.clone()
+                }
+            }),
+            poster_country: post
+                .country
+                .as_ref()
+                .filter(|&v| !(v == "XX" || v == "A1"))
+                .map(|s| s.into()),
+            exif: {
                 let exif = Exif::parse(&post);
                 if exif.is_empty() {
                     None
@@ -227,38 +255,38 @@ impl From<mysql_async::Row> for Post {
     fn from(row: mysql_async::Row) -> Self {
         let row = &row;
         Self {
-            doc_id:            row.get("doc_id").unwrap(),
-            media_id:          row.get("media_id").unwrap(),
-            poster_ip:         row.get("poster_ip").unwrap(),
-            num:               row.get("num").unwrap(),
-            subnum:            row.get("subnum").unwrap(),
-            thread_num:        row.get("thread_num").unwrap(),
-            op:                row.get("op").unwrap(),
-            timestamp:         row.get("timestamp").unwrap(),
+            doc_id: row.get("doc_id").unwrap(),
+            media_id: row.get("media_id").unwrap(),
+            poster_ip: row.get("poster_ip").unwrap(),
+            num: row.get("num").unwrap(),
+            subnum: row.get("subnum").unwrap(),
+            thread_num: row.get("thread_num").unwrap(),
+            op: row.get("op").unwrap(),
+            timestamp: row.get("timestamp").unwrap(),
             timestamp_expired: row.get("timestamp_expired").unwrap(),
-            preview_orig:      row.get("preview_orig").unwrap(),
-            preview_w:         row.get("preview_w").unwrap(),
-            preview_h:         row.get("preview_h").unwrap(),
-            media_filename:    row.get("media_filename").unwrap(),
-            media_w:           row.get("media_w").unwrap(),
-            media_h:           row.get("media_h").unwrap(),
-            media_size:        row.get("media_size").unwrap(),
-            media_hash:        row.get("media_hash").unwrap(),
-            media_orig:        row.get("media_orig").unwrap(),
-            spoiler:           row.get("spoiler").unwrap(),
-            deleted:           row.get("deleted").unwrap(),
-            capcode:           row.get("capcode").unwrap(),
-            email:             row.get("email").unwrap(),
-            name:              row.get("name").unwrap(),
-            trip:              row.get("trip").unwrap(),
-            title:             row.get("title").unwrap(),
-            comment:           row.get("comment").unwrap(),
-            delpass:           row.get("delpass").unwrap(),
-            sticky:            row.get("sticky").unwrap(),
-            locked:            row.get("locked").unwrap(),
-            poster_hash:       row.get("poster_hash").unwrap(),
-            poster_country:    row.get("poster_country").unwrap(),
-            exif:              row.get("exif").unwrap(),
+            preview_orig: row.get("preview_orig").unwrap(),
+            preview_w: row.get("preview_w").unwrap(),
+            preview_h: row.get("preview_h").unwrap(),
+            media_filename: row.get("media_filename").unwrap(),
+            media_w: row.get("media_w").unwrap(),
+            media_h: row.get("media_h").unwrap(),
+            media_size: row.get("media_size").unwrap(),
+            media_hash: row.get("media_hash").unwrap(),
+            media_orig: row.get("media_orig").unwrap(),
+            spoiler: row.get("spoiler").unwrap(),
+            deleted: row.get("deleted").unwrap(),
+            capcode: row.get("capcode").unwrap(),
+            email: row.get("email").unwrap(),
+            name: row.get("name").unwrap(),
+            trip: row.get("trip").unwrap(),
+            title: row.get("title").unwrap(),
+            comment: row.get("comment").unwrap(),
+            delpass: row.get("delpass").unwrap(),
+            sticky: row.get("sticky").unwrap(),
+            locked: row.get("locked").unwrap(),
+            poster_hash: row.get("poster_hash").unwrap(),
+            poster_country: row.get("poster_country").unwrap(),
+            exif: row.get("exif").unwrap(),
         }
     }
 }
@@ -312,7 +340,11 @@ impl Post {
     }
 
     pub fn timestamp_nyc(time: u64) -> u64 {
-        chrono::Utc.timestamp(time as i64, 0).with_timezone(&New_York).naive_local().timestamp() as u64
+        chrono::Utc
+            .timestamp(time as i64, 0)
+            .with_timezone(&New_York)
+            .naive_local()
+            .timestamp() as u64
     }
 }
 
@@ -322,17 +354,17 @@ pub struct Exif {
     // #[serde(rename = "archivedOn", skip_serializing_if = "Option::is_none")]
     // archived_on:   Option<String>,
     #[serde(rename = "uniqueIps", skip_serializing_if = "Option::is_none")]
-    unique_ips:    Option<String>,
+    unique_ips: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    since4pass:    Option<String>,
+    since4pass: Option<String>,
     #[serde(rename = "trollCountry", skip_serializing_if = "Option::is_none")]
     troll_country: Option<String>,
     #[serde(rename = "Time", skip_serializing_if = "Option::is_none")]
-    time:          Option<String>,
+    time: Option<String>,
     #[serde(rename = "Painter", skip_serializing_if = "Option::is_none")]
-    painter:       Option<String>,
+    painter: Option<String>,
     #[serde(rename = "Source", skip_serializing_if = "Option::is_none")]
-    source:        Option<String>,
+    source: Option<String>,
 
     #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
     exif_data: HashMap<String, String>,
@@ -347,8 +379,20 @@ static DRAW_RE: Lazy<Regex> = Lazy::new(|| {
         .build()
         .unwrap()
 });
-static EXIF_RE: Lazy<Regex> = Lazy::new(|| RegexBuilder::new("<table \\s class=\"exif\"[^>]*>(.*)</table>").dot_matches_new_line(true).ignore_whitespace(true).build().unwrap());
-static EXIF_DATA_RE: Lazy<Regex> = Lazy::new(|| RegexBuilder::new("<tr><td>(.*?)</td><td>(.*?)</td></tr>").dot_matches_new_line(true).ignore_whitespace(true).build().unwrap());
+static EXIF_RE: Lazy<Regex> = Lazy::new(|| {
+    RegexBuilder::new("<table \\s class=\"exif\"[^>]*>(.*)</table>")
+        .dot_matches_new_line(true)
+        .ignore_whitespace(true)
+        .build()
+        .unwrap()
+});
+static EXIF_DATA_RE: Lazy<Regex> = Lazy::new(|| {
+    RegexBuilder::new("<tr><td>(.*?)</td><td>(.*?)</td></tr>")
+        .dot_matches_new_line(true)
+        .ignore_whitespace(true)
+        .build()
+        .unwrap()
+});
 
 impl Exif {
     fn parse(post: &yotsuba::Post) -> Self {
@@ -366,7 +410,9 @@ impl Exif {
             if let Some(draw) = DRAW_RE.captures(text.as_str()) {
                 time = Some(String::from(&draw[1]));
                 painter = Some(String::from(&draw[2]));
-                source = draw.get(3).map(|source| source.as_str().clean_full().to_string())
+                source = draw
+                    .get(3)
+                    .map(|source| source.as_str().clean_full().to_string())
             }
         }
 
@@ -381,8 +427,20 @@ impl Exif {
         }
 
         Self {
-            unique_ips: post.unique_ips.and_then(|ips| if ips == 0 { None } else { Some(ips.to_string()) }),
-            since4pass: post.since4pass.and_then(|year| if year == 0 { None } else { Some(year.to_string()) }),
+            unique_ips: post.unique_ips.and_then(|ips| {
+                if ips == 0 {
+                    None
+                } else {
+                    Some(ips.to_string())
+                }
+            }),
+            since4pass: post.since4pass.and_then(|year| {
+                if year == 0 {
+                    None
+                } else {
+                    Some(year.to_string())
+                }
+            }),
             troll_country: post.troll_country.clone(),
             time,
             painter,
@@ -392,7 +450,13 @@ impl Exif {
     }
 
     fn is_empty(&self) -> bool {
-        self.unique_ips.is_none() && self.since4pass.is_none() && self.troll_country.is_none() && self.time.is_none() && self.painter.is_none() && self.source.is_none() && self.exif_data.is_empty()
+        self.unique_ips.is_none()
+            && self.since4pass.is_none()
+            && self.troll_country.is_none()
+            && self.time.is_none()
+            && self.painter.is_none()
+            && self.source.is_none()
+            && self.exif_data.is_empty()
     }
 }
 

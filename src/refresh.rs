@@ -30,7 +30,11 @@
 /// assert_eq!(Some(30000), rate.next());
 /// assert_eq!(Some(35000), rate.next());
 /// ```
-pub fn refresh_rate(initial: u64, step_by: usize, take: usize) -> Reset<impl Clone + Iterator<Item = u64>> {
+pub fn refresh_rate(
+    initial: u64,
+    step_by: usize,
+    take: usize,
+) -> Reset<impl Clone + Iterator<Item = u64>> {
     let mut base = (initial..).step_by(step_by).take(take);
     let repeat = std::iter::repeat(base.clone().last().unwrap());
     base.chain(repeat).resettable()
@@ -50,7 +54,10 @@ pub struct Reset<I> {
 }
 impl<I: Clone> Reset<I> {
     pub(super) fn new(iter: I) -> Reset<I> {
-        Reset { orig: iter.clone(), iter }
+        Reset {
+            orig: iter.clone(),
+            iter,
+        }
     }
 }
 
@@ -95,7 +102,9 @@ pub trait ResetExt {
     /// assert_eq!(Some(0), iter.next());
     /// ```
     fn resettable(self) -> Reset<Self>
-    where Self: Sized + Clone {
+    where
+        Self: Sized + Clone,
+    {
         Reset::new(self)
     }
 }
@@ -103,7 +112,8 @@ pub trait ResetExt {
 impl<T: Clone + Iterator> ResetExt for T {}
 
 impl<I> Iterator for Reset<I>
-where I: Clone + Iterator
+where
+    I: Clone + Iterator,
 {
     type Item = <I as Iterator>::Item;
 
